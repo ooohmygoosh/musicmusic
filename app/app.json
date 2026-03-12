@@ -6,10 +6,11 @@
     "version": "0.1.0",
     "android": {
       "package": "com.yourcompany.tpymusic",
-      "versionCode": 1
+      "versionCode": 1,
+      "usesCleartextTraffic": true
     },
     "extra": {
-      "apiBase": "http://10.0.2.2:8080"
+      "apiBase": "http://47.98.253.11/api"
     }
   }
 }
