@@ -1,0 +1,38 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>天谱乐 后台管理</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <h1>天谱乐 后台管理</h1>
+        <div class="token">
+          <input id="token" type="password" placeholder="Admin Token" />
+          <button id="saveToken">保存</button>
+        </div>
+      </header>
+
+      <section class="card">
+        <h2>标签管理</h2>
+        <div class="row">
+          <input id="tagName" placeholder="标签名称" />
+          <input id="tagType" placeholder="标签类型 (风格/情绪/场景等)" />
+          <button id="addTag">新增</button>
+        </div>
+        <div id="tagList" class="list"></div>
+      </section>
+
+      <section class="card">
+        <h2>用户反馈</h2>
+        <button id="refreshFeedback">刷新</button>
+        <div id="feedbackList" class="list"></div>
+      </section>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

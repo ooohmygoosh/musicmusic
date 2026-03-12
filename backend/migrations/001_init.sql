@@ -1,0 +1,66 @@
+﻿CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  device_id TEXT UNIQUE NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS tags (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS user_tags (
+  user_id INT REFERENCES users(id) ON DELETE CASCADE,
+  tag_id INT REFERENCES tags(id) ON DELETE CASCADE,
+  weight NUMERIC DEFAULT 1.0,
+  updated_at TIMESTAMP DEFAULT NOW(),
+  PRIMARY KEY (user_id, tag_id)
+);
+
+CREATE TABLE IF NOT EXISTS generation_jobs (
+  id SERIAL PRIMARY KEY,
+  user_id INT REFERENCES users(id) ON DELETE CASCADE,
+  prompt TEXT NOT NULL,
+  status TEXT NOT NULL,
+  item_ids TEXT[] DEFAULT '{}',
+  error TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS songs (
+  id SERIAL PRIMARY KEY,
+  user_id INT REFERENCES users(id) ON DELETE CASCADE,
+  prompt TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS song_assets (
+  id SERIAL PRIMARY KEY,
+  song_id INT REFERENCES songs(id) ON DELETE CASCADE,
+  item_id TEXT,
+  audio_url TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS song_tags (
+  song_id INT REFERENCES songs(id) ON DELETE CASCADE,
+  tag_id INT REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (song_id, tag_id)
+);
+
+CREATE TABLE IF NOT EXISTS feedback (
+  id SERIAL PRIMARY KEY,
+  user_id INT REFERENCES users(id) ON DELETE CASCADE,
+  song_id INT REFERENCES songs(id) ON DELETE CASCADE,
+  action TEXT NOT NULL,
+  score NUMERIC NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS tpy_callbacks (
+  id SERIAL PRIMARY KEY,
+  payload JSONB NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
