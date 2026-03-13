@@ -184,21 +184,32 @@ app.post("/generate", async (request, reply) => {
     : `${TPY_BASE_URL}/open-apis/v1/song/generate`;
 
   const payload = {
-    model: model || "tianpuyue", // replace with your actual model
+    model: model || "TemPolor v3",
     prompt,
     callback_url: `${process.env.CALLBACK_BASE}/callback/tpy`
   };
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: TPY_API_KEY
-    },
-    body: JSON.stringify(payload)
-  });
+  let res = null;
+  let data = null;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: TPY_API_KEY
+      },
+      body: JSON.stringify(payload)
+    });
+    data = await res.json();
+  } catch (err) {
+    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [
+      String(err),
+      job.id
+    ]);
+    reply.code(502).send({ error: "tianpuyue request failed", detail: String(err) });
+    return;
+  }
 
-  const data = await res.json();
   if (!res.ok) {
     await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [
       JSON.stringify(data),
@@ -209,15 +220,22 @@ app.post("/generate", async (request, reply) => {
   }
 
   const itemIds = data?.data?.item_ids || [];
+  if (!Array.isArray(itemIds) || itemIds.length === 0) {
+    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [
+      JSON.stringify(data),
+      job.id
+    ]);
+    reply.code(502).send({ error: "tianpuyue returned no item_ids", detail: data });
+    return;
+  }
+
   await query(
     "UPDATE generation_jobs SET status = 'submitted', item_ids = $1 WHERE id = $2",
     [itemIds, job.id]
   );
 
   return { job_id: job.id, item_ids: itemIds, prompt };
-});
-
-app.post("/callback/tpy", async (request, reply) => {
+});app.post("/callback/tpy", async (request, reply) => {
   // Store callback payload for traceability
   const payload = request.body || {};
   await query(
@@ -225,30 +243,40 @@ app.post("/callback/tpy", async (request, reply) => {
     [payload]
   );
 
-  const itemId = payload?.data?.item_id;
-  const audioUrl = payload?.data?.audio_url || payload?.data?.url;
-  if (itemId && audioUrl) {
-    const { rows } = await query(
-      "UPDATE generation_jobs SET status = 'done' WHERE $1 = ANY(item_ids) RETURNING id, user_id, prompt",
-      [itemId]
-    );
-    if (rows.length > 0) {
-      const job = rows[0];
-      const song = await query(
-        "INSERT INTO songs (user_id, prompt) VALUES ($1, $2) RETURNING id",
-        [job.user_id, job.prompt]
-      );
+  const songs = Array.isArray(payload?.songs) ? payload.songs : [];
+  for (const s of songs) {
+    const itemId = s?.item_id;
+    const audioUrl = s?.audio_url || s?.url;
+    const status = s?.status;
+
+    if (itemId && (status === "failed" || status === "part_failed")) {
       await query(
-        "INSERT INTO song_assets (song_id, item_id, audio_url) VALUES ($1, $2, $3)",
-        [song.rows[0].id, itemId, audioUrl]
+        "UPDATE generation_jobs SET status = 'failed', error = $1 WHERE $2 = ANY(item_ids)",
+        [JSON.stringify(s), itemId]
       );
+    }
+
+    if (itemId && audioUrl) {
+      const { rows } = await query(
+        "UPDATE generation_jobs SET status = 'done' WHERE $1 = ANY(item_ids) RETURNING id, user_id, prompt",
+        [itemId]
+      );
+      if (rows.length > 0) {
+        const job = rows[0];
+        const song = await query(
+          "INSERT INTO songs (user_id, prompt) VALUES ($1, $2) RETURNING id",
+          [job.user_id, job.prompt]
+        );
+        await query(
+          "INSERT INTO song_assets (song_id, item_id, audio_url) VALUES ($1, $2, $3)",
+          [song.rows[0].id, itemId, audioUrl]
+        );
+      }
     }
   }
 
   reply.send("success");
-});
-
-app.post("/feedback", async (request, reply) => {
+});app.post("/feedback", async (request, reply) => {
   const { user_id, song_id, action } = request.body || {};
   if (!user_id || !song_id || !action) {
     reply.code(400).send({ error: "user_id, song_id, action required" });
@@ -290,3 +318,5 @@ app.get("/songs", async (request, reply) => {
 
 const port = Number(process.env.PORT || 8080);
 app.listen({ port, host: "0.0.0.0" });
+
+
