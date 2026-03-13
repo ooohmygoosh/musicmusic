@@ -183,8 +183,14 @@ app.post("/generate", async (request, reply) => {
     ? `${TPY_BASE_URL}/open-apis/v1/instrumental/generate`
     : `${TPY_BASE_URL}/open-apis/v1/song/generate`;
 
+  const modelToUse =
+    model ||
+    (instrumental
+      ? process.env.TPY_MODEL_INSTRUMENTAL || "TemPolor i3"
+      : process.env.TPY_MODEL_SONG || "TemPolor v3");
+
   const payload = {
-    model: model || "TemPolor v3",
+    model: modelToUse,
     prompt,
     callback_url: `${process.env.CALLBACK_BASE}/callback/tpy`
   };
@@ -318,5 +324,6 @@ app.get("/songs", async (request, reply) => {
 
 const port = Number(process.env.PORT || 8080);
 app.listen({ port, host: "0.0.0.0" });
+
 
 
