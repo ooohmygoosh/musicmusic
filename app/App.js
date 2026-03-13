@@ -19,15 +19,19 @@ export default function App() {
   const [userId, setUserId] = useState(null);
   const [tags, setTags] = useState([]);
   const [selected, setSelected] = useState(new Set());
+  const [health, setHealth] = useState({ loading: false, ok: null, message: "" });
   const [songs, setSongs] = useState([]);
   const [current, setCurrent] = useState(null);
   const [sound, setSound] = useState(null);
 
+  const loadTags = async () => {
+    const res = await fetch(`${API_BASE}/tags`);
+    const data = await res.json();
+    setTags(data.items || []);
+  };
+
   useEffect(() => {
-    fetch(`${API_BASE}/tags`)
-      .then((r) => r.json())
-      .then((d) => setTags(d.items || []))
-      .catch(() => setTags([]));
+    loadTags().catch(() => setTags([]));
   }, []);
 
   useEffect(() => {
@@ -87,6 +91,25 @@ export default function App() {
     }
   };
 
+  const testConnection = async () => {
+    setHealth({ loading: true, ok: null, message: "" });
+    try {
+      const res = await fetch(`${API_BASE}/tags`);
+      const data = await res.json();
+      setHealth({
+        loading: false,
+        ok: res.ok,
+        message: `API: ${API_BASE} | tags: ${data.items ? data.items.length : 0}`
+      });
+    } catch (err) {
+      setHealth({
+        loading: false,
+        ok: false,
+        message: `API: ${API_BASE} | error: ${String(err)}`
+      });
+    }
+  };
+
   const play = async (song) => {
     if (!song?.audio_url) return;
     if (sound) await sound.unloadAsync();
@@ -129,6 +152,15 @@ export default function App() {
         <TouchableOpacity style={styles.primary} onPress={initTags}>
           <Text style={styles.primaryText}>初始化标签池</Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.section}>
+        <TouchableOpacity style={styles.secondary} onPress={testConnection}>
+          <Text>连接测试</Text>
+        </TouchableOpacity>
+        {health.message ? (
+          <Text style={health.ok ? styles.okText : styles.errorText}>{health.message}</Text>
+        ) : null}
       </View>
 
       <View style={styles.section}>
@@ -215,6 +247,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e4dccc"
   },
+  okText: { color: "#2e5d4b", marginTop: 6, fontSize: 12 },
+  errorText: { color: "#b00020", marginTop: 6, fontSize: 12 },
   card: {
     backgroundColor: "#fff",
     borderRadius: 12,
