@@ -249,8 +249,11 @@ app.post("/generate", async (request, reply) => {
     [payload]
   );
 
-  const songs = Array.isArray(payload?.songs) ? payload.songs : [];
-  for (const s of songs) {
+  const items = [];
+  if (Array.isArray(payload?.songs)) items.push(...payload.songs);
+  if (Array.isArray(payload?.instrumentals)) items.push(...payload.instrumentals);
+
+  for (const s of items) {
     const itemId = s?.item_id;
     const audioUrl = s?.audio_url || s?.url;
     const status = s?.status;
@@ -324,6 +327,7 @@ app.get("/songs", async (request, reply) => {
 
 const port = Number(process.env.PORT || 8080);
 app.listen({ port, host: "0.0.0.0" });
+
 
 
 

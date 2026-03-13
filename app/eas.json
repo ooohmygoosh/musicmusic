@@ -1,0 +1,33 @@
+﻿{
+  "cli": {
+    "version": ">= 18.3.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "image": "latest"
+      },
+      "env": {
+        "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-amd64"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "android": {
+        "image": "latest"
+      },
+      "env": {
+        "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-amd64"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

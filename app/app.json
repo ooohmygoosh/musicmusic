@@ -7,10 +7,33 @@
     "android": {
       "package": "com.yourcompany.tpymusic",
       "versionCode": 1,
-      "usesCleartextTraffic": true
+      "usesCleartextTraffic": true,
+      "splash": {
+        "backgroundColor": "#f7f2ea",
+        "image": "./assets/splash.png",
+        "resizeMode": "contain"
+      }
     },
+    "splash": {
+      "backgroundColor": "#f7f2ea",
+      "image": "./assets/splash.png",
+      "resizeMode": "contain"
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#f7f2ea",
+          "image": "./assets/splash.png",
+          "resizeMode": "contain"
+        }
+      ]
+    ],
     "extra": {
-      "apiBase": "http://47.98.253.11/api"
+      "apiBase": "http://47.98.253.11/api",
+      "eas": {
+        "projectId": "ffefaf70-c41d-4524-bc84-f9cf404981d3"
+      }
     }
   }
 }
