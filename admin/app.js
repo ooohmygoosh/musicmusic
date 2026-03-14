@@ -2,6 +2,7 @@
 const tokenInput = document.getElementById("token");
 const tagList = document.getElementById("tagList");
 const feedbackList = document.getElementById("feedbackList");
+const favoritesList = document.getElementById("favoritesList");
 
 function getToken() {
   return localStorage.getItem("adminToken") || "";
@@ -10,6 +11,8 @@ function getToken() {
 document.getElementById("saveToken").addEventListener("click", () => {
   localStorage.setItem("adminToken", tokenInput.value.trim());
   loadTags();
+  loadFeedback();
+  loadFavorites();
 });
 
 document.getElementById("addTag").addEventListener("click", async () => {
@@ -31,6 +34,10 @@ document.getElementById("addTag").addEventListener("click", async () => {
 
 document.getElementById("refreshFeedback").addEventListener("click", () => {
   loadFeedback();
+});
+
+document.getElementById("refreshFavorites").addEventListener("click", () => {
+  loadFavorites();
 });
 
 async function loadTags() {
@@ -84,5 +91,31 @@ async function loadFeedback() {
   }
 }
 
+async function loadFavorites() {
+  const res = await fetch("/admin/favorites", {
+    headers: { "x-admin-token": getToken() }
+  });
+  if (!res.ok) {
+    favoritesList.innerHTML = "<div class='item'>未授权或服务未启动</div>";
+    return;
+  }
+  const data = await res.json();
+  favoritesList.innerHTML = "";
+  for (const f of data.items) {
+    const tags = (f.tags || []).join(", ");
+    const div = document.createElement("div");
+    div.className = "item";
+    div.innerHTML = `
+      <div>
+        <strong>用户 ${f.user_id} 收藏歌曲 ${f.song_id}</strong>
+        <small>标签: ${tags || "无"}</small>
+        <div>${f.prompt}</div>
+      </div>
+    `;
+    favoritesList.appendChild(div);
+  }
+}
+
 loadTags();
 loadFeedback();
+loadFavorites();
