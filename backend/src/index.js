@@ -78,6 +78,14 @@ app.get("/admin/feedback", async (request, reply) => {
   return { items: rows };
 });
 
+app.get("/admin/favorites", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const { rows } = await query(
+    "SELECT f.id AS feedback_id, f.user_id, f.song_id, f.created_at, s.prompt, COALESCE(array_remove(array_agg(t.name), NULL), '{}') AS tags FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE f.action = 'like' GROUP BY f.id, s.prompt ORDER BY f.created_at DESC LIMIT 200"
+  );
+  return { items: rows };
+});
+
 app.post("/users", async (request, reply) => {
   const { device_id } = request.body || {};
   if (!device_id) {
@@ -127,10 +135,10 @@ function pickTagsWeighted(tags, maxCount) {
 
 async function buildPrompt(userId) {
   const { rows } = await query(
-    "SELECT t.name, t.type, ut.weight FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true",
+    "SELECT t.id, t.name, t.type, ut.weight FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true",
     [userId]
   );
-  if (rows.length === 0) return "";
+  if (rows.length === 0) return { prompt: "", tagIds: [] };
 
   // 80% exploitation + 20% exploration
   const sorted = [...rows].sort((a, b) => b.weight - a.weight);
@@ -151,7 +159,8 @@ async function buildPrompt(userId) {
   for (const [type, list] of byType.entries()) {
     parts.push(`${type}: ${list.join(", ")}`);
   }
-  return parts.join(", ");
+  const tagIds = chosen.map((tag) => tag.id);
+  return { prompt: parts.join(", "), tagIds };
 }
 
 app.post("/generate", async (request, reply) => {
@@ -161,15 +170,15 @@ app.post("/generate", async (request, reply) => {
     return;
   }
 
-  const prompt = await buildPrompt(user_id);
+  const { prompt, tagIds } = await buildPrompt(user_id);
   if (!prompt) {
     reply.code(400).send({ error: "no tags found for user" });
     return;
   }
 
   const { rows } = await query(
-    "INSERT INTO generation_jobs (user_id, prompt, status) VALUES ($1, $2, 'pending') RETURNING *",
-    [user_id, prompt]
+    "INSERT INTO generation_jobs (user_id, prompt, status, tag_ids) VALUES ($1, $2, 'pending', $3) RETURNING *",
+    [user_id, prompt, tagIds]
   );
   const job = rows[0];
 
@@ -241,7 +250,9 @@ app.post("/generate", async (request, reply) => {
   );
 
   return { job_id: job.id, item_ids: itemIds, prompt };
-});app.post("/callback/tpy", async (request, reply) => {
+});
+
+app.post("/callback/tpy", async (request, reply) => {
   // Store callback payload for traceability
   const payload = request.body || {};
   await query(
@@ -267,7 +278,7 @@ app.post("/generate", async (request, reply) => {
 
     if (itemId && audioUrl) {
       const { rows } = await query(
-        "UPDATE generation_jobs SET status = 'done' WHERE $1 = ANY(item_ids) RETURNING id, user_id, prompt",
+        "UPDATE generation_jobs SET status = 'done' WHERE $1 = ANY(item_ids) RETURNING id, user_id, prompt, tag_ids",
         [itemId]
       );
       if (rows.length > 0) {
@@ -276,16 +287,27 @@ app.post("/generate", async (request, reply) => {
           "INSERT INTO songs (user_id, prompt) VALUES ($1, $2) RETURNING id",
           [job.user_id, job.prompt]
         );
+        const songId = song.rows[0].id;
+        if (Array.isArray(job.tag_ids) && job.tag_ids.length > 0) {
+          for (const tagId of job.tag_ids) {
+            await query(
+              "INSERT INTO song_tags (song_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+              [songId, tagId]
+            );
+          }
+        }
         await query(
           "INSERT INTO song_assets (song_id, item_id, audio_url) VALUES ($1, $2, $3)",
-          [song.rows[0].id, itemId, audioUrl]
+          [songId, itemId, audioUrl]
         );
       }
     }
   }
 
   reply.send("success");
-});app.post("/feedback", async (request, reply) => {
+});
+
+app.post("/feedback", async (request, reply) => {
   const { user_id, song_id, action } = request.body || {};
   if (!user_id || !song_id || !action) {
     reply.code(400).send({ error: "user_id, song_id, action required" });
@@ -327,7 +349,3 @@ app.get("/songs", async (request, reply) => {
 
 const port = Number(process.env.PORT || 8080);
 app.listen({ port, host: "0.0.0.0" });
-
-
-
-
