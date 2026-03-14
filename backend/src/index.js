@@ -606,6 +606,17 @@ app.post("/callback/tpy", async (request, reply) => {
     }
 
     if (itemId && audioUrl) {
+      const existingAsset = await query(
+        "SELECT song_id FROM song_assets WHERE item_id = $1 LIMIT 1",
+        [itemId]
+      );
+      if (existingAsset.rows.length > 0) {
+        await query(
+          "UPDATE song_assets SET audio_url = COALESCE($1, audio_url) WHERE item_id = $2",
+          [audioUrl, itemId]
+        );
+        continue;
+      }
       const { rows } = await query(
         "UPDATE generation_jobs SET status = 'done' WHERE $1 = ANY(item_ids) RETURNING id, user_id, prompt, tag_ids",
         [itemId]
@@ -730,4 +741,5 @@ app.get("/songs", async (request, reply) => {
 
 const port = Number(process.env.PORT || 8080);
 app.listen({ port, host: "0.0.0.0" });
+
 
