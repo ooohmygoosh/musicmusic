@@ -218,6 +218,45 @@ app.post("/user-tags", async (request, reply) => {
   return { tag };
 });
 
+app.get("/user-tags", async (request, reply) => {
+  const { user_id } = request.query || {};
+  if (!user_id) {
+    reply.code(400).send({ error: "user_id required" });
+    return;
+  }
+  const { rows } = await query(
+    "SELECT t.id AS tag_id, t.name, t.type, ut.weight, COALESCE(ut.is_active, true) AS is_active FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 ORDER BY ut.weight DESC",
+    [Number(user_id)]
+  );
+  return { items: rows };
+});
+
+app.post("/user-tags/remove", async (request, reply) => {
+  const { user_id, tag_id } = request.body || {};
+  if (!user_id || !tag_id) {
+    reply.code(400).send({ error: "user_id and tag_id required" });
+    return;
+  }
+  await query(
+    "UPDATE user_tags SET is_active = false, weight = 0, last_updated = NOW() WHERE user_id = $1 AND tag_id = $2",
+    [Number(user_id), Number(tag_id)]
+  );
+  return { ok: true };
+});
+
+app.get("/favorites", async (request, reply) => {
+  const { user_id } = request.query || {};
+  if (!user_id) {
+    reply.code(400).send({ error: "user_id required" });
+    return;
+  }
+  const { rows } = await query(
+    "SELECT s.id, s.prompt, sa.audio_url, f.created_at FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true WHERE f.user_id = $1 AND f.action = 'like' ORDER BY f.created_at DESC LIMIT 100",
+    [Number(user_id)]
+  );
+  return { items: rows };
+});
+
 function pickTagsWeighted(tags, maxCount) {
   const pool = [...tags];
   const picked = [];
