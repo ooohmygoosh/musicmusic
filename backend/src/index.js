@@ -76,6 +76,40 @@ app.get("/admin/users", async (request, reply) => {
   return { items: rows };
 });
 
+app.get("/admin/stats", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+
+  const users = await query("SELECT COUNT(*)::int AS count FROM users");
+  const songs = await query("SELECT COUNT(*)::int AS count FROM songs");
+  const feedback = await query("SELECT COUNT(*)::int AS count FROM feedback");
+  const favorites = await query(
+    "SELECT COUNT(*)::int AS count FROM feedback WHERE action = 'like'"
+  );
+  const tagsTotal = await query("SELECT COUNT(*)::int AS count FROM tags");
+  const tagsActive = await query("SELECT COUNT(*)::int AS count FROM tags WHERE is_active = true");
+
+  const feedbackBreakdown = await query(
+    "SELECT action, COUNT(*)::int AS count FROM feedback GROUP BY action ORDER BY count DESC"
+  );
+
+  const topTags = await query(
+    "SELECT t.id, t.name, t.type, COUNT(st.song_id)::int AS uses FROM tags t LEFT JOIN song_tags st ON st.tag_id = t.id GROUP BY t.id ORDER BY uses DESC LIMIT 10"
+  );
+
+  return {
+    stats: {
+      users: users.rows[0]?.count || 0,
+      songs: songs.rows[0]?.count || 0,
+      feedback: feedback.rows[0]?.count || 0,
+      favorites: favorites.rows[0]?.count || 0,
+      tags_total: tagsTotal.rows[0]?.count || 0,
+      tags_active: tagsActive.rows[0]?.count || 0
+    },
+    feedback_breakdown: feedbackBreakdown.rows || [],
+    top_tags: topTags.rows || []
+  };
+});
+
 app.get("/admin/feedback", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
   const { user_id } = request.query || {};

@@ -49,6 +49,35 @@ button {
   background: #faf9f6;
 }
 .item small { color: #666; }
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.stat-card {
+  background: #faf9f6;
+  border-radius: 12px;
+  padding: 12px;
+  border: 1px solid #eee;
+}
+.stat-label { font-size: 12px; color: #666; }
+.stat-value { font-size: 22px; font-weight: 700; margin-top: 6px; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.bar-list { display: grid; gap: 10px; }
+.bar-item { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.bar-label { font-size: 12px; color: #444; }
+.bar-track {
+  height: 8px;
+  background: #efe6d7;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.bar-fill { height: 8px; background: var(--accent); }
+.bar-value { font-size: 12px; color: #666; }
+.muted { color: #777; font-size: 12px; }
+
 @media (max-width: 640px) {
   header { flex-direction: column; align-items: flex-start; }
   input { min-width: 0; width: 100%; }

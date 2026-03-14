@@ -47,6 +47,7 @@ export default function App() {
   const [tagMessage, setTagMessage] = useState("");
 
   const completeSentFor = useRef(null);
+  const autoNextLock = useRef(false);
 
   const loadTags = async () => {
     const res = await fetch(`${API_BASE}/tags`);
@@ -130,17 +131,22 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: uid, instrumental: true })
     });
-    await refreshSongs(uid);
+    await refreshSongs(uid, { setCurrent: true });
   };
 
-  const refreshSongs = async (uid = userId) => {
-    if (!uid) return;
+  const refreshSongs = async (uid = userId, options = {}) => {
+    if (!uid) return [];
     const res = await fetch(`${API_BASE}/songs?user_id=${uid}`);
     const data = await res.json();
-    setSongs(data.items || []);
-    if (data.items && data.items.length > 0) {
-      setCurrent(data.items[0]);
+    const items = data.items || [];
+    setSongs(items);
+    if (options.setCurrent && items.length > 0) {
+      setCurrent(items[0]);
     }
+    if (!current && items.length > 0) {
+      setCurrent(items[0]);
+    }
+    return items;
   };
 
   const testConnection = async () => {
@@ -173,7 +179,7 @@ export default function App() {
     if (status.didJustFinish && current) {
       if (completeSentFor.current !== current.id) {
         completeSentFor.current = current.id;
-        feedback("complete", { skipRefresh: true }).catch(() => {});
+        handleAutoNext("complete").catch(() => {});
       }
     }
   };
@@ -212,7 +218,7 @@ export default function App() {
     if (next) await play(next);
   };
 
-  const feedback = async (action, options = {}) => {
+  const feedback = async (action) => {
     if (!userId || !current) return;
     const playedSeconds = Math.floor((playback.position || 0) / 1000);
     await fetch(`${API_BASE}/feedback`, {
@@ -225,8 +231,24 @@ export default function App() {
         played_seconds: playedSeconds
       })
     });
-    if (!options.skipRefresh) {
-      await refreshSongs(userId);
+  };
+
+  const handleAutoNext = async (action) => {
+    if (!userId || !current || autoNextLock.current) return;
+    autoNextLock.current = true;
+    try {
+      await feedback(action);
+      await fetch(`${API_BASE}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, instrumental: true })
+      });
+      const items = await refreshSongs(userId, { setCurrent: true });
+      if (items.length > 0) {
+        await play(items[0]);
+      }
+    } finally {
+      autoNextLock.current = false;
     }
   };
 
@@ -317,13 +339,13 @@ export default function App() {
           </View>
 
           <View style={styles.controlsRow}>
-            <TouchableOpacity style={styles.controlBtn} onPress={() => feedback("like")}> 
+            <TouchableOpacity style={styles.controlBtn} onPress={() => feedback("like")}>
               <Text style={styles.controlText}>收藏</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.playBtn} onPress={togglePlay}>
               <Text style={styles.playText}>{playback.isPlaying ? "暂停" : "播放"}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.controlBtn} onPress={() => feedback("skip").then(goNext)}>
+            <TouchableOpacity style={styles.controlBtn} onPress={() => handleAutoNext("skip")}>
               <Text style={styles.controlText}>跳过</Text>
             </TouchableOpacity>
           </View>
