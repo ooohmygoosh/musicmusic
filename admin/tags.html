@@ -3,17 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>天谱乐 后台管理</title>
+    <title>标签管理 | 天谱乐 后台管理</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="page">
       <header>
-        <h1>天谱乐 后台管理</h1>
+        <h1>标签管理</h1>
         <nav class="nav">
-          <a href="/" class="nav-link is-active">概览</a>
+          <a href="/" class="nav-link">概览</a>
           <a href="/users.html" class="nav-link">用户数据</a>
-          <a href="/tags.html" class="nav-link">标签管理</a>
+          <a href="/tags.html" class="nav-link is-active">标签管理</a>
         </nav>
         <div class="token">
           <input id="token" type="password" placeholder="Admin Token" />
@@ -22,21 +22,16 @@
       </header>
 
       <section class="card">
-        <h2>数据概览</h2>
-        <div id="statsGrid" class="stats-grid"></div>
-        <div class="charts">
-          <div>
-            <h3>标签使用 Top10</h3>
-            <div id="tagUsage" class="bar-list"></div>
-          </div>
-          <div>
-            <h3>用户行为分布</h3>
-            <div id="feedbackSummary" class="bar-list"></div>
-          </div>
+        <h2>新增标签</h2>
+        <div class="row">
+          <input id="tagName" placeholder="标签名称" />
+          <input id="tagType" placeholder="标签类型 (风格/情绪/场景等)" />
+          <button id="addTag">新增</button>
         </div>
+        <div id="tagList" class="list"></div>
       </section>
     </div>
 
-    <script src="./app.js"></script>
+    <script src="./tags.js"></script>
   </body>
 </html>
