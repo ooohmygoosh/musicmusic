@@ -370,22 +370,30 @@ app.post("/playlists/:id/remove", async (request, reply) => {
   return { ok: true };
 });
 
-function pickTagsWeighted(tags, maxCount) {
+function pickTagsWeighted(tags, maxCount, weightKey = "weight") {
   const pool = [...tags];
   const picked = [];
-  const total = () => pool.reduce((sum, t) => sum + t.weight, 0);
+  const total = () => pool.reduce((sum, t) => sum + Number(t[weightKey] || 0), 0);
   while (pool.length > 0 && picked.length < maxCount) {
     const r = Math.random() * total();
     let acc = 0;
     let idx = 0;
     for (; idx < pool.length; idx += 1) {
-      acc += pool[idx].weight;
+      acc += Number(pool[idx][weightKey] || 0);
       if (acc >= r) break;
     }
     const chosen = pool.splice(idx, 1)[0];
     picked.push(chosen);
   }
   return picked;
+}
+
+async function getRecentTagIds(userId, limit = 5) {
+  const { rows } = await query(
+    "SELECT st.tag_id FROM songs s JOIN song_tags st ON st.song_id = s.id WHERE s.user_id = $1 ORDER BY s.created_at DESC LIMIT $2",
+    [userId, limit]
+  );
+  return new Set(rows.map((row) => row.tag_id));
 }
 
 async function ensureUserTagWeights(userId) {
@@ -432,21 +440,35 @@ async function buildPrompt(userId) {
   );
   if (rows.length === 0) return { prompt: "", tagIds: [] };
 
+  const recentTagIds = await getRecentTagIds(userId, 6);
   const sorted = [...rows].sort((a, b) => b.weight - a.weight);
+  const fresh = sorted.filter((tag) => !recentTagIds.has(tag.id));
+  const recent = sorted.filter((tag) => recentTagIds.has(tag.id));
   const chosen = [];
   const byType = new Map();
-  for (const tag of sorted) {
-    const count = byType.get(tag.type) || 0;
-    if (count >= MAX_PER_TYPE) continue;
-    if (chosen.length >= MAX_TAGS_TOTAL) break;
-    chosen.push(tag);
-    byType.set(tag.type, count + 1);
+  const tryPick = (list) => {
+    for (const tag of list) {
+      const count = byType.get(tag.type) || 0;
+      if (count >= MAX_PER_TYPE) continue;
+      if (chosen.length >= MAX_TAGS_TOTAL) break;
+      chosen.push(tag);
+      byType.set(tag.type, count + 1);
+    }
+  };
+
+  tryPick(fresh);
+  if (chosen.length < MAX_TAGS_TOTAL) {
+    tryPick(recent);
   }
 
   const remaining = sorted.filter((tag) => !chosen.find((c) => c.id === tag.id));
   if (chosen.length < Math.min(MAX_TAGS_TOTAL, sorted.length) && remaining.length > 0) {
     const need = Math.min(MAX_TAGS_TOTAL - chosen.length, remaining.length);
-    const explore = pickTagsWeighted(remaining, need);
+    const explorePool = remaining.map((tag) => ({
+      ...tag,
+      exploreWeight: Math.max(0.05, 1 - Number(tag.weight || 0))
+    }));
+    const explore = pickTagsWeighted(explorePool, need, "exploreWeight");
     for (const tag of explore) {
       if (chosen.length >= MAX_TAGS_TOTAL) break;
       const count = byType.get(tag.type) || 0;
@@ -708,3 +730,4 @@ app.get("/songs", async (request, reply) => {
 
 const port = Number(process.env.PORT || 8080);
 app.listen({ port, host: "0.0.0.0" });
+
