@@ -15,6 +15,8 @@ const COEF_SKIP_EARLY = 0.2;
 const COEF_SKIP_LATE = 0.1;
 const COEF_COMPLETE = 0.05;
 const NORMALIZE_EVERY = 10;
+const MAX_TAGS_TOTAL = 6;
+const MAX_PER_TYPE = 2;
 
 function requireAdmin(request, reply) {
   const token = request.headers["x-admin-token"];
@@ -244,6 +246,20 @@ app.post("/user-tags/remove", async (request, reply) => {
   return { ok: true };
 });
 
+app.post("/user-tags/weight", async (request, reply) => {
+  const { user_id, tag_id, weight } = request.body || {};
+  if (!user_id || !tag_id || typeof weight !== "number") {
+    reply.code(400).send({ error: "user_id, tag_id, weight required" });
+    return;
+  }
+  const clamped = Math.max(0, Math.min(1, weight));
+  await query(
+    "UPDATE user_tags SET weight = $1, last_updated = NOW() WHERE user_id = $2 AND tag_id = $3",
+    [clamped, Number(user_id), Number(tag_id)]
+  );
+  return { ok: true };
+});
+
 app.get("/favorites", async (request, reply) => {
   const { user_id } = request.query || {};
   if (!user_id) {
@@ -255,6 +271,69 @@ app.get("/favorites", async (request, reply) => {
     [Number(user_id)]
   );
   return { items: rows };
+});
+
+app.get("/playlists", async (request, reply) => {
+  const { user_id } = request.query || {};
+  if (!user_id) {
+    reply.code(400).send({ error: "user_id required" });
+    return;
+  }
+  const { rows } = await query(
+    "SELECT p.id, p.name, p.created_at, COUNT(ps.song_id)::int AS song_count FROM playlists p LEFT JOIN playlist_songs ps ON ps.playlist_id = p.id WHERE p.user_id = $1 GROUP BY p.id ORDER BY p.created_at DESC",
+    [Number(user_id)]
+  );
+  return { items: rows };
+});
+
+app.post("/playlists", async (request, reply) => {
+  const { user_id, name } = request.body || {};
+  if (!user_id || !name) {
+    reply.code(400).send({ error: "user_id and name required" });
+    return;
+  }
+  const { rows } = await query(
+    "INSERT INTO playlists (user_id, name) VALUES ($1, $2) RETURNING id, name, created_at",
+    [Number(user_id), String(name).trim()]
+  );
+  return { item: rows[0] };
+});
+
+app.get("/playlists/:id/songs", async (request, reply) => {
+  const { id } = request.params;
+  const { rows } = await query(
+    "SELECT s.id, s.prompt, sa.audio_url, ps.created_at FROM playlist_songs ps JOIN songs s ON s.id = ps.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true WHERE ps.playlist_id = $1 ORDER BY ps.created_at DESC",
+    [Number(id)]
+  );
+  return { items: rows };
+});
+
+app.post("/playlists/:id/add", async (request, reply) => {
+  const { id } = request.params;
+  const { song_id } = request.body || {};
+  if (!song_id) {
+    reply.code(400).send({ error: "song_id required" });
+    return;
+  }
+  await query(
+    "INSERT INTO playlist_songs (playlist_id, song_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    [Number(id), Number(song_id)]
+  );
+  return { ok: true };
+});
+
+app.post("/playlists/:id/remove", async (request, reply) => {
+  const { id } = request.params;
+  const { song_id } = request.body || {};
+  if (!song_id) {
+    reply.code(400).send({ error: "song_id required" });
+    return;
+  }
+  await query(
+    "DELETE FROM playlist_songs WHERE playlist_id = $1 AND song_id = $2",
+    [Number(id), Number(song_id)]
+  );
+  return { ok: true };
 });
 
 function pickTagsWeighted(tags, maxCount) {
@@ -320,21 +399,38 @@ async function buildPrompt(userId) {
   if (rows.length === 0) return { prompt: "", tagIds: [] };
 
   const sorted = [...rows].sort((a, b) => b.weight - a.weight);
-  const topCount = Math.max(1, Math.ceil(rows.length * 0.8));
-  const exploreCount = Math.max(1, Math.ceil(rows.length * 0.2));
-  const top = sorted.slice(0, topCount);
-  const explore = pickTagsWeighted(sorted.slice(topCount), exploreCount);
-  const chosen = [...top, ...explore];
-
+  const chosen = [];
   const byType = new Map();
+  for (const tag of sorted) {
+    const count = byType.get(tag.type) || 0;
+    if (count >= MAX_PER_TYPE) continue;
+    if (chosen.length >= MAX_TAGS_TOTAL) break;
+    chosen.push(tag);
+    byType.set(tag.type, count + 1);
+  }
+
+  const remaining = sorted.filter((tag) => !chosen.find((c) => c.id === tag.id));
+  if (chosen.length < Math.min(MAX_TAGS_TOTAL, sorted.length) && remaining.length > 0) {
+    const need = Math.min(MAX_TAGS_TOTAL - chosen.length, remaining.length);
+    const explore = pickTagsWeighted(remaining, need);
+    for (const tag of explore) {
+      if (chosen.length >= MAX_TAGS_TOTAL) break;
+      const count = byType.get(tag.type) || 0;
+      if (count >= MAX_PER_TYPE) continue;
+      chosen.push(tag);
+      byType.set(tag.type, count + 1);
+    }
+  }
+
+  const grouped = new Map();
   for (const tag of chosen) {
-    const list = byType.get(tag.type) || [];
+    const list = grouped.get(tag.type) || [];
     list.push(tag.name);
-    byType.set(tag.type, list);
+    grouped.set(tag.type, list);
   }
 
   const parts = [];
-  for (const [type, list] of byType.entries()) {
+  for (const [type, list] of grouped.entries()) {
     parts.push(`${type}: ${list.join(", ")}`);
   }
   const tagIds = chosen.map((tag) => tag.id);

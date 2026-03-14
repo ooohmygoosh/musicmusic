@@ -43,6 +43,93 @@ function ScreenTitle({ title, subtitle }) {
   );
 }
 
+function GalaxyNode({ node, onDrop }) {
+  const pan = useRef(new Animated.ValueXY({ x: node.baseX, y: node.baseY })).current;
+  const bobX = useRef(new Animated.Value(0)).current;
+  const bobY = useRef(new Animated.Value(0)).current;
+  const panResponder = useRef(
+    Animated.createAnimatedComponent({})
+  );
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(bobX, { toValue: node.driftX, duration: 7000, useNativeDriver: false }),
+        Animated.timing(bobX, { toValue: -node.driftX, duration: 7000, useNativeDriver: false })
+      ])
+    ).start();
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(bobY, { toValue: node.driftY, duration: 8000, useNativeDriver: false }),
+        Animated.timing(bobY, { toValue: -node.driftY, duration: 8000, useNativeDriver: false })
+      ])
+    ).start();
+  }, [bobX, bobY, node.driftX, node.driftY]);
+
+  const responder = useRef(
+    Animated.createAnimatedComponent({})
+  );
+
+  const onPanResponderMove = (_, gesture) => {
+    pan.setValue({ x: node.baseX + gesture.dx, y: node.baseY + gesture.dy });
+  };
+
+  const onPanResponderRelease = (_, gesture) => {
+    const finalX = node.baseX + gesture.dx + node.size / 2;
+    const finalY = node.baseY + gesture.dy + node.size / 2;
+    const action = onDrop(finalX, finalY, node.tag);
+    if (!action) {
+      Animated.spring(pan, {
+        toValue: { x: node.baseX, y: node.baseY },
+        useNativeDriver: false
+      }).start();
+    }
+  };
+
+  const handlers = useRef(
+    Animated.createAnimatedComponent({})
+  );
+
+  const responderHandlers = useRef(
+    Animated.createAnimatedComponent({})
+  );
+
+  const panHandlers = useRef(
+    Animated.createAnimatedComponent({})
+  );
+
+  const responderRef = useRef(
+    require("react-native").PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderMove,
+      onPanResponderRelease
+    })
+  ).current;
+
+  return (
+    <Animated.View
+      {...responderRef.panHandlers}
+      style={[
+        styles.galaxyNode,
+        {
+          width: node.size,
+          height: node.size,
+          borderRadius: node.size / 2,
+          transform: [
+            { translateX: Animated.add(pan.x, bobX) },
+            { translateY: Animated.add(pan.y, bobY) }
+          ]
+        }
+      ]}
+    >
+      <View style={styles.galaxyInner}>
+        <Text style={styles.galaxyText}>{node.tag.name}</Text>
+      </View>
+    </Animated.View>
+  );
+}
+
 export default function App() {
   const { width } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState("player");
@@ -53,6 +140,10 @@ export default function App() {
   const [health, setHealth] = useState({ loading: false, ok: null, message: "" });
   const [songs, setSongs] = useState([]);
   const [favorites, setFavorites] = useState([]);
+  const [playlists, setPlaylists] = useState([]);
+  const [playlistSongs, setPlaylistSongs] = useState([]);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState(null);
+  const [newPlaylistName, setNewPlaylistName] = useState("");
   const [current, setCurrent] = useState(null);
   const [sound, setSound] = useState(null);
   const [currentSoundId, setCurrentSoundId] = useState(null);
@@ -62,6 +153,9 @@ export default function App() {
   const [tagMessage, setTagMessage] = useState("");
   const [profileTags, setProfileTags] = useState([]);
   const [galaxyNodes, setGalaxyNodes] = useState([]);
+  const [showQueue, setShowQueue] = useState(false);
+  const [deleteZone, setDeleteZone] = useState(null);
+  const [weakenZone, setWeakenZone] = useState(null);
 
   const completeSentFor = useRef(null);
   const autoNextLock = useRef(false);
@@ -104,15 +198,6 @@ export default function App() {
     return data.user.id;
   };
 
-  const initTags = async () => {
-    const uid = userId || (await ensureUser());
-    await fetch(`${API_BASE}/init-tags`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: uid, tag_ids: selectedIds })
-    });
-  };
-
   const submitUserTag = async () => {
     setTagMessage("");
     if (!newTagName.trim() || !newTagType.trim()) {
@@ -139,6 +224,7 @@ export default function App() {
     setNewTagName("");
     setNewTagType("");
     setTagMessage("已添加标签");
+    await loadProfileTags();
   };
 
   const loadProfileTags = async (uid = userId) => {
@@ -151,21 +237,23 @@ export default function App() {
 
   const removeProfileTag = async (tag) => {
     if (!userId) return;
-    Alert.alert("移除标签", `确定移除 ${tag.name} 吗？`, [
-      { text: "取消", style: "cancel" },
-      {
-        text: "移除",
-        style: "destructive",
-        onPress: async () => {
-          await fetch(`${API_BASE}/user-tags/remove`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id: userId, tag_id: tag.tag_id })
-          });
-          await loadProfileTags();
-        }
-      }
-    ]);
+    await fetch(`${API_BASE}/user-tags/remove`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, tag_id: tag.tag_id })
+    });
+    await loadProfileTags();
+  };
+
+  const weakenProfileTag = async (tag) => {
+    if (!userId) return;
+    const nextWeight = Math.max(0, Number(tag.weight || 0) * 0.5);
+    await fetch(`${API_BASE}/user-tags/weight`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, tag_id: tag.tag_id, weight: nextWeight })
+    });
+    await loadProfileTags();
   };
 
   const generate = async () => {
@@ -183,14 +271,20 @@ export default function App() {
     const res = await fetch(`${API_BASE}/songs?user_id=${uid}`);
     const data = await res.json();
     const items = data.items || [];
-    setSongs(items);
-    if (options.setCurrent && items.length > 0) {
-      setCurrent(items[0]);
+    const seen = new Set();
+    const deduped = items.filter((item) => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
+    setSongs(deduped);
+    if (options.setCurrent && deduped.length > 0) {
+      setCurrent(deduped[0]);
     }
-    if (!current && items.length > 0) {
-      setCurrent(items[0]);
+    if (!current && deduped.length > 0) {
+      setCurrent(deduped[0]);
     }
-    return items;
+    return deduped;
   };
 
   const refreshFavorites = async (uid = userId) => {
@@ -200,6 +294,41 @@ export default function App() {
     const items = data.items || [];
     setFavorites(items);
     return items;
+  };
+
+  const loadPlaylists = async (uid = userId) => {
+    if (!uid) return;
+    const res = await fetch(`${API_BASE}/playlists?user_id=${uid}`);
+    const data = await res.json();
+    setPlaylists(data.items || []);
+  };
+
+  const createPlaylist = async () => {
+    if (!userId || !newPlaylistName.trim()) return;
+    await fetch(`${API_BASE}/playlists`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, name: newPlaylistName.trim() })
+    });
+    setNewPlaylistName("");
+    await loadPlaylists();
+  };
+
+  const loadPlaylistSongs = async (playlistId) => {
+    if (!playlistId) return;
+    const res = await fetch(`${API_BASE}/playlists/${playlistId}/songs`);
+    const data = await res.json();
+    setPlaylistSongs(data.items || []);
+  };
+
+  const addToPlaylist = async () => {
+    if (!current || !selectedPlaylistId) return;
+    await fetch(`${API_BASE}/playlists/${selectedPlaylistId}/add`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ song_id: current.id })
+    });
+    await loadPlaylistSongs(selectedPlaylistId);
   };
 
   const testConnection = async () => {
@@ -263,12 +392,16 @@ export default function App() {
     }
   };
 
-  const goNext = async () => {
-    if (!songs.length || !current) return;
+  const handleNext = async () => {
+    if (!current) return;
     const index = songs.findIndex((s) => s.id === current.id);
-    const next = songs[index + 1] || songs[0];
-    setCurrent(next);
-    if (next) await play(next);
+    if (index >= 0 && index < songs.length - 1) {
+      const next = songs[index + 1];
+      setCurrent(next);
+      await play(next);
+      return;
+    }
+    await handleAutoNext("skip");
   };
 
   const feedback = async (action) => {
@@ -308,7 +441,10 @@ export default function App() {
   useEffect(() => {
     if (activeTab === "favorites") {
       const uid = userId;
-      if (uid) refreshFavorites(uid).catch(() => {});
+      if (uid) {
+        refreshFavorites(uid).catch(() => {});
+        loadPlaylists(uid).catch(() => {});
+      }
     }
     if (activeTab === "galaxy") {
       const uid = userId;
@@ -318,41 +454,39 @@ export default function App() {
 
   useEffect(() => {
     const height = 360;
-    const nodes = profileTags.map((tag, index) => {
+    const nodes = profileTags.map((tag) => {
       const size = 16 + Math.max(0, Math.min(1, Number(tag.weight || 0))) * 52;
       const startX = Math.random() * (width - size - 20) + 10;
       const startY = Math.random() * (height - size - 20) + 10;
-      const dx = (Math.random() - 0.5) * 40;
-      const dy = (Math.random() - 0.5) * 30;
-      const animX = new Animated.Value(startX);
-      const animY = new Animated.Value(startY);
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(animX, { toValue: startX + dx, duration: 7000 + index * 200, useNativeDriver: false }),
-          Animated.timing(animX, { toValue: startX - dx, duration: 7000 + index * 200, useNativeDriver: false })
-        ])
-      ).start();
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(animY, { toValue: startY + dy, duration: 8000 + index * 150, useNativeDriver: false }),
-          Animated.timing(animY, { toValue: startY - dy, duration: 8000 + index * 150, useNativeDriver: false })
-        ])
-      ).start();
-      return { tag, size, animX, animY };
+      return {
+        tag,
+        size,
+        baseX: startX,
+        baseY: startY,
+        driftX: (Math.random() - 0.5) * 40,
+        driftY: (Math.random() - 0.5) * 30
+      };
     });
     setGalaxyNodes(nodes);
   }, [profileTags, width]);
+
+  const handleDrop = (x, y, tag) => {
+    if (deleteZone && x >= deleteZone.x && x <= deleteZone.x + deleteZone.width && y >= deleteZone.y && y <= deleteZone.y + deleteZone.height) {
+      removeProfileTag(tag);
+      return "delete";
+    }
+    if (weakenZone && x >= weakenZone.x && x <= weakenZone.x + weakenZone.width && y >= weakenZone.y && y <= weakenZone.y + weakenZone.height) {
+      weakenProfileTag(tag);
+      return "weaken";
+    }
+    return null;
+  };
 
   const progressPercent = Math.min(1, (playback.position || 0) / (playback.duration || 1));
 
   const renderPlayer = () => (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.screenPadding}>
       <ScreenTitle title="现在播放" subtitle="你的 AI 音乐正在流动" />
-      <View style={styles.section}>
-        <TouchableOpacity style={styles.primary} onPress={generate}>
-          <Text style={styles.primaryText}>生成新音乐</Text>
-        </TouchableOpacity>
-      </View>
 
       <View style={styles.playerCard}>
         <View style={styles.coverWrap}>
@@ -382,140 +516,142 @@ export default function App() {
           <TouchableOpacity style={styles.playBtn} onPress={togglePlay}>
             <Text style={styles.playText}>{playback.isPlaying ? "暂停" : "播放"}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.controlBtn} onPress={() => handleAutoNext("skip")}>
-            <Text style={styles.controlText}>跳过</Text>
+          <TouchableOpacity style={styles.controlBtn} onPress={handleNext}>
+            <Text style={styles.controlText}>下一曲</Text>
           </TouchableOpacity>
         </View>
-
-        <TouchableOpacity style={styles.secondary} onPress={goNext}>
-          <Text style={styles.secondaryText}>下一首</Text>
-        </TouchableOpacity>
       </View>
 
       <View style={styles.section}>
-        <View style={styles.rowBetween}>
-          <Text style={styles.sectionTitle}>播放列表</Text>
-          <TouchableOpacity style={styles.secondarySmall} onPress={() => refreshSongs()}>
-            <Text style={styles.secondaryText}>刷新</Text>
-          </TouchableOpacity>
-        </View>
-        <FlatList
-          data={songs}
-          keyExtractor={(item) => String(item.id)}
-          scrollEnabled={false}
-          renderItem={({ item }) => (
-            <TouchableOpacity style={styles.listItem} onPress={() => setCurrent(item)}>
-              <View>
-                <Text style={styles.listTitle}>#{item.id}</Text>
-                <Text style={styles.listSub} numberOfLines={1}>{item.prompt}</Text>
-              </View>
-              <Text style={styles.chevron}>›</Text>
-            </TouchableOpacity>
-          )}
-        />
+        <TouchableOpacity style={styles.secondary} onPress={() => setShowQueue((prev) => !prev)}>
+          <Text style={styles.secondaryText}>{showQueue ? "收起播放列表" : "展开播放列表"}</Text>
+        </TouchableOpacity>
+        {showQueue ? (
+          <FlatList
+            data={songs}
+            keyExtractor={(item) => String(item.id)}
+            scrollEnabled={false}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={styles.listItem} onPress={() => setCurrent(item)}>
+                <View>
+                  <Text style={styles.listTitle}>#{item.id}</Text>
+                  <Text style={styles.listSub} numberOfLines={1}>{item.prompt}</Text>
+                </View>
+                <Text style={styles.chevron}>›</Text>
+              </TouchableOpacity>
+            )}
+          />
+        ) : null}
       </View>
     </ScrollView>
   );
 
   const renderFavorites = () => (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.screenPadding}>
-      <ScreenTitle title="收藏歌单" subtitle="你喜欢的都在这里" />
-      <View style={styles.sectionHeader}>
-        <TouchableOpacity style={styles.secondarySmall} onPress={() => refreshFavorites()}>
-          <Text style={styles.secondaryText}>刷新</Text>
+      <ScreenTitle title="收藏歌单" subtitle="创建你的专属歌单" />
+
+      <View style={styles.groupCard}>
+        <Text style={styles.groupTitle}>新建歌单</Text>
+        <TextInput
+          value={newPlaylistName}
+          onChangeText={setNewPlaylistName}
+          placeholder="歌单名称"
+          style={styles.input}
+        />
+        <TouchableOpacity style={styles.primary} onPress={createPlaylist}>
+          <Text style={styles.primaryText}>创建歌单</Text>
         </TouchableOpacity>
       </View>
-      {favorites.length === 0 ? (
-        <Text style={styles.placeholder}>暂无收藏歌曲</Text>
-      ) : (
-        favorites.map((item) => (
-          <TouchableOpacity key={item.id} style={styles.listItem} onPress={() => setCurrent(item)}>
+
+      <View style={styles.groupCard}>
+        <Text style={styles.groupTitle}>我的歌单</Text>
+        {playlists.map((plist) => (
+          <TouchableOpacity
+            key={plist.id}
+            style={styles.listItem}
+            onPress={() => {
+              setSelectedPlaylistId(plist.id);
+              loadPlaylistSongs(plist.id);
+            }}
+          >
             <View>
-              <Text style={styles.listTitle}>#{item.id}</Text>
-              <Text style={styles.listSub} numberOfLines={1}>{item.prompt}</Text>
+              <Text style={styles.listTitle}>{plist.name}</Text>
+              <Text style={styles.listSub}>歌曲 {plist.song_count || 0}</Text>
             </View>
             <Text style={styles.chevron}>›</Text>
           </TouchableOpacity>
-        ))
-      )}
+        ))}
+      </View>
+
+      {selectedPlaylistId ? (
+        <View style={styles.groupCard}>
+          <Text style={styles.groupTitle}>当前歌单</Text>
+          <TouchableOpacity style={styles.secondary} onPress={addToPlaylist}>
+            <Text style={styles.secondaryText}>把当前歌曲加入歌单</Text>
+          </TouchableOpacity>
+          {playlistSongs.length === 0 ? (
+            <Text style={styles.placeholder}>暂无歌曲</Text>
+          ) : (
+            playlistSongs.map((item) => (
+              <TouchableOpacity key={item.id} style={styles.listItem} onPress={() => setCurrent(item)}>
+                <View>
+                  <Text style={styles.listTitle}>#{item.id}</Text>
+                  <Text style={styles.listSub} numberOfLines={1}>{item.prompt}</Text>
+                </View>
+                <Text style={styles.chevron}>›</Text>
+              </TouchableOpacity>
+            ))
+          )}
+        </View>
+      ) : null}
+
+      <View style={styles.groupCard}>
+        <Text style={styles.groupTitle}>收藏记录</Text>
+        {favorites.length === 0 ? (
+          <Text style={styles.placeholder}>暂无收藏歌曲</Text>
+        ) : (
+          favorites.map((item) => (
+            <TouchableOpacity key={item.id} style={styles.listItem} onPress={() => setCurrent(item)}>
+              <View>
+                <Text style={styles.listTitle}>#{item.id}</Text>
+                <Text style={styles.listSub} numberOfLines={1}>{item.prompt}</Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </TouchableOpacity>
+          ))
+        )}
+      </View>
     </ScrollView>
   );
 
   const renderGalaxy = () => (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.screenPadding}>
       <ScreenTitle title="标签画像" subtitle="星系代表你的喜好分布" />
-      <Text style={styles.hintText}>点击星球可移除标签，大小代表喜爱程度</Text>
+      <Text style={styles.hintText}>拖动星球到删除区可移除标签，拖到弱化区可降低权重</Text>
+
+      <View style={styles.galaxyControls}>
+        <View
+          style={styles.galaxyZoneDelete}
+          onLayout={(event) => setDeleteZone(event.nativeEvent.layout)}
+        >
+          <Text style={styles.zoneText}>删除区</Text>
+        </View>
+        <View
+          style={styles.galaxyZoneWeaken}
+          onLayout={(event) => setWeakenZone(event.nativeEvent.layout)}
+        >
+          <Text style={styles.zoneText}>弱化区</Text>
+        </View>
+      </View>
+
       <View style={styles.galaxyWrap}>
         {galaxyNodes.map((node) => (
-          <Animated.View
-            key={node.tag.tag_id}
-            style={[
-              styles.galaxyNode,
-              {
-                width: node.size,
-                height: node.size,
-                borderRadius: node.size / 2,
-                transform: [{ translateX: node.animX }, { translateY: node.animY }]
-              }
-            ]}
-          >
-            <TouchableOpacity
-              style={styles.galaxyInner}
-              onPress={() => removeProfileTag(node.tag)}
-            >
-              <Text style={styles.galaxyText}>{node.tag.name}</Text>
-            </TouchableOpacity>
-          </Animated.View>
+          <GalaxyNode key={node.tag.tag_id} node={node} onDrop={handleDrop} />
         ))}
       </View>
-      <View style={styles.section}>
-        <View style={styles.rowBetween}>
-          <Text style={styles.sectionTitle}>标签列表</Text>
-          <TouchableOpacity style={styles.secondarySmall} onPress={() => loadProfileTags()}>
-            <Text style={styles.secondaryText}>刷新</Text>
-          </TouchableOpacity>
-        </View>
-        {profileTags.map((tag) => (
-          <View key={tag.tag_id} style={styles.profileItem}>
-            <View>
-              <Text style={styles.profileTitle}>{tag.name}</Text>
-              <Text style={styles.profileSub}>{tag.type} · 权重 {Number(tag.weight || 0).toFixed(2)}</Text>
-            </View>
-            <TouchableOpacity style={styles.removeBtn} onPress={() => removeProfileTag(tag)}>
-              <Text style={styles.removeText}>移除</Text>
-            </TouchableOpacity>
-          </View>
-        ))}
-      </View>
-    </ScrollView>
-  );
-
-  const renderSettings = () => (
-    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.screenPadding}>
-      <ScreenTitle title="设置" subtitle="个性化你的音乐偏好" />
-      <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>设备信息</Text>
-        <TextInput value={deviceId} onChangeText={setDeviceId} style={styles.input} />
-      </View>
 
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>标签初始化</Text>
-        <FlatList
-          data={tags}
-          keyExtractor={(item) => String(item.id)}
-          numColumns={3}
-          scrollEnabled={false}
-          renderItem={({ item }) => (
-            <TagChip tag={item} selected={selected.has(item.id)} onPress={toggleTag} />
-          )}
-        />
-        <TouchableOpacity style={styles.primary} onPress={initTags}>
-          <Text style={styles.primaryText}>初始化标签池</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>新增标签</Text>
+        <Text style={styles.groupTitle}>标签管理</Text>
         <View style={styles.row}>
           <TextInput
             value={newTagName}
@@ -534,6 +670,16 @@ export default function App() {
           <Text style={styles.secondaryText}>提交标签</Text>
         </TouchableOpacity>
         {tagMessage ? <Text style={styles.hintText}>{tagMessage}</Text> : null}
+      </View>
+    </ScrollView>
+  );
+
+  const renderSettings = () => (
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.screenPadding}>
+      <ScreenTitle title="设置" subtitle="账号与连接信息" />
+      <View style={styles.groupCard}>
+        <Text style={styles.groupTitle}>设备信息</Text>
+        <TextInput value={deviceId} onChangeText={setDeviceId} style={styles.input} />
       </View>
 
       <View style={styles.groupCard}>
@@ -730,6 +876,24 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     overflow: "hidden"
   },
+  galaxyControls: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
+  galaxyZoneDelete: {
+    flex: 1,
+    marginRight: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "#3A0E11",
+    alignItems: "center"
+  },
+  galaxyZoneWeaken: {
+    flex: 1,
+    marginLeft: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "#1C2B3A",
+    alignItems: "center"
+  },
+  zoneText: { color: "#fff", fontWeight: "600" },
   galaxyNode: {
     position: "absolute",
     justifyContent: "center",
