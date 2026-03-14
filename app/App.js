@@ -34,6 +34,15 @@ function formatTime(ms) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+function ScreenTitle({ title, subtitle }) {
+  return (
+    <View style={styles.titleBlock}>
+      <Text style={styles.title}>{title}</Text>
+      {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+    </View>
+  );
+}
+
 export default function App() {
   const { width } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState("player");
@@ -310,7 +319,7 @@ export default function App() {
   useEffect(() => {
     const height = 360;
     const nodes = profileTags.map((tag, index) => {
-      const size = 18 + Math.max(0, Math.min(1, Number(tag.weight || 0))) * 46;
+      const size = 16 + Math.max(0, Math.min(1, Number(tag.weight || 0))) * 52;
       const startX = Math.random() * (width - size - 20) + 10;
       const startY = Math.random() * (height - size - 20) + 10;
       const dx = (Math.random() - 0.5) * 40;
@@ -319,14 +328,14 @@ export default function App() {
       const animY = new Animated.Value(startY);
       Animated.loop(
         Animated.sequence([
-          Animated.timing(animX, { toValue: startX + dx, duration: 6000 + index * 200, useNativeDriver: false }),
-          Animated.timing(animX, { toValue: startX - dx, duration: 6000 + index * 200, useNativeDriver: false })
+          Animated.timing(animX, { toValue: startX + dx, duration: 7000 + index * 200, useNativeDriver: false }),
+          Animated.timing(animX, { toValue: startX - dx, duration: 7000 + index * 200, useNativeDriver: false })
         ])
       ).start();
       Animated.loop(
         Animated.sequence([
-          Animated.timing(animY, { toValue: startY + dy, duration: 7000 + index * 150, useNativeDriver: false }),
-          Animated.timing(animY, { toValue: startY - dy, duration: 7000 + index * 150, useNativeDriver: false })
+          Animated.timing(animY, { toValue: startY + dy, duration: 8000 + index * 150, useNativeDriver: false }),
+          Animated.timing(animY, { toValue: startY - dy, duration: 8000 + index * 150, useNativeDriver: false })
         ])
       ).start();
       return { tag, size, animX, animY };
@@ -337,11 +346,11 @@ export default function App() {
   const progressPercent = Math.min(1, (playback.position || 0) / (playback.duration || 1));
 
   const renderPlayer = () => (
-    <ScrollView showsVerticalScrollIndicator={false}>
-      <Text style={styles.title}>音乐播放</Text>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.screenPadding}>
+      <ScreenTitle title="现在播放" subtitle="你的 AI 音乐正在流动" />
       <View style={styles.section}>
         <TouchableOpacity style={styles.primary} onPress={generate}>
-          <Text style={styles.primaryText}>生成音乐</Text>
+          <Text style={styles.primaryText}>生成新音乐</Text>
         </TouchableOpacity>
       </View>
 
@@ -379,15 +388,15 @@ export default function App() {
         </View>
 
         <TouchableOpacity style={styles.secondary} onPress={goNext}>
-          <Text>下一首</Text>
+          <Text style={styles.secondaryText}>下一首</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.section}>
         <View style={styles.rowBetween}>
-          <Text style={styles.label}>播放列表</Text>
+          <Text style={styles.sectionTitle}>播放列表</Text>
           <TouchableOpacity style={styles.secondarySmall} onPress={() => refreshSongs()}>
-            <Text>刷新</Text>
+            <Text style={styles.secondaryText}>刷新</Text>
           </TouchableOpacity>
         </View>
         <FlatList
@@ -396,8 +405,11 @@ export default function App() {
           scrollEnabled={false}
           renderItem={({ item }) => (
             <TouchableOpacity style={styles.listItem} onPress={() => setCurrent(item)}>
-              <Text style={styles.listTitle}>#{item.id}</Text>
-              <Text style={styles.listSub} numberOfLines={1}>{item.prompt}</Text>
+              <View>
+                <Text style={styles.listTitle}>#{item.id}</Text>
+                <Text style={styles.listSub} numberOfLines={1}>{item.prompt}</Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
             </TouchableOpacity>
           )}
         />
@@ -406,11 +418,11 @@ export default function App() {
   );
 
   const renderFavorites = () => (
-    <ScrollView showsVerticalScrollIndicator={false}>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.screenPadding}>
+      <ScreenTitle title="收藏歌单" subtitle="你喜欢的都在这里" />
       <View style={styles.sectionHeader}>
-        <Text style={styles.title}>收藏歌单</Text>
         <TouchableOpacity style={styles.secondarySmall} onPress={() => refreshFavorites()}>
-          <Text>刷新</Text>
+          <Text style={styles.secondaryText}>刷新</Text>
         </TouchableOpacity>
       </View>
       {favorites.length === 0 ? (
@@ -418,8 +430,11 @@ export default function App() {
       ) : (
         favorites.map((item) => (
           <TouchableOpacity key={item.id} style={styles.listItem} onPress={() => setCurrent(item)}>
-            <Text style={styles.listTitle}>#{item.id}</Text>
-            <Text style={styles.listSub} numberOfLines={1}>{item.prompt}</Text>
+            <View>
+              <Text style={styles.listTitle}>#{item.id}</Text>
+              <Text style={styles.listSub} numberOfLines={1}>{item.prompt}</Text>
+            </View>
+            <Text style={styles.chevron}>›</Text>
           </TouchableOpacity>
         ))
       )}
@@ -427,8 +442,8 @@ export default function App() {
   );
 
   const renderGalaxy = () => (
-    <ScrollView showsVerticalScrollIndicator={false}>
-      <Text style={styles.title}>标签画像</Text>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.screenPadding}>
+      <ScreenTitle title="标签画像" subtitle="星系代表你的喜好分布" />
       <Text style={styles.hintText}>点击星球可移除标签，大小代表喜爱程度</Text>
       <View style={styles.galaxyWrap}>
         {galaxyNodes.map((node) => (
@@ -455,9 +470,9 @@ export default function App() {
       </View>
       <View style={styles.section}>
         <View style={styles.rowBetween}>
-          <Text style={styles.label}>标签列表</Text>
+          <Text style={styles.sectionTitle}>标签列表</Text>
           <TouchableOpacity style={styles.secondarySmall} onPress={() => loadProfileTags()}>
-            <Text>刷新</Text>
+            <Text style={styles.secondaryText}>刷新</Text>
           </TouchableOpacity>
         </View>
         {profileTags.map((tag) => (
@@ -476,15 +491,15 @@ export default function App() {
   );
 
   const renderSettings = () => (
-    <ScrollView showsVerticalScrollIndicator={false}>
-      <Text style={styles.title}>用户设置</Text>
-      <View style={styles.section}>
-        <Text style={styles.label}>设备ID</Text>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.screenPadding}>
+      <ScreenTitle title="设置" subtitle="个性化你的音乐偏好" />
+      <View style={styles.groupCard}>
+        <Text style={styles.groupTitle}>设备信息</Text>
         <TextInput value={deviceId} onChangeText={setDeviceId} style={styles.input} />
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.label}>选择标签</Text>
+      <View style={styles.groupCard}>
+        <Text style={styles.groupTitle}>标签初始化</Text>
         <FlatList
           data={tags}
           keyExtractor={(item) => String(item.id)}
@@ -499,8 +514,8 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.label}>添加自定义标签</Text>
+      <View style={styles.groupCard}>
+        <Text style={styles.groupTitle}>新增标签</Text>
         <View style={styles.row}>
           <TextInput
             value={newTagName}
@@ -516,14 +531,15 @@ export default function App() {
           />
         </View>
         <TouchableOpacity style={styles.secondary} onPress={submitUserTag}>
-          <Text>提交标签</Text>
+          <Text style={styles.secondaryText}>提交标签</Text>
         </TouchableOpacity>
         {tagMessage ? <Text style={styles.hintText}>{tagMessage}</Text> : null}
       </View>
 
-      <View style={styles.section}>
+      <View style={styles.groupCard}>
+        <Text style={styles.groupTitle}>连接测试</Text>
         <TouchableOpacity style={styles.secondary} onPress={testConnection}>
-          <Text>连接测试</Text>
+          <Text style={styles.secondaryText}>测试 API 连接</Text>
         </TouchableOpacity>
         {health.message ? (
           <Text style={health.ok ? styles.okText : styles.errorText}>{health.message}</Text>
@@ -559,19 +575,24 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: "#f7f2ea" },
-  content: { flex: 1, padding: 16 },
-  title: { fontSize: 22, fontWeight: "700", marginBottom: 12 },
+  page: { flex: 1, backgroundColor: "#F2F2F7" },
+  content: { flex: 1 },
+  screenPadding: { padding: 16, paddingBottom: 32 },
+  titleBlock: { marginBottom: 12 },
+  title: { fontSize: 28, fontWeight: "700", color: "#1C1C1E" },
+  subtitle: { fontSize: 13, color: "#8E8E93", marginTop: 4 },
   section: { marginBottom: 16 },
-  sectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  sectionHeader: { flexDirection: "row", justifyContent: "flex-end", marginBottom: 8 },
+  sectionTitle: { fontSize: 16, fontWeight: "600", color: "#1C1C1E" },
   label: { fontSize: 14, fontWeight: "600", marginBottom: 8 },
   input: {
     backgroundColor: "#fff",
-    borderRadius: 10,
-    padding: 10,
+    borderRadius: 12,
+    padding: 12,
     borderWidth: 1,
-    borderColor: "#e4dccc",
-    marginBottom: 8
+    borderColor: "#E5E5EA",
+    marginBottom: 8,
+    color: "#1C1C1E"
   },
   tag: {
     paddingVertical: 8,
@@ -579,128 +600,133 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#e4dccc",
+    borderColor: "#E5E5EA",
     margin: 4
   },
-  tagSelected: { backgroundColor: "#2e5d4b", borderColor: "#2e5d4b" },
-  tagText: { fontSize: 12 },
+  tagSelected: { backgroundColor: "#007AFF", borderColor: "#007AFF" },
+  tagText: { fontSize: 12, color: "#1C1C1E" },
   tagTextSelected: { color: "#fff" },
   primary: {
-    backgroundColor: "#2e5d4b",
+    backgroundColor: "#007AFF",
     padding: 12,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: "center",
     marginTop: 8
   },
   primaryText: { color: "#fff", fontWeight: "600" },
   secondary: {
     padding: 10,
-    borderRadius: 10,
+    borderRadius: 12,
     backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#e4dccc",
+    borderColor: "#E5E5EA",
     alignItems: "center"
   },
+  secondaryText: { color: "#007AFF", fontWeight: "600" },
   secondarySmall: {
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 8,
+    borderRadius: 10,
     backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#e4dccc"
+    borderColor: "#E5E5EA"
   },
-  okText: { color: "#2e5d4b", marginTop: 6, fontSize: 12 },
-  errorText: { color: "#b00020", marginTop: 6, fontSize: 12 },
-  hintText: { color: "#666", marginTop: 4, fontSize: 12 },
+  okText: { color: "#34C759", marginTop: 6, fontSize: 12 },
+  errorText: { color: "#FF3B30", marginTop: 6, fontSize: 12 },
+  hintText: { color: "#8E8E93", marginTop: 4, fontSize: 12 },
   row: { flexDirection: "row", gap: 8 },
   rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   flex: { flex: 1 },
   playerCard: {
     backgroundColor: "#fff",
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 16,
     borderWidth: 1,
-    borderColor: "#e4dccc",
+    borderColor: "#E5E5EA",
     marginBottom: 16
   },
   coverWrap: { alignItems: "center", marginBottom: 12 },
   cover: {
-    width: 140,
-    height: 140,
-    borderRadius: 999,
-    backgroundColor: "#2e5d4b",
+    width: 150,
+    height: 150,
+    borderRadius: 24,
+    backgroundColor: "#1C1C1E",
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#000",
     shadowOpacity: 0.12,
-    shadowOffset: { width: 0, height: 6 },
-    shadowRadius: 10,
-    elevation: 4
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 16,
+    elevation: 6
   },
-  coverText: { color: "#fff", fontSize: 20, fontWeight: "700" },
-  playerTitle: { fontSize: 18, fontWeight: "700", textAlign: "center" },
-  playerSub: { fontSize: 12, color: "#666", textAlign: "center", marginTop: 4 },
+  coverText: { color: "#fff", fontSize: 22, fontWeight: "700" },
+  playerTitle: { fontSize: 18, fontWeight: "700", textAlign: "center", color: "#1C1C1E" },
+  playerSub: { fontSize: 12, color: "#8E8E93", textAlign: "center", marginTop: 4 },
   progressWrap: { marginTop: 12 },
   progressTrack: {
     height: 6,
-    backgroundColor: "#efe6d7",
+    backgroundColor: "#E5E5EA",
     borderRadius: 999,
     overflow: "hidden"
   },
-  progressFill: { height: 6, backgroundColor: "#2e5d4b" },
+  progressFill: { height: 6, backgroundColor: "#007AFF" },
   progressTimeRow: {
     marginTop: 6,
     flexDirection: "row",
     justifyContent: "space-between"
   },
-  progressText: { fontSize: 11, color: "#777" },
+  progressText: { fontSize: 11, color: "#8E8E93" },
   controlsRow: { flexDirection: "row", justifyContent: "space-between", marginVertical: 12 },
   controlBtn: {
     flex: 1,
     padding: 10,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#e4dccc",
+    borderColor: "#E5E5EA",
     backgroundColor: "#fff",
     alignItems: "center",
     marginHorizontal: 4
   },
-  controlText: { fontSize: 12 },
+  controlText: { fontSize: 12, color: "#1C1C1E" },
   playBtn: {
     flex: 1,
     padding: 12,
     borderRadius: 999,
-    backgroundColor: "#2e5d4b",
+    backgroundColor: "#007AFF",
     alignItems: "center",
     marginHorizontal: 4
   },
   playText: { color: "#fff", fontWeight: "600" },
   listItem: {
     backgroundColor: "#fff",
-    borderRadius: 10,
-    padding: 10,
+    borderRadius: 14,
+    padding: 12,
     borderWidth: 1,
-    borderColor: "#e4dccc",
-    marginBottom: 6
+    borderColor: "#E5E5EA",
+    marginBottom: 8,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center"
   },
-  listTitle: { fontSize: 12, fontWeight: "700" },
-  listSub: { fontSize: 11, color: "#666" },
-  placeholder: { color: "#888", marginTop: 8 },
+  listTitle: { fontSize: 12, fontWeight: "700", color: "#1C1C1E" },
+  listSub: { fontSize: 11, color: "#8E8E93" },
+  chevron: { fontSize: 18, color: "#C7C7CC" },
+  placeholder: { color: "#8E8E93", marginTop: 8 },
   tabBar: {
     flexDirection: "row",
     justifyContent: "space-around",
     paddingVertical: 10,
     borderTopWidth: 1,
-    borderTopColor: "#e6ddce",
+    borderTopColor: "#E5E5EA",
     backgroundColor: "#fff"
   },
   tabItem: { paddingVertical: 6, paddingHorizontal: 8 },
-  tabText: { fontSize: 12, color: "#666" },
-  tabTextActive: { color: "#2e5d4b", fontWeight: "700" },
+  tabText: { fontSize: 12, color: "#8E8E93" },
+  tabTextActive: { color: "#007AFF", fontWeight: "700" },
   galaxyWrap: {
     height: 360,
-    borderRadius: 16,
-    backgroundColor: "#141622",
+    borderRadius: 20,
+    backgroundColor: "#0B0B17",
     marginBottom: 16,
     overflow: "hidden"
   },
@@ -713,26 +739,35 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "rgba(93, 195, 255, 0.85)",
+    backgroundColor: "rgba(120, 200, 255, 0.85)",
     borderRadius: 999,
     padding: 4
   },
-  galaxyText: { fontSize: 10, color: "#0b1c2e", fontWeight: "700" },
+  galaxyText: { fontSize: 10, color: "#0B1B2B", fontWeight: "700" },
   profileItem: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#eadfce"
+    borderBottomColor: "#E5E5EA"
   },
-  profileTitle: { fontSize: 14, fontWeight: "600" },
-  profileSub: { fontSize: 12, color: "#666", marginTop: 4 },
+  profileTitle: { fontSize: 14, fontWeight: "600", color: "#1C1C1E" },
+  profileSub: { fontSize: 12, color: "#8E8E93", marginTop: 4 },
   removeBtn: {
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: "#f3e7e7"
+    borderRadius: 10,
+    backgroundColor: "#FFE5E5"
   },
-  removeText: { color: "#a33" }
+  removeText: { color: "#FF3B30", fontWeight: "600" },
+  groupCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#E5E5EA",
+    marginBottom: 16
+  },
+  groupTitle: { fontSize: 14, fontWeight: "600", color: "#1C1C1E", marginBottom: 8 }
 });
