@@ -8,6 +8,14 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 const TPY_BASE_URL = process.env.TPY_BASE_URL || "https://api.tianpuyue.cn";
 const TPY_API_KEY = process.env.TPY_API_KEY || "";
 
+const DEFAULT_TAG_WEIGHT = 0.3;
+const SELECTED_TAG_WEIGHT = 0.7;
+const COEF_FAVORITE = 0.15;
+const COEF_SKIP_EARLY = 0.2;
+const COEF_SKIP_LATE = 0.1;
+const COEF_COMPLETE = 0.05;
+const NORMALIZE_EVERY = 10;
+
 function requireAdmin(request, reply) {
   const token = request.headers["x-admin-token"];
   if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) {
@@ -105,14 +113,53 @@ app.post("/init-tags", async (request, reply) => {
     reply.code(400).send({ error: "user_id and tag_ids required" });
     return;
   }
-  await query("DELETE FROM user_tags WHERE user_id = $1", [user_id]);
-  for (const tagId of tag_ids) {
-    await query(
-      "INSERT INTO user_tags (user_id, tag_id, weight) VALUES ($1, $2, 1.0)",
-      [user_id, tagId]
-    );
-  }
+
+  await ensureUserTagWeights(user_id);
+
+  await query(
+    "UPDATE user_tags SET weight = $1, initial_weight = $1, update_count = 0, last_updated = NOW() WHERE user_id = $2 AND tag_id = ANY($3)",
+    [SELECTED_TAG_WEIGHT, user_id, tag_ids]
+  );
+
+  await normalizeUserWeights(user_id);
   return { ok: true };
+});
+
+app.post("/user-tags", async (request, reply) => {
+  const { user_id, name, type } = request.body || {};
+  if (!user_id || !name || !type) {
+    reply.code(400).send({ error: "user_id, name, type required" });
+    return;
+  }
+  const cleanName = String(name).trim();
+  const cleanType = String(type).trim();
+  if (!cleanName || !cleanType) {
+    reply.code(400).send({ error: "name and type required" });
+    return;
+  }
+
+  const { rows: existing } = await query(
+    "SELECT id, name, type FROM tags WHERE LOWER(name) = LOWER($1) AND LOWER(type) = LOWER($2) LIMIT 1",
+    [cleanName, cleanType]
+  );
+
+  let tag = existing[0];
+  if (!tag) {
+    const created = await query(
+      "INSERT INTO tags (name, type, is_active, is_system) VALUES ($1, $2, true, false) RETURNING id, name, type",
+      [cleanName, cleanType]
+    );
+    tag = created.rows[0];
+  }
+
+  await ensureUserTagWeights(user_id);
+  await query(
+    "UPDATE user_tags SET weight = $1, initial_weight = $1, update_count = 0, last_updated = NOW(), is_active = true WHERE user_id = $2 AND tag_id = $3",
+    [SELECTED_TAG_WEIGHT, user_id, tag.id]
+  );
+  await normalizeUserWeights(user_id);
+
+  return { tag };
 });
 
 function pickTagsWeighted(tags, maxCount) {
@@ -133,14 +180,50 @@ function pickTagsWeighted(tags, maxCount) {
   return picked;
 }
 
-async function buildPrompt(userId) {
+async function ensureUserTagWeights(userId) {
   const { rows } = await query(
-    "SELECT t.id, t.name, t.type, ut.weight FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true",
+    "SELECT id FROM tags WHERE is_active = true ORDER BY id"
+  );
+  if (rows.length === 0) return;
+  const tagIds = rows.map((r) => r.id);
+
+  await query(
+    "INSERT INTO user_tags (user_id, tag_id, weight, initial_weight) SELECT $1, t.id, $2, $2 FROM tags t WHERE t.is_active = true ON CONFLICT (user_id, tag_id) DO NOTHING",
+    [userId, DEFAULT_TAG_WEIGHT]
+  );
+
+  await query(
+    "UPDATE user_tags SET is_active = false WHERE user_id = $1 AND tag_id <> ALL($2::int[])",
+    [userId, tagIds]
+  );
+}
+
+async function normalizeUserWeights(userId) {
+  const { rows } = await query(
+    "SELECT tag_id, weight FROM user_tags WHERE user_id = $1 AND COALESCE(is_active, true) = true",
+    [userId]
+  );
+  if (rows.length === 0) return;
+  const total = rows.reduce((sum, row) => sum + Number(row.weight || 0), 0);
+  if (total <= 0) return;
+
+  for (const row of rows) {
+    const normalized = Number(row.weight || 0) / total;
+    await query(
+      "UPDATE user_tags SET weight = $1, last_updated = NOW() WHERE user_id = $2 AND tag_id = $3",
+      [normalized, userId, row.tag_id]
+    );
+  }
+}
+
+async function buildPrompt(userId) {
+  await ensureUserTagWeights(userId);
+  const { rows } = await query(
+    "SELECT t.id, t.name, t.type, ut.weight FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true AND COALESCE(ut.is_active, true) = true",
     [userId]
   );
   if (rows.length === 0) return { prompt: "", tagIds: [] };
 
-  // 80% exploitation + 20% exploration
   const sorted = [...rows].sort((a, b) => b.weight - a.weight);
   const topCount = Math.max(1, Math.ceil(rows.length * 0.8));
   const exploreCount = Math.max(1, Math.ceil(rows.length * 0.2));
@@ -253,7 +336,6 @@ app.post("/generate", async (request, reply) => {
 });
 
 app.post("/callback/tpy", async (request, reply) => {
-  // Store callback payload for traceability
   const payload = request.body || {};
   await query(
     "INSERT INTO tpy_callbacks (payload) VALUES ($1)",
@@ -291,7 +373,7 @@ app.post("/callback/tpy", async (request, reply) => {
         if (Array.isArray(job.tag_ids) && job.tag_ids.length > 0) {
           for (const tagId of job.tag_ids) {
             await query(
-              "INSERT INTO song_tags (song_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+              "INSERT INTO song_tags (song_id, tag_id, relevance) VALUES ($1, $2, 1.0) ON CONFLICT DO NOTHING",
               [songId, tagId]
             );
           }
@@ -308,27 +390,70 @@ app.post("/callback/tpy", async (request, reply) => {
 });
 
 app.post("/feedback", async (request, reply) => {
-  const { user_id, song_id, action } = request.body || {};
+  const { user_id, song_id, action, played_seconds } = request.body || {};
   if (!user_id || !song_id || !action) {
     reply.code(400).send({ error: "user_id, song_id, action required" });
     return;
   }
 
-  const score = action === "like" ? 1.0 : action === "skip" ? -0.7 : 0;
+  const normalizedAction = String(action).toLowerCase();
+  let behavior = "skip";
+  if (normalizedAction === "like") behavior = "favorite";
+  if (normalizedAction === "complete") behavior = "complete";
+  if (normalizedAction === "skip") behavior = "skip";
+
+  const seconds = Number(played_seconds || 0);
+  const isLateSkip = behavior === "skip" && seconds >= 30;
+  const isEarlySkip = behavior === "skip" && seconds > 0 && seconds < 30;
+
   await query(
     "INSERT INTO feedback (user_id, song_id, action, score) VALUES ($1, $2, $3, $4)",
-    [user_id, song_id, action, score]
+    [user_id, song_id, action, behavior === "favorite" ? 1.0 : behavior === "complete" ? 0.4 : -0.7]
   );
 
+  await ensureUserTagWeights(user_id);
+
   const { rows } = await query(
-    "SELECT tag_id FROM song_tags WHERE song_id = $1",
+    "SELECT tag_id, COALESCE(relevance, 1.0) AS relevance FROM song_tags WHERE song_id = $1",
     [song_id]
   );
+
   for (const row of rows) {
-    await query(
-      "UPDATE user_tags SET weight = GREATEST(0.1, weight + $1), updated_at = NOW() WHERE user_id = $2 AND tag_id = $3",
-      [score, user_id, row.tag_id]
-    );
+    const relevance = Number(row.relevance || 1.0);
+    let updateSql = null;
+    if (behavior === "favorite") {
+      updateSql =
+        "UPDATE user_tags SET weight = LEAST(1.0, weight + $1 * $2 * (1 - weight)), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4";
+    } else if (behavior === "complete") {
+      updateSql =
+        "UPDATE user_tags SET weight = LEAST(1.0, weight + $1 * $2 * (1 - weight)), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4";
+    } else if (isLateSkip) {
+      updateSql =
+        "UPDATE user_tags SET weight = GREATEST(0.0, weight - $1 * $2 * weight), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4";
+    } else {
+      updateSql =
+        "UPDATE user_tags SET weight = GREATEST(0.0, weight - $1 * $2 * weight), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4";
+    }
+
+    const coef =
+      behavior === "favorite"
+        ? COEF_FAVORITE
+        : behavior === "complete"
+        ? COEF_COMPLETE
+        : isLateSkip
+        ? COEF_SKIP_LATE
+        : COEF_SKIP_EARLY;
+
+    await query(updateSql, [coef, relevance, user_id, row.tag_id]);
+  }
+
+  const totalUpdates = await query(
+    "SELECT COALESCE(SUM(update_count), 0) AS total FROM user_tags WHERE user_id = $1",
+    [user_id]
+  );
+  const total = Number(totalUpdates.rows[0]?.total || 0);
+  if (total > 0 && total % NORMALIZE_EVERY === 0) {
+    await normalizeUserWeights(user_id);
   }
 
   return { ok: true };

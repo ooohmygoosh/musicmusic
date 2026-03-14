@@ -1,0 +1,14 @@
+﻿node_modules/
+.expo/
+.gradle/
+.idea/
+android/
+app/android/
+app/.expo/
+app/.gradle/
+app/.idea/
+app/node_modules/
+app/package-lock.json
+app/assets/
+backend/node_modules/
+backend/package-lock.json
