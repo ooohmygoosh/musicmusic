@@ -1,4 +1,4 @@
-﻿import "dotenv/config";
+import "dotenv/config";
 import Fastify from "fastify";
 import { query } from "./db.js";
 
@@ -98,6 +98,40 @@ app.get("/admin/user-feedback", async (request, reply) => {
     [Number(user_id)]
   );
   return { items: rows };
+});
+
+app.get("/admin/user-detail", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const { user_id } = request.query || {};
+  if (!user_id) {
+    reply.code(400).send({ error: "user_id required" });
+    return;
+  }
+  const userId = Number(user_id);
+
+  const user = await query("SELECT id, device_id, created_at FROM users WHERE id = $1", [userId]);
+
+  const favorites = await query(
+    "SELECT f.created_at, s.id AS song_id, s.title, s.cover_url, s.prompt, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, COALESCE(array_remove(array_agg(DISTINCT p.name), NULL), '{}') AS playlists FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN playlist_songs ps ON ps.song_id = s.id LEFT JOIN playlists p ON p.id = ps.playlist_id AND p.user_id = f.user_id WHERE f.user_id = $1 AND f.action = 'like' GROUP BY f.id, s.id ORDER BY f.created_at DESC LIMIT 100",
+    [userId]
+  );
+
+  const songs = await query(
+    "SELECT s.id AS song_id, s.title, s.cover_url, s.prompt, s.created_at, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM songs s LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE s.user_id = $1 GROUP BY s.id ORDER BY s.created_at DESC LIMIT 100",
+    [userId]
+  );
+
+  const tagWeights = await query(
+    "SELECT t.name, t.type, ut.weight FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND COALESCE(ut.is_active, true) = true ORDER BY ut.weight DESC",
+    [userId]
+  );
+
+  return {
+    user: user.rows[0] || { id: userId },
+    favorites: favorites.rows || [],
+    songs: songs.rows || [],
+    tag_weights: tagWeights.rows || []
+  };
 });
 
 app.get("/admin/stats", async (request, reply) => {
@@ -267,7 +301,7 @@ app.get("/favorites", async (request, reply) => {
     return;
   }
   const { rows } = await query(
-    "SELECT s.id, s.prompt, sa.audio_url, f.created_at FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true WHERE f.user_id = $1 AND f.action = 'like' ORDER BY f.created_at DESC LIMIT 100",
+    "SELECT s.id, s.title, s.cover_url, s.prompt, sa.audio_url, f.created_at FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true WHERE f.user_id = $1 AND f.action = 'like' ORDER BY f.created_at DESC LIMIT 100",
     [Number(user_id)]
   );
   return { items: rows };
@@ -302,7 +336,7 @@ app.post("/playlists", async (request, reply) => {
 app.get("/playlists/:id/songs", async (request, reply) => {
   const { id } = request.params;
   const { rows } = await query(
-    "SELECT s.id, s.prompt, sa.audio_url, ps.created_at FROM playlist_songs ps JOIN songs s ON s.id = ps.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true WHERE ps.playlist_id = $1 ORDER BY ps.created_at DESC",
+    "SELECT s.id, s.title, s.cover_url, s.prompt, sa.audio_url, ps.created_at FROM playlist_songs ps JOIN songs s ON s.id = ps.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true WHERE ps.playlist_id = $1 ORDER BY ps.created_at DESC",
     [Number(id)]
   );
   return { items: rows };
@@ -556,9 +590,18 @@ app.post("/callback/tpy", async (request, reply) => {
       );
       if (rows.length > 0) {
         const job = rows[0];
+        const coverUrl = s?.cover_url || s?.image_url || s?.cover || null;
         const song = await query(
-          "INSERT INTO songs (user_id, prompt) VALUES ($1, $2) RETURNING id",
-          [job.user_id, job.prompt]
+          "INSERT INTO songs (user_id, prompt, title, cover_url, model, duration, style) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+          [
+            job.user_id,
+            job.prompt,
+            s?.title || null,
+            coverUrl,
+            s?.model || null,
+            Number.isFinite(Number(s?.duration)) ? Number(s?.duration) : null,
+            s?.style || null
+          ]
         );
         const songId = song.rows[0].id;
         if (Array.isArray(job.tag_ids) && job.tag_ids.length > 0) {
@@ -657,7 +700,7 @@ app.get("/songs", async (request, reply) => {
     return;
   }
   const { rows } = await query(
-    "SELECT s.id, s.prompt, sa.audio_url\n     FROM songs s\n     LEFT JOIN LATERAL (\n       SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1\n     ) sa ON true\n     WHERE s.user_id = $1\n     ORDER BY s.created_at DESC\n     LIMIT 50",
+    "SELECT s.id, s.title, s.cover_url, s.prompt, sa.audio_url\n     FROM songs s\n     LEFT JOIN LATERAL (\n       SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1\n     ) sa ON true\n     WHERE s.user_id = $1\n     ORDER BY s.created_at DESC\n     LIMIT 50",
     [user_id]
   );
   return { items: rows };

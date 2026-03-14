@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg: #f6f3ee;
   --card: #ffffff;
   --text: #2b2b2b;
@@ -136,6 +136,9 @@ button {
   font-weight: 600;
   padding: 0;
 }
+
+.spacer { height: 16px; }
+.card h3 { margin: 6px 0 10px; font-size: 15px; }
 
 @media (max-width: 640px) {
   header { flex-direction: column; align-items: flex-start; }

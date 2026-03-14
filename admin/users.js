@@ -1,6 +1,9 @@
-ï»¿const tokenInput = document.getElementById("token");
+const tokenInput = document.getElementById("token");
 const userTable = document.getElementById("userTable");
-const userDetail = document.getElementById("userDetail");
+const userInfo = document.getElementById("userInfo");
+const userFavorites = document.getElementById("userFavorites");
+const userSongs = document.getElementById("userSongs");
+const userTags = document.getElementById("userTags");
 const userDetailTitle = document.getElementById("userDetailTitle");
 
 let selectedUserId = null;
@@ -26,7 +29,7 @@ document.getElementById("refreshUserDetail").addEventListener("click", () => {
 
 function renderTable(container, headers, rows) {
   if (!rows || rows.length === 0) {
-    container.innerHTML = "<div class='muted'>æš‚æ— æ•°æ®</div>";
+    container.innerHTML = "<div class='muted'>ÔİÎŞÊı¾İ</div>";
     return;
   }
   const table = document.createElement("table");
@@ -35,7 +38,9 @@ function renderTable(container, headers, rows) {
       <tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr>
     </thead>
     <tbody>
-      ${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}
+      ${rows
+        .map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`)
+        .join("")}
     </tbody>
   `;
   container.innerHTML = "";
@@ -47,46 +52,64 @@ async function loadUsers() {
     headers: { "x-admin-token": getToken() }
   });
   if (!res.ok) {
-    userTable.innerHTML = "<div class='muted'>æœªæˆæƒæˆ–æœåŠ¡æœªå¯åŠ¨</div>";
+    userTable.innerHTML = "<div class='muted'>Î´ÊÚÈ¨»ò·şÎñÎ´Æô¶¯</div>";
     return;
   }
   const data = await res.json();
   const rows = (data.items || []).map((user) => [
-    `<button class='link' data-user='${user.id}'>ç”¨æˆ· ${user.id}</button>`,
+    `<button class='link' data-user='${user.id}'>ÓÃ»§ ${user.id}</button>`,
     user.device_id || "-",
     new Date(user.created_at).toLocaleString(),
     user.like_count || 0,
     user.skip_count || 0,
     user.feedback_count || 0
   ]);
-  renderTable(userTable, ["ç”¨æˆ·", "è®¾å¤‡ID", "æ³¨å†Œæ—¶é—´", "æ”¶è—", "è·³è¿‡", "åé¦ˆæ€»æ•°"], rows);
+  renderTable(userTable, ["ÓÃ»§", "Éè±¸ID", "×¢²áÊ±¼ä", "ÊÕ²Ø", "Ìø¹ı", "·´À¡×ÜÊı"], rows);
 
   userTable.querySelectorAll("button[data-user]").forEach((btn) => {
     btn.addEventListener("click", () => {
       selectedUserId = btn.dataset.user;
-      userDetailTitle.textContent = `ç”¨æˆ· ${selectedUserId} è¡Œä¸ºè¯¦æƒ…`;
+      userDetailTitle.textContent = `ÓÃ»§ ${selectedUserId} ÏêÇé`;
       loadUserDetail(selectedUserId);
     });
   });
 }
 
 async function loadUserDetail(userId) {
-  const res = await fetch(`/admin/user-feedback?user_id=${userId}`, {
+  const res = await fetch(`/admin/user-detail?user_id=${userId}`, {
     headers: { "x-admin-token": getToken() }
   });
   if (!res.ok) {
-    userDetail.innerHTML = "<div class='muted'>æœªæˆæƒæˆ–æœåŠ¡æœªå¯åŠ¨</div>";
+    userInfo.innerHTML = "<div class='muted'>Î´ÊÚÈ¨»ò·şÎñÎ´Æô¶¯</div>";
+    userFavorites.innerHTML = "";
+    userSongs.innerHTML = "";
+    userTags.innerHTML = "";
     return;
   }
   const data = await res.json();
-  const rows = (data.items || []).map((item) => [
-    item.action,
-    item.song_id,
-    (item.tags || []).join(", ") || "-",
-    item.prompt || "-",
-    new Date(item.created_at).toLocaleString()
+
+  const user = data.user || {};
+  const username = user.name || user.device_id || `ÓÃ»§ ${user.id || userId}`;
+  renderTable(userInfo, ["ÓÃ»§Ãû"], [[username]]);
+
+  const favoriteRows = (data.favorites || []).map((item) => [
+    item.title || `¸èÇú ${item.song_id}`,
+    (item.playlists || []).join(", ") || "-",
+    (item.tags || []).join(", ") || "-"
   ]);
-  renderTable(userDetail, ["æ“ä½œ", "æ­Œæ›²ID", "æ ‡ç­¾", "æç¤ºè¯", "æ—¶é—´"], rows);
+  renderTable(userFavorites, ["¸èÇúÃû³Æ", "¸èµ¥", "±êÇ©"], favoriteRows);
+
+  const songRows = (data.songs || []).map((item) => [
+    item.title || `¸èÇú ${item.song_id}`,
+    (item.tags || []).join(", ") || "-"
+  ]);
+  renderTable(userSongs, ["¸èÇúÃû³Æ", "±êÇ©"], songRows);
+
+  const tagRows = (data.tag_weights || []).map((item) => [
+    item.name,
+    Number(item.weight || 0).toFixed(3)
+  ]);
+  renderTable(userTags, ["±êÇ©", "È¨ÖØ"], tagRows);
 }
 
 loadUsers();
