@@ -76,6 +76,28 @@ app.get("/admin/users", async (request, reply) => {
   return { items: rows };
 });
 
+app.get("/admin/user-summary", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const { rows } = await query(
+    "SELECT u.id, u.device_id, u.created_at, COUNT(f.id)::int AS feedback_count, COUNT(*) FILTER (WHERE f.action = 'like')::int AS like_count, COUNT(*) FILTER (WHERE f.action = 'skip')::int AS skip_count FROM users u LEFT JOIN feedback f ON f.user_id = u.id GROUP BY u.id ORDER BY u.created_at DESC"
+  );
+  return { items: rows };
+});
+
+app.get("/admin/user-feedback", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const { user_id } = request.query || {};
+  if (!user_id) {
+    reply.code(400).send({ error: "user_id required" });
+    return;
+  }
+  const { rows } = await query(
+    "SELECT f.id, f.action, f.created_at, s.id AS song_id, s.prompt, COALESCE(array_remove(array_agg(t.name), NULL), '{}') AS tags FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE f.user_id = $1 GROUP BY f.id, s.id ORDER BY f.created_at DESC",
+    [Number(user_id)]
+  );
+  return { items: rows };
+});
+
 app.get("/admin/stats", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
 
