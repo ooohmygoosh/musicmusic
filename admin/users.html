@@ -24,26 +24,32 @@
 
       <section class="card">
         <div class="row between">
-          <h2>用户列表</h2>
+          <h2>账户列表</h2>
           <button id="refreshUsers">刷新</button>
         </div>
+        <div id="userSummaryCards" class="stats-grid"></div>
         <div id="userTable" class="table"></div>
       </section>
 
       <section class="card">
         <div class="row between">
-          <h2 id="userDetailTitle">用户详情</h2>
+          <h2 id="userDetailTitle">账户详情</h2>
           <button id="refreshUserDetail">刷新详情</button>
         </div>
-        <div id="userInfo" class="table"></div>
+        <div id="userInfo" class="account-detail"></div>
         <div class="spacer"></div>
-        <h3>收藏歌曲</h3>
-        <div id="userFavorites" class="table"></div>
+        <div class="detail-grid">
+          <div>
+            <h3>收藏歌曲</h3>
+            <div id="userFavorites" class="table"></div>
+          </div>
+          <div>
+            <h3>推荐/生成记录</h3>
+            <div id="userSongs" class="table"></div>
+          </div>
+        </div>
         <div class="spacer"></div>
-        <h3>生成歌曲</h3>
-        <div id="userSongs" class="table"></div>
-        <div class="spacer"></div>
-        <h3>标签权重</h3>
+        <h3>标签画像权重</h3>
         <div id="userTags" class="table"></div>
       </section>
     </div>

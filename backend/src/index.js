@@ -7,6 +7,10 @@ const app = Fastify({ logger: true });
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 const TPY_BASE_URL = process.env.TPY_BASE_URL || "https://api.tianpuyue.cn";
 const TPY_API_KEY = process.env.TPY_API_KEY || "";
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
+const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+const DEEPSEEK_ENABLED = process.env.DEEPSEEK_ENABLED === "true";
 
 const DEFAULT_TAG_WEIGHT = 0.3;
 const SELECTED_TAG_WEIGHT = 0.7;
@@ -18,6 +22,15 @@ const NORMALIZE_EVERY = 10;
 const MAX_TAGS_TOTAL = 6;
 const MAX_PER_TYPE = 2;
 const REUSE_SIMILARITY_MIN = Number(process.env.REUSE_SIMILARITY_MIN || 0.6);
+
+const PROMPT_GUIDE = {
+  "\u60c5\u7eea": "Describe the emotional tone and energy arc.",
+  "\u4e50\u5668": "Describe the lead instruments and arrangement texture.",
+  "\u98ce\u683c": "Describe genre, era feeling, and production direction.",
+  "\u573a\u666f": "Describe listening scene and atmosphere imagery.",
+  "\u8282\u594f": "Describe tempo, groove, and pacing.",
+  "\u4eba\u58f0": "Describe vocal style, timbre, and performance intensity."
+};
 
 function requireAdmin(request, reply) {
   const token = request.headers["x-admin-token"];
@@ -43,14 +56,14 @@ app.get("/admin/tags", async (request, reply) => {
 
 app.post("/admin/tags", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
-  const { name, type } = request.body || {};
+  const { name, type, description, sort_order, is_active } = request.body || {};
   if (!name || !type) {
     reply.code(400).send({ error: "name and type required" });
     return;
   }
   const { rows } = await query(
-    "INSERT INTO tags (name, type) VALUES ($1, $2) RETURNING *",
-    [name, type]
+    "INSERT INTO tags (name, type, description, sort_order, is_active) VALUES ($1, $2, $3, COALESCE($4, 0), COALESCE($5, true)) RETURNING *",
+    [name, type, description || null, sort_order ?? 0, is_active]
   );
   return { item: rows[0] };
 });
@@ -58,10 +71,10 @@ app.post("/admin/tags", async (request, reply) => {
 app.patch("/admin/tags/:id", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
   const { id } = request.params;
-  const { name, type, is_active } = request.body || {};
+  const { name, type, is_active, description, sort_order } = request.body || {};
   const { rows } = await query(
-    "UPDATE tags SET name = COALESCE($1, name), type = COALESCE($2, type), is_active = COALESCE($3, is_active) WHERE id = $4 RETURNING *",
-    [name, type, is_active, id]
+    "UPDATE tags SET name = COALESCE($1, name), type = COALESCE($2, type), is_active = COALESCE($3, is_active), description = COALESCE($4, description), sort_order = COALESCE($5, sort_order) WHERE id = $6 RETURNING *",
+    [name, type, is_active, description, sort_order, id]
   );
   return { item: rows[0] };
 });
@@ -79,10 +92,21 @@ app.get("/admin/users", async (request, reply) => {
   return { items: rows };
 });
 
+app.patch("/admin/users/:id", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const { id } = request.params;
+  const { display_name, is_active } = request.body || {};
+  const { rows } = await query(
+    "UPDATE users SET display_name = COALESCE(NULLIF($1, ''), display_name), is_active = COALESCE($2, is_active), last_seen_at = COALESCE(last_seen_at, NOW()) WHERE id = $3 RETURNING *",
+    [display_name, is_active, Number(id)]
+  );
+  return { item: rows[0] || null };
+});
+
 app.get("/admin/user-summary", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
   const { rows } = await query(
-    "SELECT u.id, u.device_id, u.created_at, COUNT(f.id)::int AS feedback_count, COUNT(*) FILTER (WHERE f.action = 'like')::int AS like_count, COUNT(*) FILTER (WHERE f.action = 'skip')::int AS skip_count FROM users u LEFT JOIN feedback f ON f.user_id = u.id GROUP BY u.id ORDER BY u.created_at DESC"
+    "SELECT u.id, u.device_id, COALESCE(u.display_name, u.device_id) AS display_name, u.created_at, u.last_seen_at, u.is_active, COUNT(DISTINCT f.id)::int AS feedback_count, COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS like_count, COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skip_count, COUNT(DISTINCT q.song_id)::int AS queued_songs, COUNT(DISTINCT p.id)::int AS playlist_count, COUNT(DISTINCT ut.tag_id) FILTER (WHERE COALESCE(ut.is_active, true) = true)::int AS active_tag_count FROM users u LEFT JOIN feedback f ON f.user_id = u.id LEFT JOIN user_song_queue q ON q.user_id = u.id LEFT JOIN playlists p ON p.user_id = u.id LEFT JOIN user_tags ut ON ut.user_id = u.id GROUP BY u.id ORDER BY COALESCE(u.last_seen_at, u.created_at) DESC, u.created_at DESC"
   );
   return { items: rows };
 });
@@ -147,6 +171,7 @@ app.get("/admin/stats", async (request, reply) => {
   const tagsTotal = await query("SELECT COUNT(*)::int AS count FROM tags");
   const tagsActive = await query("SELECT COUNT(*)::int AS count FROM tags WHERE is_active = true");
   const reusableSongs = await query("SELECT COUNT(*)::int AS count FROM songs WHERE source_song_id IS NULL AND COALESCE(is_available, true) = true");
+  const queuedSongs = await query("SELECT COUNT(*)::int AS count FROM user_song_queue WHERE COALESCE(is_hidden, false) = false");
 
   const feedbackBreakdown = await query(
     "SELECT action, COUNT(*)::int AS count FROM feedback GROUP BY action ORDER BY count DESC"
@@ -164,7 +189,8 @@ app.get("/admin/stats", async (request, reply) => {
       favorites: favorites.rows[0]?.count || 0,
       tags_total: tagsTotal.rows[0]?.count || 0,
       tags_active: tagsActive.rows[0]?.count || 0,
-      reusable_songs: reusableSongs.rows[0]?.count || 0
+      reusable_songs: reusableSongs.rows[0]?.count || 0,
+      queued_songs: queuedSongs.rows[0]?.count || 0
     },
     feedback_breakdown: feedbackBreakdown.rows || [],
     top_tags: topTags.rows || []
@@ -218,14 +244,15 @@ app.patch("/admin/library-songs/:id", async (request, reply) => {
   return { item: rows[0] || null };
 });
 app.post("/users", async (request, reply) => {
-  const { device_id } = request.body || {};
+  const { device_id, display_name } = request.body || {};
   if (!device_id) {
     reply.code(400).send({ error: "device_id required" });
     return;
   }
+  const cleanName = display_name ? String(display_name).trim() : null;
   const { rows } = await query(
-    "INSERT INTO users (device_id) VALUES ($1) ON CONFLICT (device_id) DO UPDATE SET device_id = EXCLUDED.device_id RETURNING *",
-    [device_id]
+    "INSERT INTO users (device_id, display_name, last_seen_at) VALUES ($1, NULLIF($2, ''), NOW()) ON CONFLICT (device_id) DO UPDATE SET display_name = COALESCE(NULLIF(EXCLUDED.display_name, ''), users.display_name), last_seen_at = NOW(), is_active = true RETURNING *",
+    [device_id, cleanName]
   );
   return { user: rows[0] };
 });
@@ -469,7 +496,15 @@ async function buildPrompt(userId) {
     "SELECT t.id, t.name, t.type, ut.weight FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true AND COALESCE(ut.is_active, true) = true",
     [userId]
   );
-  if (rows.length === 0) return { prompt: "", tagIds: [] };
+  if (rows.length === 0) {
+    return {
+      prompt: "",
+      tagIds: [],
+      base_prompt: "",
+      title_hint: "",
+      cover_hint: ""
+    };
+  }
 
   const recentTagIds = await getRecentTagIds(userId, 6);
   const sorted = [...rows].sort((a, b) => b.weight - a.weight);
@@ -521,14 +556,129 @@ async function buildPrompt(userId) {
     parts.push(`${type}: ${list.join(", ")}`);
   }
   const tagIds = chosen.map((tag) => tag.id);
-  return { prompt: parts.join(", "), tagIds };
+  const basePrompt = parts.join(", ");
+  const optimized = await optimizePromptWithDeepSeek(chosen, basePrompt);
+  return {
+    prompt: optimized.prompt || basePrompt,
+    tagIds,
+    base_prompt: basePrompt,
+    title_hint: optimized.title_hint || "",
+    cover_hint: optimized.cover_hint || ""
+  };
 }
 
-async function findReusableSong(tagIds) {
-  if (!Array.isArray(tagIds) || tagIds.length === 0) return null;
+async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
+  if (!DEEPSEEK_ENABLED || !DEEPSEEK_API_KEY || !Array.isArray(chosenTags) || chosenTags.length === 0) {
+    return { prompt: basePrompt, title_hint: "", cover_hint: "" };
+  }
+
+  const tagSummary = chosenTags.map((tag) => ({
+    type: tag.type,
+    name: tag.name,
+    weight: Number(tag.weight || 0)
+  }));
+
+  const groupedGuide = Object.entries(
+    chosenTags.reduce((acc, tag) => {
+      if (!acc[tag.type]) acc[tag.type] = [];
+      acc[tag.type].push(tag.name);
+      return acc;
+    }, {})
+  ).map(([type, names]) => ({
+    type,
+    tags: names,
+        usage: PROMPT_GUIDE[type] || "Add only music-generation-relevant details"
+  }));
+
+  try {
+    const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: DEEPSEEK_MODEL,
+        temperature: 0.7,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a music prompt optimizer. Turn user tags into a more natural and production-ready Chinese music prompt for a music generation model. Do not explain anything. Return JSON only."
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              task: "Convert these tags into a stronger Chinese prompt for a music generation model",
+              base_prompt: basePrompt,
+              tags: tagSummary,
+              grouped_tags: groupedGuide,
+              output_schema: {
+                prompt: "A single Chinese prompt string, 1-3 sentences, ready for the music model",
+                title_hint: "Optional short title idea",
+                cover_hint: "Optional cover art description"
+              },
+              constraints: [
+                "Keep the core meaning of the tags",
+                "Add reasonable genre, mood, tempo, arrangement, and scene details",
+                "Do not use Markdown",
+                "Keep it under 180 Chinese characters"
+              ]
+            })
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      app.log.warn({ status: response.status }, "deepseek prompt optimization failed");
+      return { prompt: basePrompt, title_hint: "", cover_hint: "" };
+    }
+
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content) return { prompt: basePrompt, title_hint: "", cover_hint: "" };
+
+    let parsed = null;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      return { prompt: basePrompt, title_hint: "", cover_hint: "" };
+    }
+
+    return {
+      prompt: String(parsed?.prompt || "").trim() || basePrompt,
+      title_hint: String(parsed?.title_hint || "").trim(),
+      cover_hint: String(parsed?.cover_hint || "").trim()
+    };
+  } catch (error) {
+    app.log.warn({ err: String(error) }, "deepseek prompt optimization error");
+    return { prompt: basePrompt, title_hint: "", cover_hint: "" };
+  }
+}
+
+async function getUserExcludedSongIds(userId) {
   const { rows } = await query(
-    "SELECT s.id, s.title, s.cover_url, s.prompt, s.model, s.duration, s.style, s.reuse_count, COUNT(DISTINCT st.tag_id)::int AS song_tag_count, COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::int AS matched_tag_count, (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) AS similarity FROM songs s JOIN song_assets sa ON sa.song_id = s.id AND sa.audio_url IS NOT NULL LEFT JOIN song_tags st ON st.song_id = s.id WHERE s.source_song_id IS NULL AND COALESCE(s.is_available, true) = true GROUP BY s.id HAVING COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END) > 0 AND (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) >= $3 ORDER BY similarity DESC, s.reuse_count DESC, s.created_at DESC LIMIT 1",
-    [tagIds, tagIds.length, REUSE_SIMILARITY_MIN]
+    "SELECT DISTINCT song_id FROM (SELECT song_id, created_at FROM user_song_queue WHERE user_id = $1 ORDER BY created_at DESC LIMIT 12) recent UNION SELECT DISTINCT song_id FROM feedback WHERE user_id = $1 AND action = 'skip' ORDER BY song_id",
+    [Number(userId)]
+  );
+  return rows.map((row) => Number(row.song_id)).filter(Boolean);
+}
+
+async function queueSongForUser(userId, songId, jobId, source) {
+  await query(
+    "INSERT INTO user_song_queue (user_id, song_id, generation_job_id, source) VALUES ($1, $2, $3, $4)",
+    [Number(userId), Number(songId), jobId ? Number(jobId) : null, source]
+  );
+}
+
+async function findReusableSong(userId, tagIds) {
+  if (!Array.isArray(tagIds) || tagIds.length === 0) return null;
+  const excludedSongIds = await getUserExcludedSongIds(userId);
+  const { rows } = await query(
+    "SELECT s.id, s.title, s.cover_url, s.prompt, s.model, s.duration, s.style, s.reuse_count, COUNT(DISTINCT st.tag_id)::int AS song_tag_count, COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::int AS matched_tag_count, (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) AS similarity FROM songs s JOIN song_assets sa ON sa.song_id = s.id AND sa.audio_url IS NOT NULL LEFT JOIN song_tags st ON st.song_id = s.id WHERE s.source_song_id IS NULL AND COALESCE(s.is_available, true) = true AND ($4::int[] = '{}'::int[] OR NOT (s.id = ANY($4::int[]))) GROUP BY s.id HAVING COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END) > 0 AND (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) >= $3 ORDER BY similarity DESC, s.reuse_count DESC, s.created_at DESC LIMIT 1",
+    [tagIds, tagIds.length, REUSE_SIMILARITY_MIN, excludedSongIds]
   );
   if (rows.length === 0) return null;
 
@@ -541,30 +691,7 @@ async function findReusableSong(tagIds) {
 }
 
 async function reuseSongForUser(job, librarySong) {
-  const inserted = await query(
-    "INSERT INTO songs (user_id, prompt, title, cover_url, model, duration, style, source_song_id, generation_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'reused') RETURNING id",
-    [
-      Number(job.user_id),
-      job.prompt,
-      librarySong.title || null,
-      librarySong.cover_url || null,
-      librarySong.model || null,
-      Number.isFinite(Number(librarySong.duration)) ? Number(librarySong.duration) : null,
-      librarySong.style || null,
-      Number(librarySong.id)
-    ]
-  );
-  const songId = inserted.rows[0].id;
-
-  await query(
-    "INSERT INTO song_tags (song_id, tag_id, relevance) SELECT $1, tag_id, COALESCE(relevance, 1.0) FROM song_tags WHERE song_id = $2 ON CONFLICT DO NOTHING",
-    [songId, Number(librarySong.id)]
-  );
-
-  await query(
-    "INSERT INTO song_assets (song_id, item_id, audio_url) VALUES ($1, $2, $3)",
-    [songId, librarySong.asset.item_id || null, librarySong.asset.audio_url]
-  );
+  await queueSongForUser(job.user_id, librarySong.id, job.id, 'reused');
 
   await query(
     "UPDATE songs SET reuse_count = reuse_count + 1 WHERE id = $1",
@@ -576,7 +703,7 @@ async function reuseSongForUser(job, librarySong) {
     [[librarySong.asset.item_id].filter(Boolean), Number(job.id)]
   );
 
-  return songId;
+  return librarySong.id;
 }
 app.post("/generate", async (request, reply) => {
   const { user_id, instrumental = true, model } = request.body || {};
@@ -585,19 +712,19 @@ app.post("/generate", async (request, reply) => {
     return;
   }
 
-  const { prompt, tagIds } = await buildPrompt(user_id);
+  const { prompt, tagIds, base_prompt, title_hint, cover_hint } = await buildPrompt(user_id);
   if (!prompt) {
     reply.code(400).send({ error: "no tags found for user" });
     return;
   }
 
   const { rows } = await query(
-    "INSERT INTO generation_jobs (user_id, prompt, status, tag_ids) VALUES ($1, $2, 'pending', $3) RETURNING *",
-    [user_id, prompt, tagIds]
+    "INSERT INTO generation_jobs (user_id, prompt, base_prompt, title_hint, cover_hint, status, tag_ids) VALUES ($1, $2, $3, $4, $5, 'pending', $6) RETURNING *",
+    [user_id, prompt, base_prompt || prompt, title_hint || null, cover_hint || null, tagIds]
   );
   const job = rows[0];
 
-  const reusableSong = await findReusableSong(tagIds);
+  const reusableSong = await findReusableSong(user_id, tagIds);
   if (reusableSong) {
     const songId = await reuseSongForUser(job, reusableSong);
     return {
@@ -678,7 +805,7 @@ app.post("/generate", async (request, reply) => {
     [itemIds, job.id]
   );
 
-  return { job_id: job.id, item_ids: itemIds, prompt, reused: false };
+  return { job_id: job.id, item_ids: itemIds, prompt, base_prompt, title_hint, cover_hint, reused: false };
 });
 app.post("/callback/tpy", async (request, reply) => {
   const payload = request.body || {};
@@ -716,19 +843,21 @@ app.post("/callback/tpy", async (request, reply) => {
         continue;
       }
       const { rows } = await query(
-        "UPDATE generation_jobs SET status = 'done' WHERE $1 = ANY(item_ids) RETURNING id, user_id, prompt, tag_ids",
+        "UPDATE generation_jobs SET status = 'done' WHERE $1 = ANY(item_ids) RETURNING id, user_id, prompt, base_prompt, title_hint, cover_hint, tag_ids",
         [itemId]
       );
       if (rows.length > 0) {
         const job = rows[0];
         const coverUrl = s?.cover_url || s?.image_url || s?.cover || null;
         const song = await query(
-          "INSERT INTO songs (user_id, prompt, title, cover_url, model, duration, style, generation_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, 'generated') RETURNING id",
+          "INSERT INTO songs (user_id, prompt, base_prompt, title, cover_url, cover_hint, model, duration, style, generation_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'generated') RETURNING id",
           [
             job.user_id,
             job.prompt,
-            s?.title || null,
+            job.base_prompt || job.prompt,
+            s?.title || job.title_hint || null,
             coverUrl,
+            job.cover_hint || null,
             s?.model || null,
             Number.isFinite(Number(s?.duration)) ? Number(s?.duration) : null,
             s?.style || null
@@ -747,6 +876,7 @@ app.post("/callback/tpy", async (request, reply) => {
           "INSERT INTO song_assets (song_id, item_id, audio_url) VALUES ($1, $2, $3)",
           [songId, itemId, audioUrl]
         );
+        await queueSongForUser(job.user_id, songId, job.id, 'generated');
       }
     }
   }
@@ -773,32 +903,26 @@ app.post("/feedback", async (request, reply) => {
     return;
   }
 
-  let behavior = "skip";
-  if (normalizedAction === "like") behavior = "favorite";
-  if (normalizedAction === "complete") behavior = "complete";
-  if (normalizedAction === "skip") behavior = "skip";
-
   const seconds = Number(played_seconds || 0);
+  const behavior = normalizedAction === "like" ? "favorite" : normalizedAction === "complete" ? "complete" : "skip";
   const isLateSkip = behavior === "skip" && seconds >= 30;
-  const isEarlySkip = behavior === "skip" && seconds > 0 && seconds < 30;
 
   try {
     await query(
       "INSERT INTO feedback (user_id, song_id, action, score) VALUES ($1, $2, $3, $4)",
-      [
-        Number(user_id),
-        Number(song_id),
-        normalizedAction,
-        behavior === "favorite" ? 1.0 : behavior === "complete" ? 0.4 : -0.7
-      ]
+      [Number(user_id), Number(song_id), normalizedAction, behavior === "favorite" ? 1.0 : behavior === "complete" ? 0.4 : -0.7]
     );
   } catch (err) {
     reply.code(500).send({ error: "feedback insert failed", detail: String(err) });
     return;
   }
 
-  await ensureUserTagWeights(user_id);
+  await query(
+    "UPDATE user_song_queue SET acted_at = NOW(), is_hidden = CASE WHEN $1 = 'skip' THEN true ELSE is_hidden END WHERE user_id = $2 AND song_id = $3 AND COALESCE(is_hidden, false) = false",
+    [normalizedAction, Number(user_id), Number(song_id)]
+  );
 
+  await ensureUserTagWeights(user_id);
   const { rows } = await query(
     "SELECT tag_id, COALESCE(relevance, 1.0) AS relevance FROM song_tags WHERE song_id = $1",
     [Number(song_id)]
@@ -806,30 +930,10 @@ app.post("/feedback", async (request, reply) => {
 
   for (const row of rows) {
     const relevance = Number(row.relevance || 1.0);
-    let updateSql = null;
-    if (behavior === "favorite") {
-      updateSql =
-        "UPDATE user_tags SET weight = LEAST(1.0, weight + $1 * $2 * (1 - weight)), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4";
-    } else if (behavior === "complete") {
-      updateSql =
-        "UPDATE user_tags SET weight = LEAST(1.0, weight + $1 * $2 * (1 - weight)), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4";
-    } else if (isLateSkip) {
-      updateSql =
-        "UPDATE user_tags SET weight = GREATEST(0.0, weight - $1 * $2 * weight), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4";
-    } else {
-      updateSql =
-        "UPDATE user_tags SET weight = GREATEST(0.0, weight - $1 * $2 * weight), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4";
-    }
-
-    const coef =
-      behavior === "favorite"
-        ? COEF_FAVORITE
-        : behavior === "complete"
-        ? COEF_COMPLETE
-        : isLateSkip
-        ? COEF_SKIP_LATE
-        : COEF_SKIP_EARLY;
-
+    const coef = behavior === "favorite" ? COEF_FAVORITE : behavior === "complete" ? COEF_COMPLETE : isLateSkip ? COEF_SKIP_LATE : COEF_SKIP_EARLY;
+    const updateSql = behavior === "favorite" || behavior === "complete"
+      ? "UPDATE user_tags SET weight = LEAST(1.0, weight + $1 * $2 * (1 - weight)), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4"
+      : "UPDATE user_tags SET weight = GREATEST(0.0, weight - $1 * $2 * weight), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4";
     try {
       await query(updateSql, [coef, relevance, Number(user_id), row.tag_id]);
     } catch (err) {
@@ -857,14 +961,16 @@ app.get("/songs", async (request, reply) => {
     return;
   }
   const { rows } = await query(
-    "SELECT s.id, s.title, s.cover_url, s.prompt, sa.audio_url\n     FROM songs s\n     LEFT JOIN LATERAL (\n       SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1\n     ) sa ON true\n     WHERE s.user_id = $1\n     ORDER BY s.created_at DESC\n     LIMIT 50",
-    [user_id]
+    "SELECT DISTINCT ON (q.song_id) s.id, s.title, s.cover_url, s.prompt, sa.audio_url, q.created_at, q.source FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true WHERE q.user_id = $1 AND COALESCE(q.is_hidden, false) = false ORDER BY q.song_id, q.created_at DESC",
+    [Number(user_id)]
   );
-  return { items: rows };
+  rows.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  return { items: rows.slice(-50) };
 });
 
 const port = Number(process.env.PORT || 8080);
 app.listen({ port, host: "0.0.0.0" });
+
 
 
 

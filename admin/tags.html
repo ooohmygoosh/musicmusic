@@ -23,13 +23,18 @@
       </header>
 
       <section class="card">
-        <h2>新增标签</h2>
+        <div class="row between">
+          <h2>标签池维护</h2>
+          <button id="refreshTags">刷新</button>
+        </div>
         <div class="row">
           <input id="tagName" placeholder="标签名称" />
-          <input id="tagType" placeholder="标签类型 (风格/情绪/场景等)" />
-          <button id="addTag">新增</button>
+          <input id="tagType" placeholder="标签类别（情绪/风格/乐器等）" />
+          <input id="tagDescription" placeholder="补充说明，可选" />
+          <button id="addTag">新增标签</button>
         </div>
-        <div id="tagList" class="list"></div>
+        <div id="tagTypeSummary" class="stats-grid"></div>
+        <div id="tagGroups" class="list"></div>
       </section>
     </div>
 

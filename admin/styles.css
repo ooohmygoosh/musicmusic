@@ -207,3 +207,28 @@ button {
   .table table { font-size: 11px; }
   .library-head { flex-direction: column; }
 }
+.account-detail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.stat-value.small {
+  font-size: 15px;
+  line-height: 1.4;
+}
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+}
+.inner-card {
+  margin-top: 0;
+  padding: 16px;
+}
+.stacked-item {
+  align-items: flex-start;
+  gap: 12px;
+}
+.compact-row {
+  margin-bottom: 0;
+}
