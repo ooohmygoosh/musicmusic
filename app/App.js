@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+ï»¿import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -207,7 +207,7 @@ export default function App() {
   const submitUserTag = async () => {
     setTagMessage("");
     if (!newTagName.trim() || !newTagType.trim()) {
-      setTagMessage("ÇëÌîĞ´±êÇ©Ãû³ÆºÍÀàĞÍ");
+      setTagMessage("è¯·å¡«å†™æ ‡ç­¾åç§°å’Œç±»å‹");
       return;
     }
     const uid = userId || (await ensureUser());
@@ -218,7 +218,7 @@ export default function App() {
     });
     const data = await res.json();
     if (!res.ok) {
-      setTagMessage(data.error || "Ìí¼ÓÊ§°Ü");
+      setTagMessage(data.error || "æ·»åŠ å¤±è´¥");
       return;
     }
     await loadTags();
@@ -229,7 +229,7 @@ export default function App() {
     }
     setNewTagName("");
     setNewTagType("");
-    setTagMessage("ÒÑÌí¼Ó±êÇ©");
+    setTagMessage("å·²æ·»åŠ æ ‡ç­¾");
     await loadProfileTags();
   };
 
@@ -550,7 +550,7 @@ export default function App() {
 
   const renderPlayer = () => (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.screenPadding}>
-      <ScreenTitle title="ÏÖÔÚ²¥·Å" subtitle="ÄãµÄ AI ÒôÀÖÕıÔÚÁ÷¶¯" />
+      <ScreenTitle title="ç°åœ¨æ’­æ”¾" subtitle="ä½ çš„ AI éŸ³ä¹æ­£åœ¨æµåŠ¨" />
 
       <View style={styles.playerCard}>
         <View style={styles.coverWrap}>
@@ -558,9 +558,9 @@ export default function App() {
             <Text style={styles.coverText}>TPY</Text>
           </View>
         </View>
-        <Text style={styles.playerTitle}>{current ? current.title || "AI Éú³ÉÇú" : "ÔİÎŞ¸èÇú"}</Text>
+        <Text style={styles.playerTitle}>{current ? current.title || "AI ç”Ÿæˆæ›²" : "æš‚æ— æ­Œæ›²"}</Text>
         <Text style={styles.playerSub} numberOfLines={2}>
-          {current ? current.prompt : "ÇëÏÈÉú³ÉÒôÀÖ"}
+          {current ? current.prompt : "è¯·å…ˆç”ŸæˆéŸ³ä¹"}
         </Text>
 
         <View style={styles.progressWrap}>
@@ -594,9 +594,9 @@ export default function App() {
                 await feedback("like");
                 const list = await loadPlaylists(uid);
                 if (list.length === 0) {
-                  Alert.alert("ÔİÎŞ¸èµ¥", "ÇëÏÈ´´½¨¸èµ¥", [
-                    { text: "È¥´´½¨", onPress: () => setActiveTab("favorites") },
-                    { text: "È¡Ïû", style: "cancel" }
+                  Alert.alert("æš‚æ— æ­Œå•", "è¯·å…ˆåˆ›å»ºæ­Œå•", [
+                    { text: "å»åˆ›å»º", onPress: () => setActiveTab("favorites") },
+                    { text: "å–æ¶ˆ", style: "cancel" }
                   ]);
                   return;
                 }
@@ -606,13 +606,13 @@ export default function App() {
               }
             }}
           >
-            <Text style={styles.controlText}>ÊÕ²Ø</Text>
+            <Text style={styles.controlText}>æ”¶è—</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.playBtn} onPress={togglePlay}>
-            <Text style={styles.playText}>{current ? (playback.isPlaying ? "ÔİÍ£" : "²¥·Å") : "Éú³É"}</Text>
+            <Text style={styles.playText}>{current ? (playback.isPlaying ? "æš‚åœ" : "æ’­æ”¾") : "ç”Ÿæˆ"}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.controlBtn} onPress={handleNext}>
-            <Text style={styles.controlText}>ÏÂÒ»Çú</Text>
+            <Text style={styles.controlText}>ä¸‹ä¸€æ›²</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -620,7 +620,7 @@ export default function App() {
       {showPlaylistPicker ? (
         <View style={styles.section}>
           <View style={styles.groupCard}>
-            <Text style={styles.groupTitle}>Ñ¡Ôñ¸èµ¥</Text>
+            <Text style={styles.groupTitle}>é€‰æ‹©æ­Œå•</Text>
             {playlists.map((p) => (
               <TouchableOpacity
                 key={p.id}
@@ -635,13 +635,13 @@ export default function App() {
               >
                 <View>
                   <Text style={styles.listTitle}>{p.name}</Text>
-                  <Text style={styles.listSub}>¸èÇú {p.song_count || 0}</Text>
+                  <Text style={styles.listSub}>æ­Œæ›² {p.song_count || 0}</Text>
                 </View>
-                <Text style={styles.chevron}>?</Text>
+                <Text style={styles.chevron}>â€º</Text>
               </TouchableOpacity>
             ))}
             <TouchableOpacity style={styles.secondary} onPress={() => setShowPlaylistPicker(false)}>
-              <Text style={styles.secondaryText}>È¡Ïû</Text>
+              <Text style={styles.secondaryText}>å–æ¶ˆ</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -649,7 +649,7 @@ export default function App() {
 
       <View style={styles.section}>
         <TouchableOpacity style={styles.secondary} onPress={() => setShowQueue((prev) => !prev)}>
-          <Text style={styles.secondaryText}>{showQueue ? "ÊÕÆğ²¥·ÅÁĞ±í" : "Õ¹¿ª²¥·ÅÁĞ±í"}</Text>
+          <Text style={styles.secondaryText}>{showQueue ? "æ”¶èµ·æ’­æ”¾åˆ—è¡¨" : "å±•å¼€æ’­æ”¾åˆ—è¡¨"}</Text>
         </TouchableOpacity>
         {showQueue ? (
           <FlatList
@@ -665,10 +665,10 @@ export default function App() {
                 }}
               >
                 <View>
-                  <Text style={styles.listTitle}>{item.title || "AI Éú³ÉÇú"}</Text>
+                  <Text style={styles.listTitle}>{item.title || "AI ç”Ÿæˆæ›²"}</Text>
                   <Text style={styles.listSub} numberOfLines={1}>{item.prompt}</Text>
                 </View>
-                <Text style={styles.chevron}>?</Text>
+                <Text style={styles.chevron}>â€º</Text>
               </TouchableOpacity>
             )}
           />
@@ -679,23 +679,23 @@ export default function App() {
 
   const renderFavorites = () => (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.screenPadding}>
-      <ScreenTitle title="ÊÕ²Ø¸èµ¥" subtitle="´´½¨ÄãµÄ×¨Êô¸èµ¥" />
+      <ScreenTitle title="æ”¶è—æ­Œå•" subtitle="åˆ›å»ºä½ çš„ä¸“å±æ­Œå•" />
 
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>ĞÂ½¨¸èµ¥</Text>
+        <Text style={styles.groupTitle}>æ–°å»ºæ­Œå•</Text>
         <TextInput
           value={newPlaylistName}
           onChangeText={setNewPlaylistName}
-          placeholder="¸èµ¥Ãû³Æ"
+          placeholder="æ­Œå•åç§°"
           style={styles.input}
         />
         <TouchableOpacity style={styles.primary} onPress={createPlaylist}>
-          <Text style={styles.primaryText}>´´½¨¸èµ¥</Text>
+          <Text style={styles.primaryText}>åˆ›å»ºæ­Œå•</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>ÎÒµÄ¸èµ¥</Text>
+        <Text style={styles.groupTitle}>æˆ‘çš„æ­Œå•</Text>
         {playlists.map((plist) => (
           <TouchableOpacity
             key={plist.id}
@@ -707,21 +707,21 @@ export default function App() {
           >
             <View>
               <Text style={styles.listTitle}>{plist.name}</Text>
-              <Text style={styles.listSub}>¸èÇú {plist.song_count || 0}</Text>
+              <Text style={styles.listSub}>æ­Œæ›² {plist.song_count || 0}</Text>
             </View>
-            <Text style={styles.chevron}>?</Text>
+            <Text style={styles.chevron}>â€º</Text>
           </TouchableOpacity>
         ))}
       </View>
 
       {selectedPlaylistId ? (
         <View style={styles.groupCard}>
-          <Text style={styles.groupTitle}>µ±Ç°¸èµ¥</Text>
+          <Text style={styles.groupTitle}>å½“å‰æ­Œå•</Text>
           <TouchableOpacity style={styles.secondary} onPress={addToPlaylist}>
-            <Text style={styles.secondaryText}>°Ñµ±Ç°¸èÇú¼ÓÈë¸èµ¥</Text>
+            <Text style={styles.secondaryText}>æŠŠå½“å‰æ­Œæ›²åŠ å…¥æ­Œå•</Text>
           </TouchableOpacity>
           {playlistSongs.length === 0 ? (
-            <Text style={styles.placeholder}>ÔİÎŞ¸èÇú</Text>
+            <Text style={styles.placeholder}>æš‚æ— æ­Œæ›²</Text>
           ) : (
             playlistSongs.map((item) => (
               <TouchableOpacity
@@ -733,10 +733,10 @@ export default function App() {
                 }}
               >
                 <View>
-                  <Text style={styles.listTitle}>{item.title || "AI Éú³ÉÇú"}</Text>
+                  <Text style={styles.listTitle}>{item.title || "AI ç”Ÿæˆæ›²"}</Text>
                   <Text style={styles.listSub} numberOfLines={1}>{item.prompt}</Text>
                 </View>
-                <Text style={styles.chevron}>?</Text>
+                <Text style={styles.chevron}>â€º</Text>
               </TouchableOpacity>
             ))
           )}
@@ -744,9 +744,9 @@ export default function App() {
       ) : null}
 
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>ÊÕ²Ø¼ÇÂ¼</Text>
+        <Text style={styles.groupTitle}>æ”¶è—è®°å½•</Text>
         {favorites.length === 0 ? (
-          <Text style={styles.placeholder}>ÔİÎŞÊÕ²Ø¸èÇú</Text>
+          <Text style={styles.placeholder}>æš‚æ— æ”¶è—æ­Œæ›²</Text>
         ) : (
           favorites.map((item) => (
             <TouchableOpacity
@@ -758,10 +758,10 @@ export default function App() {
               }}
             >
               <View>
-                <Text style={styles.listTitle}>{item.title || "AI Éú³ÉÇú"}</Text>
+                <Text style={styles.listTitle}>{item.title || "AI ç”Ÿæˆæ›²"}</Text>
                 <Text style={styles.listSub} numberOfLines={1}>{item.prompt}</Text>
               </View>
-              <Text style={styles.chevron}>?</Text>
+              <Text style={styles.chevron}>â€º</Text>
             </TouchableOpacity>
           ))
         )}
@@ -771,8 +771,8 @@ export default function App() {
 
   const renderGalaxy = () => (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.screenPadding}>
-      <ScreenTitle title="±êÇ©»­Ïñ" subtitle="ĞÇÏµ´ú±íÄãµÄÏ²ºÃ·Ö²¼" />
-      <Text style={styles.hintText}>ÍÏ¶¯ĞÇÇòµ½É¾³ıÇø¿ÉÒÆ³ı±êÇ©£¬ÍÏµ½Èõ»¯Çø¿É½µµÍÈ¨ÖØ£¬ÍÏµ½ÔöÇ¿Çø¿ÉÌáÉıÈ¨ÖØ</Text>
+      <ScreenTitle title="æ ‡ç­¾ç”»åƒ" subtitle="æ˜Ÿç³»ä»£è¡¨ä½ çš„å–œå¥½åˆ†å¸ƒ" />
+      <Text style={styles.hintText}>æ‹–åŠ¨æ˜Ÿçƒåˆ°åˆ é™¤åŒºå¯ç§»é™¤æ ‡ç­¾ï¼Œæ‹–åˆ°å¼±åŒ–åŒºå¯é™ä½æƒé‡ï¼Œæ‹–åˆ°å¢å¼ºåŒºå¯æå‡æƒé‡</Text>
 
       <View style={styles.galaxyWrap}>
         <View style={styles.galaxyControls}>
@@ -780,19 +780,19 @@ export default function App() {
             style={styles.galaxyZoneDelete}
             onLayout={(event) => setDeleteZone(event.nativeEvent.layout)}
           >
-            <Text style={styles.zoneText}>É¾³ıÇø</Text>
+            <Text style={styles.zoneText}>åˆ é™¤åŒº</Text>
           </View>
           <View
             style={styles.galaxyZoneWeaken}
             onLayout={(event) => setWeakenZone(event.nativeEvent.layout)}
           >
-            <Text style={styles.zoneText}>Èõ»¯Çø</Text>
+            <Text style={styles.zoneText}>å¼±åŒ–åŒº</Text>
           </View>
           <View
             style={styles.galaxyZoneBoost}
             onLayout={(event) => setBoostZone(event.nativeEvent.layout)}
           >
-            <Text style={styles.zoneText}>ÔöÇ¿Çø</Text>
+            <Text style={styles.zoneText}>å¢å¼ºåŒº</Text>
           </View>
         </View>
         {galaxyNodes.map((node) => (
@@ -801,23 +801,23 @@ export default function App() {
       </View>
 
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>±êÇ©¹ÜÀí</Text>
+        <Text style={styles.groupTitle}>æ ‡ç­¾ç®¡ç†</Text>
         <View style={styles.row}>
           <TextInput
             value={newTagName}
             onChangeText={setNewTagName}
-            placeholder="±êÇ©Ãû³Æ"
+            placeholder="æ ‡ç­¾åç§°"
             style={[styles.input, styles.flex]}
           />
           <TextInput
             value={newTagType}
             onChangeText={setNewTagType}
-            placeholder="±êÇ©ÀàĞÍ£¨ÇéĞ÷/·ç¸ñ/ÀÖÆ÷µÈ£©"
+            placeholder="æ ‡ç­¾ç±»å‹ï¼ˆæƒ…ç»ª/é£æ ¼/ä¹å™¨ç­‰ï¼‰"
             style={[styles.input, styles.flex]}
           />
         </View>
         <TouchableOpacity style={styles.secondary} onPress={submitUserTag}>
-          <Text style={styles.secondaryText}>Ìá½»±êÇ©</Text>
+          <Text style={styles.secondaryText}>æäº¤æ ‡ç­¾</Text>
         </TouchableOpacity>
         {tagMessage ? <Text style={styles.hintText}>{tagMessage}</Text> : null}
       </View>
@@ -826,16 +826,16 @@ export default function App() {
 
   const renderSettings = () => (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.screenPadding}>
-      <ScreenTitle title="ÉèÖÃ" subtitle="ÕËºÅÓëÁ¬½ÓĞÅÏ¢" />
+      <ScreenTitle title="è®¾ç½®" subtitle="è´¦å·ä¸è¿æ¥ä¿¡æ¯" />
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>Éè±¸ĞÅÏ¢</Text>
+        <Text style={styles.groupTitle}>è®¾å¤‡ä¿¡æ¯</Text>
         <TextInput value={deviceId} onChangeText={setDeviceId} style={styles.input} />
       </View>
 
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>Á¬½Ó²âÊÔ</Text>
+        <Text style={styles.groupTitle}>è¿æ¥æµ‹è¯•</Text>
         <TouchableOpacity style={styles.secondary} onPress={testConnection}>
-          <Text style={styles.secondaryText}>²âÊÔ API Á¬½Ó</Text>
+          <Text style={styles.secondaryText}>æµ‹è¯• API è¿æ¥</Text>
         </TouchableOpacity>
         {health.message ? (
           <Text style={health.ok ? styles.okText : styles.errorText}>{health.message}</Text>
@@ -854,16 +854,16 @@ export default function App() {
       </View>
       <View style={styles.tabBar}>
         <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab("player")}>
-          <Text style={[styles.tabText, activeTab === "player" && styles.tabTextActive]}>²¥·Å</Text>
+          <Text style={[styles.tabText, activeTab === "player" && styles.tabTextActive]}>æ’­æ”¾</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab("favorites")}>
-          <Text style={[styles.tabText, activeTab === "favorites" && styles.tabTextActive]}>ÊÕ²Ø</Text>
+          <Text style={[styles.tabText, activeTab === "favorites" && styles.tabTextActive]}>æ”¶è—</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab("galaxy")}>
-          <Text style={[styles.tabText, activeTab === "galaxy" && styles.tabTextActive]}>±êÇ©»­Ïñ</Text>
+          <Text style={[styles.tabText, activeTab === "galaxy" && styles.tabTextActive]}>æ ‡ç­¾ç”»åƒ</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab("settings")}>
-          <Text style={[styles.tabText, activeTab === "settings" && styles.tabTextActive]}>ÉèÖÃ</Text>
+          <Text style={[styles.tabText, activeTab === "settings" && styles.tabTextActive]}>è®¾ç½®</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -1100,6 +1100,8 @@ const styles = StyleSheet.create({
   },
   groupTitle: { fontSize: 14, fontWeight: "600", color: "#1C1C1E", marginBottom: 8 }
 });
+
+
 
 
 

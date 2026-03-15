@@ -45,7 +45,8 @@ async function loadStats() {
   statsGrid.innerHTML = "";
   const cards = [
     { label: "用户数", value: stats.users || 0 },
-    { label: "歌曲数", value: stats.songs || 0 },
+    { label: "歌曲总数", value: stats.songs || 0 },
+    { label: "可复用库存", value: stats.reusable_songs || 0 },
     { label: "反馈数", value: stats.feedback || 0 },
     { label: "收藏数", value: stats.favorites || 0 },
     { label: "标签总数", value: stats.tags_total || 0 },
@@ -78,5 +79,5 @@ async function loadStats() {
   );
 }
 
+tokenInput.value = getToken();
 loadStats();
-

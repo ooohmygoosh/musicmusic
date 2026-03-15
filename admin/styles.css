@@ -31,11 +31,13 @@ header h1 { margin: 0; font-size: 28px; }
   border-color: var(--accent);
 }
 .token { display: flex; gap: 8px; }
-input {
+input,
+select {
   padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid #d5d0c8;
   min-width: 220px;
+  background: #fff;
 }
 button {
   padding: 10px 14px;
@@ -70,6 +72,7 @@ button {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
+  margin: 16px 0 20px;
 }
 .quick-card {
   display: block;
@@ -137,12 +140,70 @@ button {
   padding: 0;
 }
 
+.toolbar { margin-bottom: 16px; }
+.library-item { align-items: stretch; }
+.library-main { width: 100%; }
+.library-head { justify-content: space-between; align-items: flex-start; }
+.library-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+.library-prompt { margin: 8px 0 10px; line-height: 1.5; }
+.cover-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid #e5dfd3;
+}
+.pill-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #ece5da;
+  color: #473d33;
+  font-size: 12px;
+}
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.meta-grid div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #eee3d6;
+  font-size: 12px;
+}
+.link-button,
+.ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-size: 13px;
+}
+.link-button {
+  background: #1f4b3d;
+  color: #fff;
+}
+.ghost-btn {
+  background: #fff;
+  color: var(--accent);
+  border: 1px solid #cfc4b6;
+}
+
 .spacer { height: 16px; }
 .card h3 { margin: 6px 0 10px; font-size: 15px; }
 
 @media (max-width: 640px) {
   header { flex-direction: column; align-items: flex-start; }
-  input { min-width: 0; width: 100%; }
+  input, select { min-width: 0; width: 100%; }
   .table table { font-size: 11px; }
+  .library-head { flex-direction: column; }
 }
-

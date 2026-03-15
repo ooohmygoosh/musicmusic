@@ -1,0 +1,44 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>歌曲库 | 天谱乐 后台管理</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <h1>歌曲库管理</h1>
+        <nav class="nav">
+          <a href="/" class="nav-link">概览</a>
+          <a href="/songs.html" class="nav-link is-active">歌曲库</a>
+          <a href="/users.html" class="nav-link">用户数据</a>
+          <a href="/tags.html" class="nav-link">标签管理</a>
+        </nav>
+        <div class="token">
+          <input id="token" type="password" placeholder="Admin Token" />
+          <button id="saveToken">保存</button>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="row between">
+          <h2>库存歌曲</h2>
+          <button id="refreshSongs">刷新</button>
+        </div>
+        <div class="toolbar row">
+          <input id="searchInput" placeholder="搜索标题、提示词或标签" />
+          <select id="availabilityFilter">
+            <option value="">全部状态</option>
+            <option value="true">仅启用</option>
+            <option value="false">仅停用</option>
+          </select>
+        </div>
+        <div id="songList" class="list"></div>
+      </section>
+    </div>
+
+    <script src="./songs.js"></script>
+  </body>
+</html>

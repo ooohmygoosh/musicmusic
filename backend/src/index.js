@@ -1,4 +1,4 @@
-import "dotenv/config";
+﻿import "dotenv/config";
 import Fastify from "fastify";
 import { query } from "./db.js";
 
@@ -17,6 +17,7 @@ const COEF_COMPLETE = 0.05;
 const NORMALIZE_EVERY = 10;
 const MAX_TAGS_TOTAL = 6;
 const MAX_PER_TYPE = 2;
+const REUSE_SIMILARITY_MIN = Number(process.env.REUSE_SIMILARITY_MIN || 0.6);
 
 function requireAdmin(request, reply) {
   const token = request.headers["x-admin-token"];
@@ -145,6 +146,7 @@ app.get("/admin/stats", async (request, reply) => {
   );
   const tagsTotal = await query("SELECT COUNT(*)::int AS count FROM tags");
   const tagsActive = await query("SELECT COUNT(*)::int AS count FROM tags WHERE is_active = true");
+  const reusableSongs = await query("SELECT COUNT(*)::int AS count FROM songs WHERE source_song_id IS NULL AND COALESCE(is_available, true) = true");
 
   const feedbackBreakdown = await query(
     "SELECT action, COUNT(*)::int AS count FROM feedback GROUP BY action ORDER BY count DESC"
@@ -161,7 +163,8 @@ app.get("/admin/stats", async (request, reply) => {
       feedback: feedback.rows[0]?.count || 0,
       favorites: favorites.rows[0]?.count || 0,
       tags_total: tagsTotal.rows[0]?.count || 0,
-      tags_active: tagsActive.rows[0]?.count || 0
+      tags_active: tagsActive.rows[0]?.count || 0,
+      reusable_songs: reusableSongs.rows[0]?.count || 0
     },
     feedback_breakdown: feedbackBreakdown.rows || [],
     top_tags: topTags.rows || []
@@ -186,6 +189,34 @@ app.get("/admin/favorites", async (request, reply) => {
   return { items: rows };
 });
 
+app.get("/admin/library-songs", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const { q, available } = request.query || {};
+  const search = q ? `%${String(q).trim()}%` : null;
+  const availableFilter =
+    available === "true" ? true : available === "false" ? false : null;
+
+  const { rows } = await query(
+    "SELECT lib.id, lib.title, lib.cover_url, lib.prompt, lib.model, lib.duration, lib.style, lib.is_available, lib.reuse_count, COUNT(DISTINCT all_s.id)::int AS copies, COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS likes, COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skips, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, sa.audio_url FROM songs lib LEFT JOIN songs all_s ON COALESCE(all_s.source_song_id, all_s.id) = lib.id LEFT JOIN feedback f ON f.song_id = all_s.id LEFT JOIN song_tags st ON st.song_id = lib.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = lib.id ORDER BY id DESC LIMIT 1) sa ON true WHERE lib.source_song_id IS NULL AND ($1::text IS NULL OR lib.title ILIKE $1 OR lib.prompt ILIKE $1 OR EXISTS (SELECT 1 FROM song_tags st2 JOIN tags t2 ON t2.id = st2.tag_id WHERE st2.song_id = lib.id AND t2.name ILIKE $1)) AND ($2::boolean IS NULL OR lib.is_available = $2) GROUP BY lib.id, sa.audio_url ORDER BY likes DESC, lib.reuse_count DESC, lib.created_at DESC LIMIT 300",
+    [search, availableFilter]
+  );
+  return { items: rows };
+});
+
+app.patch("/admin/library-songs/:id", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const { id } = request.params;
+  const { is_available } = request.body || {};
+  if (typeof is_available !== "boolean") {
+    reply.code(400).send({ error: "is_available boolean required" });
+    return;
+  }
+  const { rows } = await query(
+    "UPDATE songs SET is_available = $1 WHERE id = $2 AND source_song_id IS NULL RETURNING id, is_available",
+    [is_available, Number(id)]
+  );
+  return { item: rows[0] || null };
+});
 app.post("/users", async (request, reply) => {
   const { device_id } = request.body || {};
   if (!device_id) {
@@ -493,6 +524,60 @@ async function buildPrompt(userId) {
   return { prompt: parts.join(", "), tagIds };
 }
 
+async function findReusableSong(tagIds) {
+  if (!Array.isArray(tagIds) || tagIds.length === 0) return null;
+  const { rows } = await query(
+    "SELECT s.id, s.title, s.cover_url, s.prompt, s.model, s.duration, s.style, s.reuse_count, COUNT(DISTINCT st.tag_id)::int AS song_tag_count, COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::int AS matched_tag_count, (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) AS similarity FROM songs s JOIN song_assets sa ON sa.song_id = s.id AND sa.audio_url IS NOT NULL LEFT JOIN song_tags st ON st.song_id = s.id WHERE s.source_song_id IS NULL AND COALESCE(s.is_available, true) = true GROUP BY s.id HAVING COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END) > 0 AND (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) >= $3 ORDER BY similarity DESC, s.reuse_count DESC, s.created_at DESC LIMIT 1",
+    [tagIds, tagIds.length, REUSE_SIMILARITY_MIN]
+  );
+  if (rows.length === 0) return null;
+
+  const asset = await query(
+    "SELECT item_id, audio_url FROM song_assets WHERE song_id = $1 ORDER BY id DESC LIMIT 1",
+    [rows[0].id]
+  );
+  if (asset.rows.length === 0) return null;
+  return { ...rows[0], asset: asset.rows[0] };
+}
+
+async function reuseSongForUser(job, librarySong) {
+  const inserted = await query(
+    "INSERT INTO songs (user_id, prompt, title, cover_url, model, duration, style, source_song_id, generation_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'reused') RETURNING id",
+    [
+      Number(job.user_id),
+      job.prompt,
+      librarySong.title || null,
+      librarySong.cover_url || null,
+      librarySong.model || null,
+      Number.isFinite(Number(librarySong.duration)) ? Number(librarySong.duration) : null,
+      librarySong.style || null,
+      Number(librarySong.id)
+    ]
+  );
+  const songId = inserted.rows[0].id;
+
+  await query(
+    "INSERT INTO song_tags (song_id, tag_id, relevance) SELECT $1, tag_id, COALESCE(relevance, 1.0) FROM song_tags WHERE song_id = $2 ON CONFLICT DO NOTHING",
+    [songId, Number(librarySong.id)]
+  );
+
+  await query(
+    "INSERT INTO song_assets (song_id, item_id, audio_url) VALUES ($1, $2, $3)",
+    [songId, librarySong.asset.item_id || null, librarySong.asset.audio_url]
+  );
+
+  await query(
+    "UPDATE songs SET reuse_count = reuse_count + 1 WHERE id = $1",
+    [Number(librarySong.id)]
+  );
+
+  await query(
+    "UPDATE generation_jobs SET status = 'reused', item_ids = $1 WHERE id = $2",
+    [[librarySong.asset.item_id].filter(Boolean), Number(job.id)]
+  );
+
+  return songId;
+}
 app.post("/generate", async (request, reply) => {
   const { user_id, instrumental = true, model } = request.body || {};
   if (!user_id) {
@@ -511,6 +596,20 @@ app.post("/generate", async (request, reply) => {
     [user_id, prompt, tagIds]
   );
   const job = rows[0];
+
+  const reusableSong = await findReusableSong(tagIds);
+  if (reusableSong) {
+    const songId = await reuseSongForUser(job, reusableSong);
+    return {
+      job_id: job.id,
+      item_ids: reusableSong.asset.item_id ? [reusableSong.asset.item_id] : [],
+      prompt,
+      reused: true,
+      song_id: songId,
+      matched_song_id: reusableSong.id,
+      similarity: Number(reusableSong.similarity || 0)
+    };
+  }
 
   if (!TPY_API_KEY) {
     await query("UPDATE generation_jobs SET status = 'failed' WHERE id = $1", [job.id]);
@@ -579,9 +678,8 @@ app.post("/generate", async (request, reply) => {
     [itemIds, job.id]
   );
 
-  return { job_id: job.id, item_ids: itemIds, prompt };
+  return { job_id: job.id, item_ids: itemIds, prompt, reused: false };
 });
-
 app.post("/callback/tpy", async (request, reply) => {
   const payload = request.body || {};
   await query(
@@ -625,7 +723,7 @@ app.post("/callback/tpy", async (request, reply) => {
         const job = rows[0];
         const coverUrl = s?.cover_url || s?.image_url || s?.cover || null;
         const song = await query(
-          "INSERT INTO songs (user_id, prompt, title, cover_url, model, duration, style) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+          "INSERT INTO songs (user_id, prompt, title, cover_url, model, duration, style, generation_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, 'generated') RETURNING id",
           [
             job.user_id,
             job.prompt,
@@ -664,6 +762,17 @@ app.post("/feedback", async (request, reply) => {
   }
 
   const normalizedAction = String(action).toLowerCase();
+  if (!["like", "skip", "complete"].includes(normalizedAction)) {
+    reply.code(400).send({ error: "action must be like, skip, or complete" });
+    return;
+  }
+
+  const songCheck = await query("SELECT id FROM songs WHERE id = $1", [Number(song_id)]);
+  if (songCheck.rows.length === 0) {
+    reply.code(404).send({ error: "song not found" });
+    return;
+  }
+
   let behavior = "skip";
   if (normalizedAction === "like") behavior = "favorite";
   if (normalizedAction === "complete") behavior = "complete";
@@ -673,16 +782,26 @@ app.post("/feedback", async (request, reply) => {
   const isLateSkip = behavior === "skip" && seconds >= 30;
   const isEarlySkip = behavior === "skip" && seconds > 0 && seconds < 30;
 
-  await query(
-    "INSERT INTO feedback (user_id, song_id, action, score) VALUES ($1, $2, $3, $4)",
-    [user_id, song_id, action, behavior === "favorite" ? 1.0 : behavior === "complete" ? 0.4 : -0.7]
-  );
+  try {
+    await query(
+      "INSERT INTO feedback (user_id, song_id, action, score) VALUES ($1, $2, $3, $4)",
+      [
+        Number(user_id),
+        Number(song_id),
+        normalizedAction,
+        behavior === "favorite" ? 1.0 : behavior === "complete" ? 0.4 : -0.7
+      ]
+    );
+  } catch (err) {
+    reply.code(500).send({ error: "feedback insert failed", detail: String(err) });
+    return;
+  }
 
   await ensureUserTagWeights(user_id);
 
   const { rows } = await query(
     "SELECT tag_id, COALESCE(relevance, 1.0) AS relevance FROM song_tags WHERE song_id = $1",
-    [song_id]
+    [Number(song_id)]
   );
 
   for (const row of rows) {
@@ -711,12 +830,17 @@ app.post("/feedback", async (request, reply) => {
         ? COEF_SKIP_LATE
         : COEF_SKIP_EARLY;
 
-    await query(updateSql, [coef, relevance, user_id, row.tag_id]);
+    try {
+      await query(updateSql, [coef, relevance, Number(user_id), row.tag_id]);
+    } catch (err) {
+      reply.code(500).send({ error: "feedback update failed", detail: String(err) });
+      return;
+    }
   }
 
   const totalUpdates = await query(
     "SELECT COALESCE(SUM(update_count), 0) AS total FROM user_tags WHERE user_id = $1",
-    [user_id]
+    [Number(user_id)]
   );
   const total = Number(totalUpdates.rows[0]?.total || 0);
   if (total > 0 && total % NORMALIZE_EVERY === 0) {
@@ -741,5 +865,8 @@ app.get("/songs", async (request, reply) => {
 
 const port = Number(process.env.PORT || 8080);
 app.listen({ port, host: "0.0.0.0" });
+
+
+
 
 
