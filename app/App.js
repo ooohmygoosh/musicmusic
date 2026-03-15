@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
-import { SafeAreaView, View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, Animated, useWindowDimensions, Alert, PanResponder, ActivityIndicator } from "react-native";
+import { SafeAreaView, View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, Animated, Easing, useWindowDimensions, Alert, PanResponder, ActivityIndicator } from "react-native";
 import { Audio } from "expo-av";
 import { API_BASE } from "./config";
 
@@ -18,6 +18,10 @@ const TYPE_COLORS = {
   节奏: ["#9A78E6", "#F2EBFF", "#473171"]
 };
 
+const CATEGORY_ORDER = ["情绪", "风格", "乐器", "场景", "节奏"];
+const COLLAPSED_WEIGHT_LIMIT = 6;
+const EXPANDED_WEIGHT_LIMIT = 15;
+
 function formatTime(ms) {
   if (!ms || Number.isNaN(ms)) return "0:00";
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -26,6 +30,81 @@ function formatTime(ms) {
 
 function typePalette(type) {
   return TYPE_COLORS[type] || ["#82B9FF", "#EAF5FF", "#26496F"];
+}
+
+function uniqueTagNames(tags) {
+  return Array.from(new Set((tags || []).filter(Boolean)));
+}
+
+function fallbackTagText(prompt) {
+  if (!prompt) return "";
+  return String(prompt)
+    .replace(/([\u4e00-\u9fa5A-Za-z]+)\s*:\s*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function songTagText(song) {
+  const names = uniqueTagNames(song?.tags);
+  if (names.length > 0) return names.join(" · ");
+  return fallbackTagText(song?.prompt) || "点一下生成，我们就为你补上下一首。";
+}
+
+function buildGalaxyNodes(tags, stageSize) {
+  const width = Math.max(280, stageSize.width || 0);
+  const height = Math.max(320, stageSize.height || 0);
+  const centerX = width / 2;
+  const centerY = height / 2 + 34;
+  const expanded = tags.slice(0, EXPANDED_WEIGHT_LIMIT);
+  const compact = tags.slice(EXPANDED_WEIGHT_LIMIT);
+
+  const expandedNodes = expanded.map((tag, index) => {
+    const palette = typePalette(tag.type);
+    const ringIndex = index < 5 ? 0 : index < 10 ? 1 : 2;
+    const ringCounts = [Math.min(5, expanded.length), Math.max(0, Math.min(5, expanded.length - 5)), Math.max(0, Math.min(5, expanded.length - 10))];
+    const indexInRing = ringIndex === 0 ? index : ringIndex === 1 ? index - 5 : index - 10;
+    const ringCount = Math.max(1, ringCounts[ringIndex] || 1);
+    const radius = [78, 132, 184][ringIndex];
+    const angle = (-Math.PI / 2) + ((Math.PI * 2) / ringCount) * indexInRing + ringIndex * 0.22;
+    const size = 58 + Math.min(40, Number(tag.weight || 0) * 48);
+    const baseX = centerX + Math.cos(angle) * radius - size / 2;
+    const baseY = centerY + Math.sin(angle) * radius - size / 2;
+    return {
+      tag,
+      compact: false,
+      size,
+      baseX,
+      baseY,
+      driftX: 3.5 + ringIndex,
+      driftY: 2.8 + ringIndex,
+      seed: index + 1,
+      color: palette[0],
+      glow: palette[1],
+      text: palette[2]
+    };
+  });
+
+  const compactNodes = compact.map((tag, index) => {
+    const palette = typePalette(tag.type);
+    const ring = 226 + (index % 4) * 20;
+    const angle = ((Math.PI * 2) / Math.max(compact.length, 10)) * index + (index % 2) * 0.18;
+    const size = 6 + Math.min(8, Number(tag.weight || 0) * 10);
+    return {
+      tag,
+      compact: true,
+      size,
+      ring,
+      angle,
+      seed: index + 1,
+      color: palette[0],
+      glow: palette[1],
+      text: palette[2],
+      centerX,
+      centerY
+    };
+  });
+
+  return [...expandedNodes, ...compactNodes];
 }
 
 function ScreenTitle({ eyebrow, title, subtitle }) {
@@ -47,35 +126,78 @@ function SeedTag({ item, selected, onPress }) {
   );
 }
 
+function GalaxyDust({ node }) {
+  const angle = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const orbit = Animated.loop(Animated.timing(angle, {
+      toValue: 1,
+      duration: 26000 + node.seed * 1100,
+      easing: Easing.linear,
+      useNativeDriver: true
+    }));
+    orbit.start();
+    return () => orbit.stop();
+  }, [angle, node.seed]);
+
+  const rotate = angle.interpolate({ inputRange: [0, 1], outputRange: [node.angle + "rad", node.angle + Math.PI * 2 + "rad"] });
+
+  return (
+    <Animated.View pointerEvents="none" style={[styles.dustOrbit, { width: node.ring * 2, height: node.ring * 2, marginLeft: -node.ring, marginTop: -node.ring, left: node.centerX, top: node.centerY, transform: [{ rotate }] }]}>
+      <View style={[styles.dustParticle, { width: node.size, height: node.size, borderRadius: node.size / 2, backgroundColor: node.color, shadowColor: node.color }]} />
+    </Animated.View>
+  );
+}
+
 function GalaxyNode({ node, onDrop }) {
   const pan = useRef(new Animated.ValueXY({ x: node.baseX, y: node.baseY })).current;
   const driftX = useRef(new Animated.Value(0)).current;
   const driftY = useRef(new Animated.Value(0)).current;
+  const isDragging = useRef(false);
+
+  useEffect(() => {
+    if (!isDragging.current) {
+      pan.setValue({ x: node.baseX, y: node.baseY });
+    }
+  }, [node.baseX, node.baseY, pan]);
 
   useEffect(() => {
     const xa = Animated.loop(Animated.sequence([
-      Animated.timing(driftX, { toValue: node.driftX, duration: 5600 + node.seed * 200, useNativeDriver: false }),
-      Animated.timing(driftX, { toValue: -node.driftX, duration: 5600 + node.seed * 200, useNativeDriver: false })
+      Animated.timing(driftX, { toValue: node.driftX, duration: 12000 + node.seed * 240, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
+      Animated.timing(driftX, { toValue: -node.driftX, duration: 12000 + node.seed * 240, easing: Easing.inOut(Easing.sin), useNativeDriver: false })
     ]));
     const ya = Animated.loop(Animated.sequence([
-      Animated.timing(driftY, { toValue: node.driftY, duration: 6400 + node.seed * 200, useNativeDriver: false }),
-      Animated.timing(driftY, { toValue: -node.driftY, duration: 6400 + node.seed * 200, useNativeDriver: false })
+      Animated.timing(driftY, { toValue: node.driftY, duration: 13600 + node.seed * 260, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
+      Animated.timing(driftY, { toValue: -node.driftY, duration: 13600 + node.seed * 260, easing: Easing.inOut(Easing.sin), useNativeDriver: false })
     ]));
-    xa.start(); ya.start();
+    xa.start();
+    ya.start();
     return () => { xa.stop(); ya.stop(); };
   }, [driftX, driftY, node.driftX, node.driftY, node.seed]);
 
   const responder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: () => {
+      isDragging.current = true;
+      driftX.stopAnimation();
+      driftY.stopAnimation();
+      driftX.setValue(0);
+      driftY.setValue(0);
+    },
     onPanResponderMove: (_, g) => pan.setValue({ x: node.baseX + g.dx, y: node.baseY + g.dy }),
     onPanResponderRelease: (_, g) => {
       const cx = node.baseX + g.dx + node.size / 2;
       const cy = node.baseY + g.dy + node.size / 2;
-      const action = onDrop(cx, cy, node.tag);
-      if (!action) {
-        Animated.spring(pan, { toValue: { x: node.baseX, y: node.baseY }, useNativeDriver: false }).start();
-      }
+      onDrop(cx, cy, node.tag);
+      Animated.spring(pan, { toValue: { x: node.baseX, y: node.baseY }, friction: 8, tension: 48, useNativeDriver: false }).start(() => {
+        isDragging.current = false;
+      });
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(pan, { toValue: { x: node.baseX, y: node.baseY }, friction: 8, tension: 48, useNativeDriver: false }).start(() => {
+        isDragging.current = false;
+      });
     }
   })).current;
 
@@ -95,9 +217,7 @@ function GalaxyNode({ node, onDrop }) {
       ]}
     >
       <View style={[styles.nodeGlow, { backgroundColor: node.glow }]} />
-      <Text style={[styles.nodeType, { color: node.text }]}>{node.tag.type}</Text>
       <Text style={[styles.nodeName, { color: node.text }]} numberOfLines={2}>{node.tag.name}</Text>
-      <Text style={[styles.nodeWeight, { color: node.text }]}>{Math.round(Number(node.tag.weight || 0) * 100)}%</Text>
     </Animated.View>
   );
 }
@@ -127,8 +247,9 @@ export default function App() {
   const [showQueue, setShowQueue] = useState(false);
   const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
   const [newTagName, setNewTagName] = useState("");
-  const [newTagType, setNewTagType] = useState("");
+  const [onboardingStep, setOnboardingStep] = useState(0);
   const [tagMessage, setTagMessage] = useState("");
+  const [showAllWeights, setShowAllWeights] = useState(false);
   const [health, setHealth] = useState({ loading: false, ok: null, message: "" });
   const [stageSize, setStageSize] = useState({ width: 1, height: 1 });
   const [galaxyNodes, setGalaxyNodes] = useState([]);
@@ -150,6 +271,14 @@ export default function App() {
   }, [tags]);
 
   const activeProfileTags = useMemo(() => profileTags.filter((item) => item.is_active !== false && Number(item.weight || 0) > 0), [profileTags]);
+  const existingTagMatch = useMemo(() => {
+    const clean = newTagName.trim().toLowerCase();
+    if (!clean) return null;
+    return tags.find((tag) => String(tag.name || "").trim().toLowerCase() === clean) || null;
+  }, [newTagName, tags]);
+  const onboardingGroups = useMemo(() => CATEGORY_ORDER.map((type) => [type, groupedTags.find(([groupType]) => groupType === type)?.[1] || []]).filter(([, items]) => items.length > 0), [groupedTags]);
+  const currentOnboarding = onboardingGroups[Math.min(onboardingStep, Math.max(0, onboardingGroups.length - 1))] || null;
+  const visibleWeightTags = useMemo(() => activeProfileTags.slice(0, showAllWeights ? EXPANDED_WEIGHT_LIMIT : COLLAPSED_WEIGHT_LIMIT), [activeProfileTags, showAllWeights]);
 
   const loadTags = async () => {
     const res = await fetch(`${API_BASE}/tags`);
@@ -224,33 +353,15 @@ export default function App() {
     await Promise.all([refreshSongs(user.id, { preferLatest: true }), refreshFavorites(user.id), loadPlaylists(user.id)]);
     const active = (profile || []).filter((item) => item.is_active !== false && Number(item.weight || 0) > 0);
     setNeedsOnboarding(active.length === 0);
+    setOnboardingStep(0);
   };
 
   useEffect(() => { loadTags().catch(() => setTags([])); }, []);
   useEffect(() => () => { if (sound) sound.unloadAsync().catch(() => {}); }, [sound]);
 
   useEffect(() => {
-    const nodes = activeProfileTags.map((tag, index) => {
-      const palette = typePalette(tag.type);
-      const size = 70 + Math.min(1, Number(tag.weight || 0)) * 52;
-      const maxX = Math.max(8, stageSize.width - size - 8);
-      const maxY = Math.max(120, stageSize.height - size - 20);
-      return {
-        tag,
-        size,
-        baseX: 8 + ((index * 93) % Math.max(1, maxX)),
-        baseY: 110 + ((index * 67) % Math.max(1, maxY - 100)),
-        driftX: 8 + ((index * 2) % 8),
-        driftY: 7 + ((index * 3) % 8),
-        seed: index + 1,
-        color: palette[0],
-        glow: palette[1],
-        text: palette[2]
-      };
-    });
-    setGalaxyNodes(nodes);
+    setGalaxyNodes(buildGalaxyNodes(activeProfileTags, stageSize));
   }, [activeProfileTags, stageSize, width]);
-
   const submitAuth = async () => {
     const cleanId = accountId.trim();
     const cleanName = accountName.trim();
@@ -279,55 +390,88 @@ export default function App() {
     await refreshFavorites(userId);
     await loadPlaylists(userId);
     setNeedsOnboarding(false);
+    setOnboardingStep(0);
     setActiveTab("player");
   };
 
-  const updateWeight = async (tagId, weight) => {
+  const persistWeight = async (tagId, weight) => {
     if (!userId) return;
     await fetch(`${API_BASE}/user-tags/weight`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId, tag_id: tagId, weight })
     });
-    await loadProfileTags(userId);
   };
 
-  const removeProfileTag = async (tag) => {
+  const persistRemoveProfileTag = async (tag) => {
     if (!userId) return;
     await fetch(`${API_BASE}/user-tags/remove`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId, tag_id: tag.tag_id })
     });
-    await loadProfileTags(userId);
+  };
+
+  const animateTagWeightChange = (tag, nextWeight, mode = "update") => {
+    const startWeight = Number(tag.weight || 0);
+    const endWeight = Math.max(0, Math.min(1, nextWeight));
+    const steps = 10;
+    let step = 0;
+    const timer = setInterval(() => {
+      step += 1;
+      const ratio = step / steps;
+      const eased = 1 - Math.pow(1 - ratio, 2);
+      const value = startWeight + (endWeight - startWeight) * eased;
+      setProfileTags((prev) => prev.map((item) => item.tag_id === tag.tag_id ? { ...item, weight: value, is_active: mode === "remove" ? true : item.is_active } : item));
+      if (step >= steps) {
+        clearInterval(timer);
+        if (mode === "remove") {
+          persistRemoveProfileTag(tag).then(() => loadProfileTags(userId)).catch(() => loadProfileTags(userId));
+        } else {
+          persistWeight(tag.tag_id, endWeight).then(() => loadProfileTags(userId)).catch(() => loadProfileTags(userId));
+        }
+      }
+    }, 40);
   };
 
   const handleGalaxyDrop = (x, y, tag) => {
     const zoneHeight = 78;
     const third = stageSize.width / 3;
     if (y > 18 && y < 18 + zoneHeight) {
-      if (x < third) { removeProfileTag(tag).catch(() => {}); return "delete"; }
-      if (x < third * 2) { updateWeight(tag.tag_id, Math.max(0.03, Number(tag.weight || 0) * 0.65)).catch(() => {}); return "weaken"; }
-      updateWeight(tag.tag_id, Math.min(1, Number(tag.weight || 0) * 1.2 + 0.08)).catch(() => {}); return "boost";
+      if (x < third) { animateTagWeightChange(tag, 0, "remove"); return "delete"; }
+      if (x < third * 2) { animateTagWeightChange(tag, Math.max(0.03, Number(tag.weight || 0) * 0.82)); return "weaken"; }
+      animateTagWeightChange(tag, Math.min(1, Number(tag.weight || 0) * 1.08 + 0.04));
+      return "boost";
     }
     return null;
   };
 
   const submitUserTag = async () => {
     setTagMessage("");
-    if (!userId || !newTagName.trim() || !newTagType.trim()) return setTagMessage("请填写标签名称与类别");
-    const res = await fetch(`${API_BASE}/user-tags`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, name: newTagName.trim(), type: newTagType.trim() })
-    });
-    const data = await res.json();
-    if (!res.ok) return setTagMessage(data.error || "添加失败");
-    setNewTagName(""); setNewTagType(""); setTagMessage("标签已加入画像");
-    await loadTags();
-    await loadProfileTags(userId);
-  };
+    const cleanName = newTagName.trim();
+    if (!userId || !cleanName) return setTagMessage("请输入标签名称");
 
+    const submitWithType = async (chosenType) => {
+      const res = await fetch(`${API_BASE}/user-tags`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, name: cleanName, type: chosenType || undefined })
+      });
+      const data = await res.json();
+      if (!res.ok) return setTagMessage(data.error || "添加失败");
+      setNewTagName("");
+      setTagMessage(existingTagMatch ? "已加入当前画像" : "标签已提交，会在探索到它后进入画像");
+      await loadTags();
+      await loadProfileTags(userId);
+    };
+
+    if (existingTagMatch) return submitWithType(existingTagMatch.type);
+
+    Alert.alert("选择标签分类", "这个标签还没有分类，请先选择一个类别。", [
+      ...CATEGORY_ORDER.map((type) => ({ text: type, onPress: () => submitWithType(type) })),
+      { text: "取消", style: "cancel" }
+    ]);
+  };
   const generate = async () => {
     if (!userId) return;
     await fetch(`${API_BASE}/generate`, {
@@ -420,7 +564,7 @@ export default function App() {
 
   const logout = async () => {
     if (sound) await sound.unloadAsync().catch(() => {});
-    setSession(null); setNeedsOnboarding(false); setSeedSelection(new Set());
+    setSession(null); setNeedsOnboarding(false); setSeedSelection(new Set()); setOnboardingStep(0);
     setProfileTags([]); setSongs([]); setFavorites([]); setPlaylists([]); setPlaylistSongs([]); setCurrent(null);
     setActiveTab("player"); setShowPlaylistPicker(false);
   };
@@ -467,30 +611,39 @@ export default function App() {
   const renderOnboarding = () => (
     <SafeAreaView style={styles.page}>
       <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-        <ScreenTitle eyebrow="首次进入" title="先选一组你喜欢的标签" subtitle="这会成为你的初始标签池。之后可以继续新增标签，也可以在画像星系中拖动强化、弱化或删除。" />
-        {groupedTags.map(([type, items]) => (
-          <View key={type} style={styles.groupCard}>
-            <Text style={styles.groupTitle}>{type}</Text>
-            <View style={styles.seedWrap}>
-              {items.map((item) => <SeedTag key={item.id} item={item} selected={seedSelection.has(item.id)} onPress={(tag) => {
-                const next = new Set(seedSelection); if (next.has(tag.id)) next.delete(tag.id); else next.add(tag.id); setSeedSelection(next);
-              }} />)}
-            </View>
+        <ScreenTitle eyebrow="首次进入" title="先按类别建立你的初始标签池" subtitle="每次只专注一个类别，选中的标签会直接成为你的起点，后续新标签再通过探索和自定义慢慢扩展。" />
+        <View style={styles.groupCard}>
+          <View style={styles.onboardingProgressHeader}>
+            <Text style={styles.groupTitle}>{currentOnboarding ? currentOnboarding[0] : "已完成"}</Text>
+            <Text style={styles.hintText}>第 {Math.min(onboardingStep + 1, onboardingGroups.length || 1)} / {Math.max(1, onboardingGroups.length)} 类</Text>
           </View>
-        ))}
-        <TouchableOpacity style={styles.primary} onPress={submitOnboarding}><Text style={styles.primaryText}>完成选择并进入 App</Text></TouchableOpacity>
+          <View style={styles.onboardingProgressTrack}>
+            <View style={[styles.onboardingProgressFill, { width: String(((Math.min(onboardingStep + 1, onboardingGroups.length || 1)) / Math.max(1, onboardingGroups.length)) * 100) + "%" }]} />
+          </View>
+          {currentOnboarding ? <View style={styles.seedWrap}>
+            {currentOnboarding[1].map((item) => <SeedTag key={item.id} item={item} selected={seedSelection.has(item.id)} onPress={(tag) => {
+              const next = new Set(seedSelection);
+              if (next.has(tag.id)) next.delete(tag.id); else next.add(tag.id);
+              setSeedSelection(next);
+            }} />)}
+          </View> : <Text style={styles.placeholder}>标签类别已全部选择完成</Text>}
+          <View style={styles.rowGap}>
+            <TouchableOpacity style={[styles.secondarySoft, styles.flex]} onPress={() => setOnboardingStep((prev) => Math.max(0, prev - 1))}>
+              <Text style={styles.secondaryText}>上一步</Text>
+            </TouchableOpacity>
+            {onboardingStep < onboardingGroups.length - 1 ? <TouchableOpacity style={[styles.primary, styles.flex]} onPress={() => setOnboardingStep((prev) => Math.min(onboardingGroups.length - 1, prev + 1))}><Text style={styles.primaryText}>下一个类别</Text></TouchableOpacity> : <TouchableOpacity style={[styles.primary, styles.flex]} onPress={submitOnboarding}><Text style={styles.primaryText}>完成选择并进入 App</Text></TouchableOpacity>}
+          </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
-
   const renderPlayer = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
       <ScreenTitle eyebrow={`你好，${displayName}`} title="现在播放" subtitle="登录后会自动带出你的歌曲与偏好，不用再等到生成时才识别用户。" />
       <View style={styles.playerCard}>
-        <View style={styles.heroBadge}><Text style={styles.heroBadgeText}>AI RADIO</Text></View>
-        <View style={styles.coverWrap}><View style={styles.cover}><View style={styles.coverGlowA} /><View style={styles.coverGlowB} /><View style={styles.coverGlowC} /><Text style={styles.coverText}>TPY</Text></View></View>
+                <View style={styles.coverWrap}><View style={styles.cover}><View style={styles.coverGlowA} /><View style={styles.coverGlowB} /><View style={styles.coverGlowC} /><Text style={styles.coverText}>TPY</Text></View></View>
         <Text style={styles.playerTitle}>{current?.title || "暂无歌曲"}</Text>
-        <Text style={styles.playerSub} numberOfLines={2}>{current?.prompt || "点一下生成，我们就为你补上下一首。"}</Text>
+        <Text style={styles.playerSub} numberOfLines={2}>{songTagText(current)}</Text>
         <View style={styles.progressWrap}>
           <View ref={progressTrackRef} style={styles.progressTrack} onLayout={() => {
             if (!progressTrackRef.current) return;
@@ -513,7 +666,7 @@ export default function App() {
         </View>
       </View>
       {showPlaylistPicker ? <View style={styles.groupCard}><Text style={styles.groupTitle}>收藏到哪个歌单？</Text>{playlists.map((p) => <TouchableOpacity key={p.id} style={styles.listItem} onPress={async () => { await addSongToPlaylist(p.id); if (selectedPlaylistId === p.id) await loadPlaylistSongs(p.id); setShowPlaylistPicker(false); }}><View><Text style={styles.listTitle}>{p.name}</Text><Text style={styles.listSub}>歌曲 {p.song_count || 0}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}<TouchableOpacity style={styles.secondarySoft} onPress={() => setShowPlaylistPicker(false)}><Text style={styles.secondaryText}>取消</Text></TouchableOpacity></View> : null}
-      <View style={styles.section}><TouchableOpacity style={styles.queueToggle} onPress={() => setShowQueue((prev) => !prev)}><View><Text style={styles.queueLabel}>播放队列</Text><Text style={styles.queueHint}>有下一首就切换，没有就自动生成</Text></View><Text style={styles.queueAction}>{showQueue ? "收起" : "展开"}</Text></TouchableOpacity>{showQueue ? songs.map((item) => <TouchableOpacity key={item.id} style={styles.listItem} onPress={() => play(item)}><View style={styles.flex}><Text style={styles.listTitle}>{item.title || "未命名歌曲"}</Text><Text style={styles.listSub} numberOfLines={1}>{item.prompt || "暂无提示词"}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>) : null}</View>
+      <View style={styles.section}><TouchableOpacity style={styles.queueToggle} onPress={() => setShowQueue((prev) => !prev)}><View><Text style={styles.queueLabel}>播放队列</Text><Text style={styles.queueHint}>有下一首就切换，没有就自动生成</Text></View><Text style={styles.queueAction}>{showQueue ? "收起" : "展开"}</Text></TouchableOpacity>{showQueue ? songs.map((item) => <TouchableOpacity key={item.id} style={styles.listItem} onPress={() => play(item)}><View style={styles.flex}><Text style={styles.listTitle}>{item.title || "未命名歌曲"}</Text><Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>) : null}</View>
     </ScrollView>
   );
 
@@ -529,41 +682,46 @@ export default function App() {
         <Text style={styles.groupTitle}>我的歌单</Text>
         {playlists.length === 0 ? <Text style={styles.placeholder}>还没有歌单</Text> : playlists.map((p) => <TouchableOpacity key={p.id} style={styles.listItem} onPress={async () => { setSelectedPlaylistId(p.id); await loadPlaylistSongs(p.id); }}><View><Text style={styles.listTitle}>{p.name}</Text><Text style={styles.listSub}>歌曲 {p.song_count || 0}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}
       </View>
-      {selectedPlaylistId ? <View style={styles.groupCard}><Text style={styles.groupTitle}>当前歌单内容</Text>{playlistSongs.length === 0 ? <Text style={styles.placeholder}>这个歌单还没有歌曲</Text> : playlistSongs.map((song) => <TouchableOpacity key={song.id} style={styles.listItem} onPress={() => play(song)}><View style={styles.flex}><Text style={styles.listTitle}>{song.title || "未命名歌曲"}</Text><Text style={styles.listSub} numberOfLines={1}>{song.prompt || "暂无提示词"}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}</View> : null}
+      {selectedPlaylistId ? <View style={styles.groupCard}><Text style={styles.groupTitle}>当前歌单内容</Text>{playlistSongs.length === 0 ? <Text style={styles.placeholder}>这个歌单还没有歌曲</Text> : playlistSongs.map((song) => <TouchableOpacity key={song.id} style={styles.listItem} onPress={() => play(song)}><View style={styles.flex}><Text style={styles.listTitle}>{song.title || "未命名歌曲"}</Text><Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}</View> : null}
       <View style={styles.groupCard}>
         <Text style={styles.groupTitle}>收藏记录</Text>
-        {favorites.length === 0 ? <Text style={styles.placeholder}>还没有收藏歌曲</Text> : favorites.map((song) => <TouchableOpacity key={`${song.id}-${song.created_at || "fav"}`} style={styles.listItem} onPress={() => play(song)}><View style={styles.flex}><Text style={styles.listTitle}>{song.title || "未命名歌曲"}</Text><Text style={styles.listSub} numberOfLines={1}>{song.prompt || "暂无提示词"}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}
+        {favorites.length === 0 ? <Text style={styles.placeholder}>还没有收藏歌曲</Text> : favorites.map((song) => <TouchableOpacity key={`${song.id}-${song.created_at || "fav"}`} style={styles.listItem} onPress={() => play(song)}><View style={styles.flex}><Text style={styles.listTitle}>{song.title || "未命名歌曲"}</Text><Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}
       </View>
     </ScrollView>
   );
 
   const renderGalaxy = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="标签画像" title="让你的偏好像星系一样慢慢生长" subtitle="拖动上方星球到不同功能区，即可删除、弱化或增强对应标签。" />
+      <ScreenTitle eyebrow="标签画像" title="把偏好养成一片真正会呼吸的星系" subtitle="大标签可拖动到顶部功能区，背景里的微光标签会围绕轨道缓慢运行，等待被再次探索。" />
       <View style={styles.galaxyFrame} onLayout={(event) => setStageSize(event.nativeEvent.layout)}>
         <View style={styles.galaxyAuraOne} /><View style={styles.galaxyAuraTwo} /><View style={styles.galaxyAuraThree} />
         <View style={styles.zoneRow}>
           <View style={[styles.zoneCard, styles.zoneDelete]}><Text style={styles.zoneMini}>删除</Text><Text style={styles.zoneText}>移出画像</Text></View>
-          <View style={[styles.zoneCard, styles.zoneWeaken]}><Text style={styles.zoneMini}>弱化</Text><Text style={styles.zoneText}>降低权重</Text></View>
-          <View style={[styles.zoneCard, styles.zoneBoost]}><Text style={styles.zoneMini}>增强</Text><Text style={styles.zoneText}>提高权重</Text></View>
+          <View style={[styles.zoneCard, styles.zoneWeaken]}><Text style={styles.zoneMini}>弱化</Text><Text style={styles.zoneText}>轻一点</Text></View>
+          <View style={[styles.zoneCard, styles.zoneBoost]}><Text style={styles.zoneMini}>增强</Text><Text style={styles.zoneText}>更靠近你</Text></View>
         </View>
-        <View style={styles.orbitA} /><View style={styles.orbitB} />
-        {galaxyNodes.length === 0 ? <View style={styles.emptyGalaxy}><Text style={styles.emptyGalaxyTitle}>还没有标签星球</Text><Text style={styles.emptyGalaxyText}>先在下方加入标签，或者重新进行首次标签选择。</Text></View> : galaxyNodes.map((node) => <GalaxyNode key={node.tag.tag_id} node={node} onDrop={handleGalaxyDrop} />)}
+        <View style={styles.orbitA} /><View style={styles.orbitB} /><View style={styles.orbitC} />
+        {galaxyNodes.length === 0 ? <View style={styles.emptyGalaxy}><Text style={styles.emptyGalaxyTitle}>还没有标签星球</Text><Text style={styles.emptyGalaxyText}>先在下方加入标签，或者重新进行首次标签选择。</Text></View> : <>
+          {galaxyNodes.filter((node) => node.compact).map((node) => <GalaxyDust key={"dust-" + node.tag.tag_id} node={node} />)}
+          {galaxyNodes.filter((node) => !node.compact).map((node) => <GalaxyNode key={node.tag.tag_id} node={node} onDrop={handleGalaxyDrop} />)}
+        </>}
       </View>
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>当前画像权重</Text>
-        {activeProfileTags.length === 0 ? <Text style={styles.placeholder}>暂无画像标签</Text> : activeProfileTags.map((tag) => <View key={tag.tag_id} style={styles.weightRow}><View style={styles.flex}><Text style={styles.weightTitle}>{tag.name}</Text><Text style={styles.weightSub}>{tag.type}</Text></View><View style={styles.weightTrack}><View style={[styles.weightFill, { width: `${Math.max(8, Number(tag.weight || 0) * 100)}%` }]} /></View><Text style={styles.weightValue}>{Math.round(Number(tag.weight || 0) * 100)}%</Text></View>)}
+        <View style={styles.rowBetween}>
+          <Text style={styles.groupTitle}>当前画像权重</Text>
+          {activeProfileTags.length > COLLAPSED_WEIGHT_LIMIT ? <TouchableOpacity onPress={() => setShowAllWeights((prev) => !prev)}><Text style={styles.queueAction}>{showAllWeights ? "收起" : "展开更多（最多 15 个）"}</Text></TouchableOpacity> : null}
+        </View>
+        {activeProfileTags.length === 0 ? <Text style={styles.placeholder}>暂无画像标签</Text> : visibleWeightTags.map((tag) => <View key={tag.tag_id} style={styles.weightRow}><Text style={styles.weightTitle}>{tag.name}</Text><View style={styles.weightTrack}><View style={[styles.weightFill, { width: String(Math.max(10, Number(tag.weight || 0) * 100)) + "%" }]} /></View></View>)}
       </View>
       <View style={styles.groupCard}>
         <Text style={styles.groupTitle}>新增标签</Text>
-        <View style={styles.rowGap}><TextInput value={newTagName} onChangeText={setNewTagName} placeholder="标签名称" placeholderTextColor="#9D978E" style={[styles.input, styles.flex]} /><TextInput value={newTagType} onChangeText={setNewTagType} placeholder="类别：情绪 / 乐器 / 风格" placeholderTextColor="#9D978E" style={[styles.input, styles.flex]} /></View>
+        <TextInput value={newTagName} onChangeText={setNewTagName} placeholder="标签名称" placeholderTextColor="#9D978E" style={styles.input} />
+        {existingTagMatch ? <Text style={styles.hintText}>已识别到现有标签分类：{existingTagMatch.type}，会直接加入你的画像。</Text> : <Text style={styles.hintText}>如果这是一个全新的标签，提交后会弹出分类选择窗口。</Text>}
         <TouchableOpacity style={styles.primary} onPress={submitUserTag}><Text style={styles.primaryText}>加入我的画像</Text></TouchableOpacity>
         {tagMessage ? <Text style={styles.hintText}>{tagMessage}</Text> : null}
       </View>
     </ScrollView>
-  );
-
-  const renderSettings = () => (
+  );  const renderSettings = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
       <ScreenTitle eyebrow="账户中心" title="设置与连接状态" subtitle="这是一版简单账户系统，先保证用户能快速回到自己的数据。" />
       <View style={styles.groupCard}><Text style={styles.groupTitle}>当前账户</Text><View style={styles.accountCard}><Text style={styles.accountName}>{displayName}</Text><Text style={styles.accountMeta}>账户 ID：{session?.deviceId}</Text><Text style={styles.accountMeta}>用户 ID：{session?.userId}</Text></View></View>
@@ -596,24 +754,49 @@ const styles = StyleSheet.create({
   authShell: { flexGrow: 1, justifyContent: "center", padding: 20 }, authBlobA: { position: "absolute", width: 280, height: 280, borderRadius: 999, backgroundColor: "rgba(105,147,255,0.18)", top: 80, right: -80 }, authBlobB: { position: "absolute", width: 220, height: 220, borderRadius: 999, backgroundColor: "rgba(243,147,110,0.18)", bottom: 90, left: -50 },
   authCard: { backgroundColor: "rgba(255,255,255,0.82)", borderRadius: 30, padding: 22, shadowColor: "#4D4336", shadowOpacity: 0.14, shadowOffset: { width: 0, height: 18 }, shadowRadius: 28, elevation: 10 }, authEyebrow: { fontSize: 12, fontWeight: "800", color: "#7A746B", letterSpacing: 1.8, marginBottom: 12 }, authTitle: { fontSize: 31, fontWeight: "800", color: "#181613", lineHeight: 38, letterSpacing: -0.9 }, authSubtitle: { fontSize: 15, color: "#756F66", lineHeight: 22, marginTop: 10, marginBottom: 16 },
   authModeRow: { flexDirection: "row", backgroundColor: "#ECE6DD", borderRadius: 18, padding: 4, marginBottom: 14 }, authMode: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 14 }, authModeActive: { backgroundColor: "#FFFFFF" }, authModeText: { color: "#8B8378", fontWeight: "700" }, authModeTextActive: { color: "#181613" },
-  input: { backgroundColor: "rgba(255,255,255,0.92)", borderRadius: 18, paddingHorizontal: 16, paddingVertical: 15, marginBottom: 10, color: "#181613" },
+  input: { backgroundColor: "#FFFDFC", borderRadius: 18, paddingHorizontal: 16, paddingVertical: 15, marginBottom: 10, color: "#181613", shadowColor: "#D9D1C6", shadowOpacity: 0.08, shadowOffset: { width: 0, height: 8 }, shadowRadius: 18, elevation: 2 },
   primary: { backgroundColor: "#111217", borderRadius: 20, paddingVertical: 16, alignItems: "center", marginTop: 6, shadowColor: "#111", shadowOpacity: 0.18, shadowOffset: { width: 0, height: 12 }, shadowRadius: 20, elevation: 8 }, primaryText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
   secondarySoft: { backgroundColor: "rgba(255,255,255,0.8)", borderRadius: 18, paddingVertical: 14, alignItems: "center" }, secondaryText: { color: "#181613", fontSize: 14, fontWeight: "700" },
-  groupCard: { backgroundColor: "rgba(255,255,255,0.78)", borderRadius: 28, padding: 18, marginBottom: 18, shadowColor: "#4D4336", shadowOpacity: 0.1, shadowOffset: { width: 0, height: 16 }, shadowRadius: 26, elevation: 6 }, groupTitle: { color: "#181613", fontSize: 21, fontWeight: "800", marginBottom: 12, letterSpacing: -0.4 },
+  groupCard: { backgroundColor: "rgba(255,252,247,0.94)", borderRadius: 28, padding: 18, marginBottom: 18, shadowColor: "#D8D1C6", shadowOpacity: 0.08, shadowOffset: { width: 0, height: 10 }, shadowRadius: 20, elevation: 3 }, groupTitle: { color: "#181613", fontSize: 21, fontWeight: "800", marginBottom: 12, letterSpacing: -0.4 },
   seedWrap: { flexDirection: "row", flexWrap: "wrap" }, seedTag: { backgroundColor: "#F7F3ED", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 12, marginRight: 8, marginBottom: 8, minWidth: 110 }, seedTagSelected: { backgroundColor: "#111217" }, seedType: { color: "#8A8175", fontSize: 11, fontWeight: "700", marginBottom: 5 }, seedTypeSelected: { color: "rgba(255,255,255,0.7)" }, seedName: { color: "#181613", fontSize: 14, fontWeight: "800" }, seedNameSelected: { color: "#FFFFFF" },
-  playerCard: { backgroundColor: "rgba(255,255,255,0.78)", borderRadius: 32, padding: 22, marginBottom: 18, shadowColor: "#473C2E", shadowOpacity: 0.12, shadowOffset: { width: 0, height: 20 }, shadowRadius: 32, elevation: 10 }, heroBadge: { alignSelf: "center", backgroundColor: "#F4F1EA", paddingHorizontal: 13, paddingVertical: 6, borderRadius: 999, marginBottom: 18 }, heroBadgeText: { color: "#67635B", fontSize: 11, fontWeight: "800", letterSpacing: 1.3 },
+  playerCard: { backgroundColor: "rgba(255,252,247,0.96)", borderRadius: 32, padding: 22, marginBottom: 18, shadowColor: "#D8D1C6", shadowOpacity: 0.08, shadowOffset: { width: 0, height: 12 }, shadowRadius: 18, elevation: 3 }, 
   coverWrap: { alignItems: "center", marginBottom: 18 }, cover: { width: 228, height: 228, borderRadius: 34, alignItems: "center", justifyContent: "center", backgroundColor: "#18181C", overflow: "hidden" }, coverGlowA: { position: "absolute", width: 180, height: 180, borderRadius: 999, backgroundColor: "#4E67C8", top: -34, right: -20 }, coverGlowB: { position: "absolute", width: 140, height: 140, borderRadius: 999, backgroundColor: "#F19472", bottom: -18, left: -16 }, coverGlowC: { position: "absolute", width: 76, height: 76, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", top: 40, left: 42 }, coverText: { color: "#FFFFFF", fontSize: 34, fontWeight: "800", letterSpacing: 1.2 },
   playerTitle: { color: "#181613", fontSize: 30, fontWeight: "800", textAlign: "center", letterSpacing: -0.8 }, playerSub: { color: "#6F6A62", fontSize: 15, lineHeight: 22, textAlign: "center", marginTop: 8 }, progressWrap: { marginTop: 22 }, progressTrack: { height: 10, borderRadius: 999, backgroundColor: "#E9E3D9", overflow: "hidden" }, progressFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" }, progressTimeRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 }, progressText: { color: "#7B746A", fontSize: 12, fontVariant: ["tabular-nums"] },
-  controlsRow: { flexDirection: "row", gap: 10, marginTop: 22 }, controlBtn: { flex: 1, backgroundColor: "rgba(255,255,255,0.82)", borderRadius: 18, paddingVertical: 15, alignItems: "center" }, controlText: { color: "#181613", fontSize: 15, fontWeight: "700" }, playBtn: { flex: 1, backgroundColor: "#111217", borderRadius: 18, paddingVertical: 15, alignItems: "center" }, playText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
-  section: { marginBottom: 18 }, queueToggle: { backgroundColor: "rgba(255,255,255,0.76)", borderRadius: 24, padding: 18, marginBottom: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, queueLabel: { color: "#181613", fontSize: 18, fontWeight: "800" }, queueHint: { color: "#7A746B", fontSize: 13, marginTop: 4 }, queueAction: { color: "#6C675F", fontSize: 14, fontWeight: "700" },
-  listItem: { backgroundColor: "rgba(250,247,242,0.98)", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, listTitle: { color: "#181613", fontSize: 15, fontWeight: "700" }, listSub: { color: "#766F67", fontSize: 13, marginTop: 4, lineHeight: 18 }, chevron: { color: "#B0A89C", fontSize: 20, marginLeft: 12 }, placeholder: { color: "#8C867E", fontSize: 14 },
-  galaxyFrame: { height: 430, borderRadius: 32, overflow: "hidden", backgroundColor: "#11131C", marginBottom: 18 }, galaxyAuraOne: { position: "absolute", width: 220, height: 220, borderRadius: 999, backgroundColor: "rgba(83,120,255,0.28)", top: 80, right: -40 }, galaxyAuraTwo: { position: "absolute", width: 170, height: 170, borderRadius: 999, backgroundColor: "rgba(247,141,112,0.22)", bottom: 28, left: -24 }, galaxyAuraThree: { position: "absolute", width: 130, height: 130, borderRadius: 999, backgroundColor: "rgba(141,222,177,0.18)", top: 160, left: 40 }, orbitA: { position: "absolute", width: 280, height: 280, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", top: 110, left: 48 }, orbitB: { position: "absolute", width: 180, height: 180, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)", top: 160, left: 110 },
+  controlsRow: { flexDirection: "row", gap: 10, marginTop: 22 }, controlBtn: { flex: 1, backgroundColor: "#FFFCF8", borderRadius: 18, paddingVertical: 15, alignItems: "center", shadowColor: "#D9D0C4", shadowOpacity: 0.06, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 2 }, controlText: { color: "#181613", fontSize: 15, fontWeight: "700" }, playBtn: { flex: 1, backgroundColor: "#111217", borderRadius: 18, paddingVertical: 15, alignItems: "center" }, playText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
+  section: { marginBottom: 18 }, queueToggle: { backgroundColor: "rgba(255,252,247,0.94)", borderRadius: 24, padding: 18, marginBottom: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", shadowColor: "#D8D1C6", shadowOpacity: 0.07, shadowOffset: { width: 0, height: 8 }, shadowRadius: 14, elevation: 2 }, queueLabel: { color: "#181613", fontSize: 18, fontWeight: "800" }, queueHint: { color: "#7A746B", fontSize: 13, marginTop: 4 }, queueAction: { color: "#6C675F", fontSize: 14, fontWeight: "700" },
+  listItem: { backgroundColor: "#FFFCF8", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", shadowColor: "#DDD5CA", shadowOpacity: 0.05, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 2 }, listTitle: { color: "#181613", fontSize: 15, fontWeight: "700" }, listSub: { color: "#766F67", fontSize: 13, marginTop: 4, lineHeight: 18 }, chevron: { color: "#B0A89C", fontSize: 20, marginLeft: 12 }, placeholder: { color: "#8C867E", fontSize: 14 },
+  galaxyFrame: { height: 430, borderRadius: 32, overflow: "hidden", backgroundColor: "#11131C", marginBottom: 18 }, galaxyAuraOne: { position: "absolute", width: 220, height: 220, borderRadius: 999, backgroundColor: "rgba(83,120,255,0.28)", top: 80, right: -40 }, galaxyAuraTwo: { position: "absolute", width: 170, height: 170, borderRadius: 999, backgroundColor: "rgba(247,141,112,0.22)", bottom: 28, left: -24 }, galaxyAuraThree: { position: "absolute", width: 130, height: 130, borderRadius: 999, backgroundColor: "rgba(141,222,177,0.18)", top: 160, left: 40 }, orbitA: { position: "absolute", width: 280, height: 280, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", top: 110, left: 48 }, orbitB: { position: "absolute", width: 180, height: 180, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)", top: 160, left: 110 }, orbitC: { position: "absolute", width: 360, height: 360, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.04)", top: 70, left: 8 },
   zoneRow: { position: "absolute", top: 16, left: 14, right: 14, flexDirection: "row", gap: 10, zIndex: 2 }, zoneCard: { flex: 1, borderRadius: 18, paddingVertical: 12, paddingHorizontal: 10 }, zoneDelete: { backgroundColor: "rgba(104,28,28,0.84)" }, zoneWeaken: { backgroundColor: "rgba(37,58,86,0.86)" }, zoneBoost: { backgroundColor: "rgba(25,75,42,0.88)" }, zoneMini: { color: "rgba(255,255,255,0.72)", fontSize: 11, fontWeight: "700", letterSpacing: 1 }, zoneText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800", marginTop: 4 },
   emptyGalaxy: { position: "absolute", left: 26, right: 26, bottom: 42, backgroundColor: "rgba(255,255,255,0.08)", padding: 18, borderRadius: 22 }, emptyGalaxyTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" }, emptyGalaxyText: { color: "rgba(255,255,255,0.72)", fontSize: 13, lineHeight: 20, marginTop: 6 },
-  node: { position: "absolute", padding: 10, justifyContent: "space-between", shadowOpacity: 0.3, shadowOffset: { width: 0, height: 10 }, shadowRadius: 16, elevation: 8 }, nodeGlow: { position: "absolute", width: 40, height: 40, borderRadius: 999, top: 8, right: 8, opacity: 0.28 }, nodeType: { fontSize: 10, fontWeight: "800", textTransform: "uppercase" }, nodeName: { fontSize: 13, fontWeight: "800", lineHeight: 17, marginTop: 4 }, nodeWeight: { fontSize: 11, fontWeight: "700", opacity: 0.76 },
-  weightRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 }, weightTitle: { color: "#181613", fontSize: 14, fontWeight: "700" }, weightSub: { color: "#8A8175", fontSize: 12, marginTop: 3 }, weightTrack: { flex: 1, height: 10, borderRadius: 999, backgroundColor: "#ECE4D9", overflow: "hidden", marginHorizontal: 12 }, weightFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" }, weightValue: { color: "#5C564F", fontSize: 12, fontWeight: "700", width: 42, textAlign: "right" },
+  dustOrbit: { position: "absolute", alignItems: "center" }, dustParticle: { position: "absolute", top: 0, left: "50%", marginLeft: -4, shadowOpacity: 0.35, shadowOffset: { width: 0, height: 0 }, shadowRadius: 8, opacity: 0.72 },
+  node: { position: "absolute", justifyContent: "center", alignItems: "center", shadowOpacity: 0.24, shadowOffset: { width: 0, height: 10 }, shadowRadius: 16, elevation: 8, padding: 10 }, nodeGlow: { position: "absolute", width: 40, height: 40, borderRadius: 999, top: 8, right: 8, opacity: 0.28 }, nodeName: { fontSize: 13, fontWeight: "800", lineHeight: 17, textAlign: "center", paddingHorizontal: 8 },
+  onboardingProgressHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, onboardingProgressTrack: { height: 10, borderRadius: 999, backgroundColor: "#ECE4D9", overflow: "hidden", marginBottom: 16 }, onboardingProgressFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" },
+  rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }, weightRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 }, weightTitle: { color: "#181613", fontSize: 14, fontWeight: "700", width: 88 }, weightSub: { color: "#8A8175", fontSize: 12, marginTop: 3 }, weightTrack: { flex: 1, height: 10, borderRadius: 999, backgroundColor: "#ECE4D9", overflow: "hidden", marginLeft: 12 }, weightFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" },
   accountCard: { backgroundColor: "#F7F3ED", borderRadius: 22, padding: 16 }, accountName: { color: "#181613", fontSize: 22, fontWeight: "800", marginBottom: 8 }, accountMeta: { color: "#70685E", fontSize: 14, marginTop: 3 },
   dangerButton: { backgroundColor: "#5A1A1A", borderRadius: 18, paddingVertical: 15, alignItems: "center" }, dangerText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" }, hintText: { color: "#7A746B", fontSize: 13, lineHeight: 20, marginTop: 10 }, okText: { color: "#1D8A4A", marginTop: 10, fontSize: 13 }, errorText: { color: "#B23B2C", marginTop: 10, fontSize: 13 },
   tabBarShell: { position: "absolute", left: 0, right: 0, bottom: 12, alignItems: "center" }, tabBar: { flexDirection: "row", width: "92%", backgroundColor: "rgba(255,255,255,0.9)", borderRadius: 28, paddingHorizontal: 10, paddingVertical: 12, shadowColor: "#000", shadowOpacity: 0.1, shadowOffset: { width: 0, height: 12 }, shadowRadius: 26, elevation: 10 }, tabItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 6 }, tabIcon: { fontSize: 16, color: "#938E85", marginBottom: 4 }, tabIconActive: { color: "#171512" }, tabText: { fontSize: 11, color: "#938E85", fontWeight: "600" }, tabTextActive: { color: "#171512", fontWeight: "800" },
   rowGap: { flexDirection: "row", gap: 10 }, flex: { flex: 1 }
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
