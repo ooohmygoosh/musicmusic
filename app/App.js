@@ -47,14 +47,14 @@ function fallbackTagText(prompt) {
 function songTagText(song) {
   const names = uniqueTagNames(song?.tags);
   if (names.length > 0) return names.join(" · ");
-  return fallbackTagText(song?.prompt) || "点一下生成，我们就为你补上下一首。";
+  return "标签整理中";
 }
 
 function buildGalaxyNodes(tags, stageSize) {
   const width = Math.max(280, stageSize.width || 0);
   const height = Math.max(320, stageSize.height || 0);
   const centerX = width / 2;
-  const centerY = height / 2 + 34;
+  const centerY = height / 2 + 28;
   const expanded = tags.slice(0, EXPANDED_WEIGHT_LIMIT);
   const compact = tags.slice(EXPANDED_WEIGHT_LIMIT);
 
@@ -64,8 +64,8 @@ function buildGalaxyNodes(tags, stageSize) {
     const ringCounts = [Math.min(5, expanded.length), Math.max(0, Math.min(5, expanded.length - 5)), Math.max(0, Math.min(5, expanded.length - 10))];
     const indexInRing = ringIndex === 0 ? index : ringIndex === 1 ? index - 5 : index - 10;
     const ringCount = Math.max(1, ringCounts[ringIndex] || 1);
-    const radius = [78, 132, 184][ringIndex];
-    const angle = (-Math.PI / 2) + ((Math.PI * 2) / ringCount) * indexInRing + ringIndex * 0.22;
+    const radius = [62, 108, 148][ringIndex];
+    const angle = (-Math.PI / 2) + ((Math.PI * 2) / ringCount) * indexInRing + ringIndex * 0.18;
     const size = 58 + Math.min(40, Number(tag.weight || 0) * 48);
     const baseX = centerX + Math.cos(angle) * radius - size / 2;
     const baseY = centerY + Math.sin(angle) * radius - size / 2;
@@ -75,8 +75,12 @@ function buildGalaxyNodes(tags, stageSize) {
       size,
       baseX,
       baseY,
-      driftX: 3.5 + ringIndex,
-      driftY: 2.8 + ringIndex,
+      ring: radius,
+      angle,
+      centerX,
+      centerY,
+      orbitDuration: 32000 + ringIndex * 5000 + index * 900,
+      orbitDirection: index % 2 === 0 ? 1 : -1,
       seed: index + 1,
       color: palette[0],
       glow: palette[1],
@@ -86,7 +90,7 @@ function buildGalaxyNodes(tags, stageSize) {
 
   const compactNodes = compact.map((tag, index) => {
     const palette = typePalette(tag.type);
-    const ring = 226 + (index % 4) * 20;
+    const ring = 188 + (index % 5) * 20;
     const angle = ((Math.PI * 2) / Math.max(compact.length, 10)) * index + (index % 2) * 0.18;
     const size = 6 + Math.min(8, Number(tag.weight || 0) * 10);
     return {
@@ -150,53 +154,90 @@ function GalaxyDust({ node }) {
 }
 
 function GalaxyNode({ node, onDrop }) {
+  const orbit = useRef(new Animated.Value(0)).current;
   const pan = useRef(new Animated.ValueXY({ x: node.baseX, y: node.baseY })).current;
-  const driftX = useRef(new Animated.Value(0)).current;
-  const driftY = useRef(new Animated.Value(0)).current;
+  const dragOrigin = useRef({ x: node.baseX, y: node.baseY });
+  const currentPoint = useRef({ x: node.baseX, y: node.baseY });
+  const homePoint = useRef({ x: node.baseX, y: node.baseY });
   const isDragging = useRef(false);
+  const orbitLoop = useRef(null);
 
   useEffect(() => {
-    if (!isDragging.current) {
-      pan.setValue({ x: node.baseX, y: node.baseY });
-    }
-  }, [node.baseX, node.baseY, pan]);
+    const syncHome = (progress = 0) => {
+      const theta = node.angle + progress * Math.PI * 2 * node.orbitDirection;
+      const next = {
+        x: node.centerX + Math.cos(theta) * node.ring - node.size / 2,
+        y: node.centerY + Math.sin(theta) * node.ring - node.size / 2
+      };
+      homePoint.current = next;
+      if (!isDragging.current) {
+        currentPoint.current = next;
+        pan.setValue(next);
+      }
+    };
 
-  useEffect(() => {
-    const xa = Animated.loop(Animated.sequence([
-      Animated.timing(driftX, { toValue: node.driftX, duration: 12000 + node.seed * 240, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
-      Animated.timing(driftX, { toValue: -node.driftX, duration: 12000 + node.seed * 240, easing: Easing.inOut(Easing.sin), useNativeDriver: false })
-    ]));
-    const ya = Animated.loop(Animated.sequence([
-      Animated.timing(driftY, { toValue: node.driftY, duration: 13600 + node.seed * 260, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
-      Animated.timing(driftY, { toValue: -node.driftY, duration: 13600 + node.seed * 260, easing: Easing.inOut(Easing.sin), useNativeDriver: false })
-    ]));
-    xa.start();
-    ya.start();
-    return () => { xa.stop(); ya.stop(); };
-  }, [driftX, driftY, node.driftX, node.driftY, node.seed]);
+    syncHome(0);
+    const orbitId = orbit.addListener(({ value }) => syncHome(value));
+    const pxId = pan.x.addListener(({ value }) => { currentPoint.current = { ...currentPoint.current, x: value }; });
+    const pyId = pan.y.addListener(({ value }) => { currentPoint.current = { ...currentPoint.current, y: value }; });
+
+    const startOrbit = () => {
+      orbit.setValue(0);
+      orbitLoop.current = Animated.loop(Animated.timing(orbit, {
+        toValue: 1,
+        duration: node.orbitDuration,
+        easing: Easing.linear,
+        useNativeDriver: false
+      }));
+      orbitLoop.current.start();
+    };
+
+    startOrbit();
+
+    return () => {
+      orbitLoop.current?.stop();
+      orbit.removeListener(orbitId);
+      pan.x.removeListener(pxId);
+      pan.y.removeListener(pyId);
+    };
+  }, [node.angle, node.centerX, node.centerY, node.orbitDirection, node.orbitDuration, node.ring, node.size, orbit, pan]);
+
+  const resumeOrbit = () => {
+    orbitLoop.current?.stop();
+    orbit.setValue(0);
+    orbitLoop.current = Animated.loop(Animated.timing(orbit, {
+      toValue: 1,
+      duration: node.orbitDuration,
+      easing: Easing.linear,
+      useNativeDriver: false
+    }));
+    orbitLoop.current.start();
+  };
 
   const responder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderGrant: () => {
       isDragging.current = true;
-      driftX.stopAnimation();
-      driftY.stopAnimation();
-      driftX.setValue(0);
-      driftY.setValue(0);
+      orbitLoop.current?.stop();
+      dragOrigin.current = { ...currentPoint.current };
     },
-    onPanResponderMove: (_, g) => pan.setValue({ x: node.baseX + g.dx, y: node.baseY + g.dy }),
-    onPanResponderRelease: (_, g) => {
-      const cx = node.baseX + g.dx + node.size / 2;
-      const cy = node.baseY + g.dy + node.size / 2;
+    onPanResponderMove: (_, g) => pan.setValue({ x: dragOrigin.current.x + g.dx, y: dragOrigin.current.y + g.dy }),
+    onPanResponderRelease: () => {
+      const cx = currentPoint.current.x + node.size / 2;
+      const cy = currentPoint.current.y + node.size / 2;
       onDrop(cx, cy, node.tag);
-      Animated.spring(pan, { toValue: { x: node.baseX, y: node.baseY }, friction: 8, tension: 48, useNativeDriver: false }).start(() => {
+      Animated.spring(pan, { toValue: homePoint.current, friction: 9, tension: 42, useNativeDriver: false }).start(() => {
+        currentPoint.current = { ...homePoint.current };
         isDragging.current = false;
+        resumeOrbit();
       });
     },
     onPanResponderTerminate: () => {
-      Animated.spring(pan, { toValue: { x: node.baseX, y: node.baseY }, friction: 8, tension: 48, useNativeDriver: false }).start(() => {
+      Animated.spring(pan, { toValue: homePoint.current, friction: 9, tension: 42, useNativeDriver: false }).start(() => {
+        currentPoint.current = { ...homePoint.current };
         isDragging.current = false;
+        resumeOrbit();
       });
     }
   })).current;
@@ -212,7 +253,7 @@ function GalaxyNode({ node, onDrop }) {
           borderRadius: node.size / 2,
           backgroundColor: node.color,
           shadowColor: node.color,
-          transform: [{ translateX: Animated.add(pan.x, driftX) }, { translateY: Animated.add(pan.y, driftY) }]
+          transform: [{ translateX: pan.x }, { translateY: pan.y }]
         }
       ]}
     >
@@ -446,33 +487,38 @@ export default function App() {
     return null;
   };
 
+  const submitNamedTag = async (name, chosenType) => {
+    const cleanName = String(name || "").trim();
+    if (!userId || !cleanName) return setTagMessage("请输入标签名称");
+    const res = await fetch(`${API_BASE}/user-tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, name: cleanName, type: chosenType || undefined })
+    });
+    const data = await res.json();
+    if (!res.ok) return setTagMessage(data.error || "添加失败");
+    setNewTagName("");
+    setPendingTagName("");
+    setShowCategoryPicker(false);
+    setTagMessage(existingTagMatch ? "已加入当前画像" : "标签已提交，会在探索到它后进入画像");
+    await loadTags();
+    await loadProfileTags(userId);
+  };
+
   const submitUserTag = async () => {
     setTagMessage("");
     const cleanName = newTagName.trim();
     if (!userId || !cleanName) return setTagMessage("请输入标签名称");
-
-    const submitWithType = async (chosenType) => {
-      const res = await fetch(`${API_BASE}/user-tags`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, name: cleanName, type: chosenType || undefined })
-      });
-      const data = await res.json();
-      if (!res.ok) return setTagMessage(data.error || "添加失败");
-      setNewTagName("");
-      setTagMessage(existingTagMatch ? "已加入当前画像" : "标签已提交，会在探索到它后进入画像");
-      await loadTags();
-      await loadProfileTags(userId);
-    };
-
-    if (existingTagMatch) return submitWithType(existingTagMatch.type);
-
-    Alert.alert("选择标签分类", "这个标签还没有分类，请先选择一个类别。", [
-      ...CATEGORY_ORDER.map((type) => ({ text: type, onPress: () => submitWithType(type) })),
-      { text: "取消", style: "cancel" }
-    ]);
+    if (existingTagMatch) return submitNamedTag(cleanName, existingTagMatch.type);
+    setPendingTagName(cleanName);
+    setSelectedCategory(CATEGORY_ORDER[0] || "情绪");
+    setShowCategoryPicker(true);
   };
-  const generate = async () => {
+
+  const confirmCustomTagType = async () => {
+    if (!pendingTagName) return;
+    await submitNamedTag(pendingTagName, selectedCategory);
+  };  const generate = async () => {
     if (!userId) return;
     await fetch(`${API_BASE}/generate`, {
       method: "POST",
@@ -709,7 +755,7 @@ export default function App() {
       <View style={styles.groupCard}>
         <View style={styles.rowBetween}>
           <Text style={styles.groupTitle}>当前画像权重</Text>
-          {activeProfileTags.length > COLLAPSED_WEIGHT_LIMIT ? <TouchableOpacity onPress={() => setShowAllWeights((prev) => !prev)}><Text style={styles.queueAction}>{showAllWeights ? "收起" : "展开更多（最多 15 个）"}</Text></TouchableOpacity> : null}
+          {activeProfileTags.length > COLLAPSED_WEIGHT_LIMIT ? <TouchableOpacity onPress={() => setShowAllWeights((prev) => !prev)}><Text style={styles.queueAction}>{showAllWeights ? "收起" : "查看更多"}</Text></TouchableOpacity> : null}
         </View>
         {activeProfileTags.length === 0 ? <Text style={styles.placeholder}>暂无画像标签</Text> : visibleWeightTags.map((tag) => <View key={tag.tag_id} style={styles.weightRow}><Text style={styles.weightTitle}>{tag.name}</Text><View style={styles.weightTrack}><View style={[styles.weightFill, { width: String(Math.max(10, Number(tag.weight || 0) * 100)) + "%" }]} /></View></View>)}
       </View>
@@ -777,6 +823,13 @@ const styles = StyleSheet.create({
   tabBarShell: { position: "absolute", left: 0, right: 0, bottom: 12, alignItems: "center" }, tabBar: { flexDirection: "row", width: "92%", backgroundColor: "rgba(255,255,255,0.9)", borderRadius: 28, paddingHorizontal: 10, paddingVertical: 12, shadowColor: "#000", shadowOpacity: 0.1, shadowOffset: { width: 0, height: 12 }, shadowRadius: 26, elevation: 10 }, tabItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 6 }, tabIcon: { fontSize: 16, color: "#938E85", marginBottom: 4 }, tabIconActive: { color: "#171512" }, tabText: { fontSize: 11, color: "#938E85", fontWeight: "600" }, tabTextActive: { color: "#171512", fontWeight: "800" },
   rowGap: { flexDirection: "row", gap: 10 }, flex: { flex: 1 }
 });
+
+
+
+
+
+
+
 
 
 
