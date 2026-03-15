@@ -985,7 +985,7 @@ app.get("/songs", async (request, reply) => {
     return;
   }
   const { rows } = await query(
-    "SELECT DISTINCT ON (q.song_id) s.id, s.title, s.cover_url, s.prompt, sa.audio_url, q.created_at, q.source FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true WHERE q.user_id = $1 AND COALESCE(q.is_hidden, false) = false ORDER BY q.song_id, q.created_at DESC",
+    "SELECT DISTINCT ON (q.song_id) s.id, s.title, s.cover_url, s.prompt, sa.audio_url, q.created_at, q.source, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 AND COALESCE(q.is_hidden, false) = false GROUP BY q.song_id, s.id, s.title, s.cover_url, s.prompt, sa.audio_url, q.created_at, q.source ORDER BY q.song_id, q.created_at DESC",
     [Number(user_id)]
   );
   rows.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
@@ -994,6 +994,7 @@ app.get("/songs", async (request, reply) => {
 
 const port = Number(process.env.PORT || 8080);
 app.listen({ port, host: "0.0.0.0" });
+
 
 
 
