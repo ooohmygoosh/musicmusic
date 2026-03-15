@@ -51,7 +51,16 @@ function renderSongs(items) {
           </div>
           ${item.cover_url ? `<img class="cover-thumb" src="${item.cover_url}" alt="cover" />` : ""}
         </div>
-        <div class="muted library-prompt">${item.prompt || "无提示词"}</div>
+        <div class="library-prompts">
+          <div class="library-prompt-block">
+            <div class="library-prompt-label">发给天谱乐的 Prompt</div>
+            <div class="muted library-prompt">${item.prompt || "无提示词"}</div>
+          </div>
+          <div class="library-prompt-block">
+            <div class="library-prompt-label">原始标签 Prompt</div>
+            <div class="muted library-prompt">${item.base_prompt || item.prompt || "无原始提示词"}</div>
+          </div>
+        </div>
         <div class="pill-row">${types}${tags || "<span class='muted'>暂无标签</span>"}</div>
         <div class="meta-grid">
           <div><strong>分发次数</strong><span>${item.deliveries || 0}</span></div>
@@ -87,3 +96,4 @@ async function loadSongs() {
 
 tokenInput.value = getToken();
 loadSongs();
+

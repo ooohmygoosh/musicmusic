@@ -9,7 +9,7 @@ const TPY_BASE_URL = process.env.TPY_BASE_URL || "https://api.tianpuyue.cn";
 const TPY_API_KEY = process.env.TPY_API_KEY || "";
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "DeepSeek-V3.2-Exp";
 const DEEPSEEK_ENABLED = process.env.DEEPSEEK_ENABLED === "true";
 
 const DEFAULT_TAG_WEIGHT = 0.3;
@@ -31,6 +31,16 @@ const PROMPT_GUIDE = {
   "\u8282\u594f": "Describe tempo, groove, and pacing.",
   "\u4eba\u58f0": "Describe vocal style, timbre, and performance intensity."
 };
+
+const DEEPSEEK_PRODUCT_REQUIREMENTS = [
+  "\u8fd9\u662f\u4e00\u4e2a\u901a\u8fc7\u63a8\u8350\u5e2e\u52a9\u7528\u6237\u9010\u6b65\u627e\u5230\u81ea\u5df1\u559c\u6b22\u97f3\u4e50\u7c7b\u578b\u7684\u4ea7\u54c1\u3002",
+  "\u8bf7\u4fdd\u7559\u7528\u6237\u6807\u7b7e\u7684\u6838\u5fc3\u542b\u4e49\uff0c\u5e76\u628a\u6807\u7b7e\u81ea\u7136\u878d\u5165\u5230\u6700\u7ec8\u4e2d\u6587\u97f3\u4e50\u751f\u6210\u63d0\u793a\u8bcd\u91cc\u3002",
+  "\u8f93\u51fa\u7684\u63d0\u793a\u8bcd\u8981\u66f4\u9002\u5408\u76f4\u63a5\u53d1\u7ed9\u5929\u8c31\u4e50\uff0c\u7528\u4e8e\u751f\u6210\u66f4\u5b8c\u6574\u3001\u66f4\u8010\u542c\u3001\u66f4\u6709\u8bb0\u5fc6\u70b9\u7684\u4f5c\u54c1\u3002",
+  "\u8bf7\u8865\u5145\u5408\u7406\u7684\u7f16\u66f2\u3001\u8282\u594f\u3001\u60c5\u7eea\u8d70\u5411\u3001\u6c1b\u56f4\u3001\u4e3b\u526f\u6bb5\u843d\u5c42\u6b21\u548c\u542c\u611f\u63cf\u8ff0\uff0c\u4f46\u4e0d\u8981\u504f\u79bb\u7528\u6237\u6807\u7b7e\u3002",
+  "\u5982\u679c\u6807\u7b7e\u504f\u5c11\uff0c\u8bf7\u5728\u4e0d\u8fdd\u80cc\u6807\u7b7e\u7684\u524d\u63d0\u4e0b\u8865\u8db3\u98ce\u683c\u3001\u901f\u5ea6\u3001\u4e50\u5668\u5c42\u6b21\u3001\u573a\u666f\u611f\u3002",
+  "\u6807\u9898\u8981\u81ea\u7136\u3001\u7b80\u6d01\u3001\u50cf\u771f\u5b9e\u6b4c\u66f2\u540d\u3002",
+  "\u5c01\u9762\u63cf\u8ff0\u8981\u9002\u5408\u540e\u7eed\u505a\u97f3\u4e50\u5c01\u9762\u56fe\uff0c\u7a81\u51fa\u6c1b\u56f4\u548c\u4e3b\u4f53\u610f\u8c61\u3002"
+].join(" ");
 
 function requireAdmin(request, reply) {
   const token = request.headers["x-admin-token"];
@@ -217,14 +227,15 @@ app.get("/admin/favorites", async (request, reply) => {
 
 app.get("/admin/library-songs", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
-  const { q, available } = request.query || {};
+  const { q, available, type } = request.query || {};
   const search = q ? `%${String(q).trim()}%` : null;
   const availableFilter =
     available === "true" ? true : available === "false" ? false : null;
+  const typeFilter = type ? String(type).trim() : null;
 
   const { rows } = await query(
-    "SELECT lib.id, lib.title, lib.cover_url, lib.prompt, lib.model, lib.duration, lib.style, lib.is_available, lib.reuse_count, COUNT(DISTINCT all_s.id)::int AS copies, COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS likes, COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skips, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, sa.audio_url FROM songs lib LEFT JOIN songs all_s ON COALESCE(all_s.source_song_id, all_s.id) = lib.id LEFT JOIN feedback f ON f.song_id = all_s.id LEFT JOIN song_tags st ON st.song_id = lib.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = lib.id ORDER BY id DESC LIMIT 1) sa ON true WHERE lib.source_song_id IS NULL AND ($1::text IS NULL OR lib.title ILIKE $1 OR lib.prompt ILIKE $1 OR EXISTS (SELECT 1 FROM song_tags st2 JOIN tags t2 ON t2.id = st2.tag_id WHERE st2.song_id = lib.id AND t2.name ILIKE $1)) AND ($2::boolean IS NULL OR lib.is_available = $2) GROUP BY lib.id, sa.audio_url ORDER BY likes DESC, lib.reuse_count DESC, lib.created_at DESC LIMIT 300",
-    [search, availableFilter]
+    "SELECT lib.id, lib.title, lib.cover_url, lib.prompt, lib.base_prompt, lib.cover_hint, lib.model, lib.duration, lib.style, lib.is_available, lib.reuse_count, COUNT(DISTINCT all_s.id)::int AS copies, COUNT(DISTINCT qd.id)::int AS deliveries, COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS likes, COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skips, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, COALESCE(array_remove(array_agg(DISTINCT t.type), NULL), '{}') AS tag_types, COALESCE((array_remove(array_agg(DISTINCT t.type), NULL))[1], 'Uncategorized') AS primary_type, sa.audio_url FROM songs lib LEFT JOIN songs all_s ON COALESCE(all_s.source_song_id, all_s.id) = lib.id LEFT JOIN feedback f ON f.song_id = all_s.id LEFT JOIN user_song_queue qd ON qd.song_id = all_s.id LEFT JOIN song_tags st ON st.song_id = lib.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = lib.id ORDER BY id DESC LIMIT 1) sa ON true WHERE lib.source_song_id IS NULL AND ($1::text IS NULL OR lib.title ILIKE $1 OR lib.prompt ILIKE $1 OR lib.base_prompt ILIKE $1 OR EXISTS (SELECT 1 FROM song_tags st2 JOIN tags t2 ON t2.id = st2.tag_id WHERE st2.song_id = lib.id AND (t2.name ILIKE $1 OR t2.type ILIKE $1))) AND ($2::boolean IS NULL OR lib.is_available = $2) AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM song_tags st3 JOIN tags t3 ON t3.id = st3.tag_id WHERE st3.song_id = lib.id AND t3.type = $3)) GROUP BY lib.id, sa.audio_url ORDER BY likes DESC, lib.reuse_count DESC, deliveries DESC, lib.created_at DESC LIMIT 300",
+    [search, availableFilter, typeFilter]
   );
   return { items: rows };
 });
@@ -587,10 +598,19 @@ async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
   ).map(([type, names]) => ({
     type,
     tags: names,
-        usage: PROMPT_GUIDE[type] || "Add only music-generation-relevant details"
+    usage: PROMPT_GUIDE[type] || "Add only music-generation-relevant details"
   }));
 
   try {
+    app.log.info(
+      {
+        model: DEEPSEEK_MODEL,
+        base_prompt: basePrompt,
+        tags: tagSummary
+      },
+      "deepseek prompt optimization started"
+    );
+
     const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
@@ -605,25 +625,26 @@ async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
           {
             role: "system",
             content:
-              "You are a music prompt optimizer. Turn user tags into a more natural and production-ready Chinese music prompt for a music generation model. Do not explain anything. Return JSON only."
+              "\u4f60\u662f\u97f3\u4e50\u751f\u6210\u63d0\u793a\u8bcd\u4f18\u5316\u52a9\u624b\u3002\u4f60\u7684\u4efb\u52a1\u662f\u6839\u636e\u7528\u6237\u6807\u7b7e\u548c\u4ea7\u54c1\u9700\u6c42\uff0c\u628a\u6807\u7b7e\u6574\u7406\u6210\u66f4\u9002\u5408\u76f4\u63a5\u53d1\u9001\u7ed9\u5929\u8c31\u4e50\u7684\u4e2d\u6587\u97f3\u4e50\u751f\u6210\u63d0\u793a\u8bcd\u3002\u4e0d\u8981\u89e3\u91ca\uff0c\u4e0d\u8981\u8f93\u51fa Markdown\uff0c\u53ea\u8fd4\u56de JSON\u3002"
           },
           {
             role: "user",
             content: JSON.stringify({
-              task: "Convert these tags into a stronger Chinese prompt for a music generation model",
+              task: "\u6839\u636e\u4ea7\u54c1\u9700\u6c42\u548c\u7528\u6237\u6807\u7b7e\uff0c\u751f\u6210\u66f4\u9002\u5408\u53d1\u9001\u7ed9\u5929\u8c31\u4e50\u7684\u4e2d\u6587\u97f3\u4e50 prompt",
+              product_requirements: DEEPSEEK_PRODUCT_REQUIREMENTS,
               base_prompt: basePrompt,
               tags: tagSummary,
               grouped_tags: groupedGuide,
               output_schema: {
-                prompt: "A single Chinese prompt string, 1-3 sentences, ready for the music model",
-                title_hint: "Optional short title idea",
-                cover_hint: "Optional cover art description"
+                prompt: "1-3 \u53e5\u4e2d\u6587\u97f3\u4e50\u751f\u6210\u63d0\u793a\u8bcd\uff0c\u76f4\u63a5\u53d1\u9001\u7ed9\u5929\u8c31\u4e50",
+                title_hint: "\u7b80\u77ed\u81ea\u7136\u7684\u4e2d\u6587\u6b4c\u540d\u5efa\u8bae",
+                cover_hint: "\u9002\u5408\u4f5c\u4e3a\u6b4c\u66f2\u5c01\u9762\u7684\u4e2d\u6587\u753b\u9762\u63cf\u8ff0"
               },
               constraints: [
-                "Keep the core meaning of the tags",
-                "Add reasonable genre, mood, tempo, arrangement, and scene details",
-                "Do not use Markdown",
-                "Keep it under 180 Chinese characters"
+                "\u4fdd\u7559\u6807\u7b7e\u6838\u5fc3\u542b\u4e49\u5e76\u81ea\u7136\u878d\u5165 prompt",
+                "\u8865\u5145\u5408\u7406\u7684\u66f2\u98ce\u3001\u8282\u594f\u3001\u7f16\u66f2\u5c42\u6b21\u3001\u60c5\u7eea\u8d70\u5411\u3001\u6c1b\u56f4\u548c\u573a\u666f",
+                "\u4e0d\u8981\u8f93\u51fa\u5217\u8868\uff0c\u4e0d\u8981\u89e3\u91ca",
+                "\u63d0\u793a\u8bcd\u63a7\u5236\u5728 180 \u4e2a\u4e2d\u6587\u5b57\u7b26\u4ee5\u5185"
               ]
             })
           }
@@ -647,11 +668,14 @@ async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
       return { prompt: basePrompt, title_hint: "", cover_hint: "" };
     }
 
-    return {
+    const result = {
       prompt: String(parsed?.prompt || "").trim() || basePrompt,
       title_hint: String(parsed?.title_hint || "").trim(),
       cover_hint: String(parsed?.cover_hint || "").trim()
     };
+
+    app.log.info({ model: DEEPSEEK_MODEL, result }, "deepseek prompt optimization succeeded");
+    return result;
   } catch (error) {
     app.log.warn({ err: String(error) }, "deepseek prompt optimization error");
     return { prompt: basePrompt, title_hint: "", cover_hint: "" };
