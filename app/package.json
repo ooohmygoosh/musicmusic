@@ -9,6 +9,7 @@
     "ios": "expo run:ios"
   },
   "dependencies": {
+    "@shopify/react-native-skia": "0.1.221",
     "expo": "~50.0.14",
     "expo-av": "~13.10.4",
     "expo-constants": "~15.4.5",
