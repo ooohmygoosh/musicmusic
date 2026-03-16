@@ -1083,7 +1083,7 @@ app.post("/feedback", async (request, reply) => {
   }
 
   await query(
-    "UPDATE user_song_queue SET acted_at = NOW(), is_hidden = CASE WHEN $1 = 'skip' THEN true ELSE is_hidden END WHERE user_id = $2 AND song_id = $3 AND COALESCE(is_hidden, false) = false",
+    "UPDATE user_song_queue SET acted_at = NOW(), is_hidden = CASE WHEN $1 IN ('skip', 'complete') THEN true ELSE is_hidden END WHERE user_id = $2 AND song_id = $3 AND COALESCE(is_hidden, false) = false",
     [normalizedAction, Number(user_id), Number(song_id)]
   );
 
@@ -1135,19 +1135,4 @@ app.get("/songs", async (request, reply) => {
 
 const port = Number(process.env.PORT || 8080);
 app.listen({ port, host: "0.0.0.0" });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
