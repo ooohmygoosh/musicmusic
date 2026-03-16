@@ -201,6 +201,7 @@ export default function App() {
   const [expandedPlaylistId, setExpandedPlaylistId] = useState(null);
   const [playlistSongs, setPlaylistSongs] = useState({});
   const [playlistLoadingId, setPlaylistLoadingId] = useState(null);
+  const [seekTrackWidth, setSeekTrackWidth] = useState(0);
 
   const currentIndex = useMemo(() => songs.findIndex((item) => Number(item.id) === Number(currentSongId)), [songs, currentSongId]);
   const currentSong = currentIndex >= 0 ? songs[currentIndex] : songs[0] || null;
@@ -232,6 +233,12 @@ export default function App() {
       try { await soundRef.current.unloadAsync(); } catch {}
       soundRef.current = null;
     }
+  }
+
+  async function playSongById(songId, shouldAutoPlay = true) {
+    const targetIndex = songs.findIndex((item) => Number(item.id) === Number(songId));
+    if (targetIndex < 0) return;
+    return playSongAt(targetIndex, shouldAutoPlay);
   }
 
   async function playSongAt(index, shouldAutoPlay = true) {
@@ -344,7 +351,35 @@ export default function App() {
     return (nextSongs || []).findIndex((item) => !item?.is_hidden);
   }
 
-  function startJobPolling(jobId) {
+  async function seekToRatio(ratio) {
+    if (!soundRef.current || !durMs) return;
+    const nextPos = Math.max(0, Math.min(durMs, Math.floor(durMs * ratio)));
+    try {
+      await soundRef.current.setPositionAsync(nextPos);
+      setPosMs(nextPos);
+    } catch {}
+  }
+
+  async function appendPlaylistToQueue(playlistId, startSongId) {
+    const list = playlistSongs[playlistId] || [];
+    if (!list.length) return;
+    const startIndex = list.findIndex((item) => Number(item.id) === Number(startSongId));
+    const ordered = startIndex >= 0 ? [...list.slice(startIndex), ...list.slice(0, startIndex)] : list;
+    const seen = new Set();
+    const queueItems = ordered.filter((item) => {
+      const key = Number(item.id);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    setSongs((prev) => {
+      const remaining = prev.filter((item) => !queueItems.some((queued) => Number(queued.id) === Number(item.id)));
+      return [...remaining, ...queueItems.map((item) => ({ ...item, is_hidden: false }))];
+    });
+    autoPlayRef.current = true;
+    setCurrentSongId(startSongId);
+    setTab("player");
+  }`r`n`r`n  function startJobPolling(jobId) {
     if (!jobId || !user?.id) return;
     stopJobPolling();
     setGenerationJobId(jobId);
@@ -499,12 +534,15 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({ user_id: user.id, song_id: currentSong.id, action, played_seconds: Math.floor(posMs / 1000) })
       });
-      const nextSongs = await refreshAll();
       if (action === "skip" || action === "complete") {
-        const anchorIndex = findSongIndex(currentSongId, nextSongs);
-        const nextIndex = getNextPlayableIndex(anchorIndex >= 0 ? anchorIndex : currentIndex, nextSongs);
-        if (nextIndex >= 0) await playSongAt(nextIndex, true);
+        const localNextIndex = getNextPlayableIndex(currentIndex, songs);
+        const localNextSongId = localNextIndex >= 0 ? songs[localNextIndex]?.id : null;
+        await refreshAll();
+        if (localNextSongId) await playSongById(localNextSongId, true);
         else await generateSong();
+      } else {
+        await refreshAll();
+      }
       }
     } catch (e) {
       if (!options.silent) Alert.alert("操作失败", e.message);
@@ -682,11 +720,31 @@ export default function App() {
                     <Text style={styles.coverText}>TPY</Text>
                   </View>
                 </View>
-
                 <View style={styles.songMetaBlock}>
                   <Text style={styles.songTitle}>{currentSong?.title || "暂无歌曲"}</Text>
                   <Text style={styles.songSub}>{currentSong ? tagLine(currentSong) : "先生成一首歌，再开始播放。"}</Text>
                   {generationStatus ? <Text style={styles.waitText}>{generationStatus}</Text> : null}
+                </View>
+
+                <View style={styles.progressPanel}>
+                  <View
+                    style={styles.progressTouch}
+                    onLayout={(event) => setSeekTrackWidth(event.nativeEvent.layout.width)}
+                    onStartShouldSetResponder={() => !!durMs}
+                    onMoveShouldSetResponder={() => !!durMs}
+                    onResponderGrant={(event) => { if (seekTrackWidth) seekToRatio(event.nativeEvent.locationX / seekTrackWidth); }}
+                    onResponderMove={(event) => { if (seekTrackWidth) seekToRatio(event.nativeEvent.locationX / seekTrackWidth); }}
+                  >
+                    <View style={styles.bar}>
+                      <View style={[styles.barFill, { width: durMs ? `${(posMs / durMs) * 100}%` : "0%" }]} />
+                    </View>
+                  </View>
+                  <View style={styles.barMeta}>
+                    <Text style={styles.mono}>{fmt(posMs)}</Text>
+                    <Text style={styles.mono}>{fmt(durMs)}</Text>
+                  </View>
+                </View>
+                  </View>
                 </View>
 
                 <View style={styles.progressPanel}>
@@ -942,8 +1000,8 @@ const styles = StyleSheet.create({
   songTitle: { marginTop: 14, textAlign: "center", fontSize: 34, lineHeight: 40, color: "#1B1713", fontWeight: "800" },
   songSub: { textAlign: "center", color: "#5F5850", fontSize: 16, lineHeight: 24, marginTop: 6 },
   waitText: { textAlign: "center", color: "#7B6D5A", fontSize: 13, marginTop: 8 },
-  progressPanel: { marginTop: 12, paddingTop: 2 },
-  bar: { height: 8, borderRadius: 999, backgroundColor: "rgba(28,25,22,0.10)", overflow: "hidden", marginTop: 14 },
+  progressPanel: { marginTop: 12, paddingTop: 2 },`r`n  progressTouch: { marginTop: 4, paddingVertical: 10 },
+  bar: { height: 8, borderRadius: 999, backgroundColor: "rgba(28,25,22,0.10)", overflow: "hidden", marginTop: 4 },
   barFill: { height: "100%", backgroundColor: "#1C1916" },
   barMeta: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 },
   mono: { color: "#6B655D", fontSize: 13 },
@@ -1006,6 +1064,7 @@ const styles = StyleSheet.create({
   tabText: { color: "#5A534B", fontWeight: "800" },
   tabTextActive: { color: "#FFF" }
 });
+
 
 
 
