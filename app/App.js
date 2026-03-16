@@ -21,6 +21,11 @@ const TYPE_COLORS = {
 const CATEGORY_ORDER = ["情绪", "风格", "乐器", "场景", "节奏"];
 const COLLAPSED_WEIGHT_LIMIT = 6;
 const EXPANDED_WEIGHT_LIMIT = 15;
+const BLOB_MIN_SIZE = 92;
+const BLOB_MAX_SIZE = 168;
+const BLOB_TOP_INSET = 112;
+const BLOB_PADDING = 18;
+const BLOB_RELAX_STEPS = 16;
 
 function formatTime(ms) {
   if (!ms || Number.isNaN(ms)) return "0:00";
@@ -46,69 +51,106 @@ function fallbackTagText(prompt) {
 
 function songTagText(song) {
   const names = uniqueTagNames(song?.tags);
-  if (names.length > 0) return names.join(" · ");
+  if (names.length > 0) return names.join(" 路 ");
   return "标签整理中";
 }
 
-function buildGalaxyNodes(tags, stageSize) {
-  const width = Math.max(280, stageSize.width || 0);
-  const height = Math.max(320, stageSize.height || 0);
-  const centerX = width / 2;
-  const centerY = height / 2 + 28;
-  const expanded = tags.slice(0, EXPANDED_WEIGHT_LIMIT);
-  const compact = tags.slice(EXPANDED_WEIGHT_LIMIT);
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
 
-  const expandedNodes = expanded.map((tag, index) => {
+function hexToRgba(hex, alpha) {
+  const clean = String(hex || "#000000").replace("#", "");
+  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+  const int = Number.parseInt(full, 16);
+  if (Number.isNaN(int)) return `rgba(0,0,0,${alpha})`;
+  const r = (int >> 16) & 255;
+  const g = (int >> 8) & 255;
+  const b = int & 255;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function relaxBlobLayout(nodes, stageSize, draggingId = null) {
+  const width = Math.max(320, stageSize.width || 0);
+  const height = Math.max(420, stageSize.height || 0);
+  const next = nodes.map((node) => ({ ...node }));
+
+  for (let step = 0; step < BLOB_RELAX_STEPS; step += 1) {
+    for (let i = 0; i < next.length; i += 1) {
+      for (let j = i + 1; j < next.length; j += 1) {
+        const a = next[i];
+        const b = next[j];
+        const ax = a.x + a.width / 2;
+        const ay = a.y + a.height / 2;
+        const bx = b.x + b.width / 2;
+        const by = b.y + b.height / 2;
+        const dx = bx - ax;
+        const dy = by - ay;
+        const dist = Math.max(1, Math.hypot(dx, dy));
+        const minDist = a.collisionRadius + b.collisionRadius + 10;
+        if (dist >= minDist) continue;
+        const overlap = (minDist - dist) * 0.52;
+        const ux = dx / dist;
+        const uy = dy / dist;
+        if (a.id !== draggingId) {
+          a.x -= ux * overlap;
+          a.y -= uy * overlap;
+        }
+        if (b.id !== draggingId) {
+          b.x += ux * overlap;
+          b.y += uy * overlap;
+        }
+      }
+    }
+
+    for (const node of next) {
+      node.x = clamp(node.x, BLOB_PADDING, width - node.width - BLOB_PADDING);
+      node.y = clamp(node.y, BLOB_TOP_INSET, height - node.height - 18);
+    }
+  }
+
+  return next;
+}
+
+function buildBlobNodes(tags, stageSize) {
+  const width = Math.max(320, stageSize.width || 0);
+  const height = Math.max(420, stageSize.height || 0);
+  const chosen = tags.slice(0, EXPANDED_WEIGHT_LIMIT);
+  if (chosen.length === 0) return [];
+  const weights = chosen.map((tag) => Number(tag.weight || 0));
+  const minWeight = Math.min(...weights);
+  const maxWeight = Math.max(...weights);
+  const span = Math.max(0.0001, maxWeight - minWeight);
+  const centerX = width / 2;
+  const centerY = BLOB_TOP_INSET + (height - BLOB_TOP_INSET) / 2;
+
+  const nodes = chosen.map((tag, index) => {
     const palette = typePalette(tag.type);
-    const ringIndex = index < 5 ? 0 : index < 10 ? 1 : 2;
-    const ringCounts = [Math.min(5, expanded.length), Math.max(0, Math.min(5, expanded.length - 5)), Math.max(0, Math.min(5, expanded.length - 10))];
-    const indexInRing = ringIndex === 0 ? index : ringIndex === 1 ? index - 5 : index - 10;
-    const ringCount = Math.max(1, ringCounts[ringIndex] || 1);
-    const radius = [62, 108, 148][ringIndex];
-    const angle = (-Math.PI / 2) + ((Math.PI * 2) / ringCount) * indexInRing + ringIndex * 0.18;
-    const size = 58 + Math.min(40, Number(tag.weight || 0) * 48);
-    const baseX = centerX + Math.cos(angle) * radius - size / 2;
-    const baseY = centerY + Math.sin(angle) * radius - size / 2;
+    const normalized = (Number(tag.weight || 0) - minWeight) / span;
+    const size = BLOB_MIN_SIZE + normalized * (BLOB_MAX_SIZE - BLOB_MIN_SIZE);
+    const nodeWidth = size * 1.16;
+    const nodeHeight = size * 0.84;
+    const theta = index * 2.399963229728653;
+    const radius = 30 + index * 18;
+    const x = clamp(centerX + Math.cos(theta) * radius - nodeWidth / 2, BLOB_PADDING, width - nodeWidth - BLOB_PADDING);
+    const y = clamp(centerY + Math.sin(theta) * radius - nodeHeight / 2, BLOB_TOP_INSET, height - nodeHeight - 18);
     return {
+      id: tag.tag_id,
       tag,
-      compact: false,
-      size,
-      baseX,
-      baseY,
-      ring: radius,
-      angle,
-      centerX,
-      centerY,
-      orbitDuration: 32000 + ringIndex * 5000 + index * 900,
-      orbitDirection: index % 2 === 0 ? 1 : -1,
-      seed: index + 1,
+      x,
+      y,
+      anchorX: x,
+      anchorY: y,
+      width: nodeWidth,
+      height: nodeHeight,
+      collisionRadius: Math.max(nodeWidth, nodeHeight) * 0.52,
       color: palette[0],
       glow: palette[1],
       text: palette[2]
     };
   });
 
-  const compactNodes = compact.map((tag, index) => {
-    const palette = typePalette(tag.type);
-    const ring = 188 + (index % 5) * 20;
-    const angle = ((Math.PI * 2) / Math.max(compact.length, 10)) * index + (index % 2) * 0.18;
-    const size = 6 + Math.min(8, Number(tag.weight || 0) * 10);
-    return {
-      tag,
-      compact: true,
-      size,
-      ring,
-      angle,
-      seed: index + 1,
-      color: palette[0],
-      glow: palette[1],
-      text: palette[2],
-      centerX,
-      centerY
-    };
-  });
-
-  return [...expandedNodes, ...compactNodes];
+  return relaxBlobLayout(nodes, stageSize, null);
 }
 
 function ScreenTitle({ eyebrow, title, subtitle }) {
@@ -130,136 +172,48 @@ function SeedTag({ item, selected, onPress }) {
   );
 }
 
-function GalaxyDust({ node }) {
-  const angle = useRef(new Animated.Value(0)).current;
+function TagBlob({ node, onDragStart, onDragMove, onDragEnd }) {
+  const startRef = useRef({ x: node.x, y: node.y });
+  const movedRef = useRef(false);
 
   useEffect(() => {
-    const orbit = Animated.loop(Animated.timing(angle, {
-      toValue: 1,
-      duration: 26000 + node.seed * 1100,
-      easing: Easing.linear,
-      useNativeDriver: true
-    }));
-    orbit.start();
-    return () => orbit.stop();
-  }, [angle, node.seed]);
-
-  const rotate = angle.interpolate({ inputRange: [0, 1], outputRange: [node.angle + "rad", node.angle + Math.PI * 2 + "rad"] });
-
-  return (
-    <Animated.View pointerEvents="none" style={[styles.dustOrbit, { width: node.ring * 2, height: node.ring * 2, marginLeft: -node.ring, marginTop: -node.ring, left: node.centerX, top: node.centerY, transform: [{ rotate }] }]}>
-      <View style={[styles.dustParticle, { width: node.size, height: node.size, borderRadius: node.size / 2, backgroundColor: node.color, shadowColor: node.color }]} />
-    </Animated.View>
-  );
-}
-
-function GalaxyNode({ node, onDrop }) {
-  const orbit = useRef(new Animated.Value(0)).current;
-  const pan = useRef(new Animated.ValueXY({ x: node.baseX, y: node.baseY })).current;
-  const dragOrigin = useRef({ x: node.baseX, y: node.baseY });
-  const currentPoint = useRef({ x: node.baseX, y: node.baseY });
-  const homePoint = useRef({ x: node.baseX, y: node.baseY });
-  const isDragging = useRef(false);
-  const orbitLoop = useRef(null);
-
-  useEffect(() => {
-    const syncHome = (progress = 0) => {
-      const theta = node.angle + progress * Math.PI * 2 * node.orbitDirection;
-      const next = {
-        x: node.centerX + Math.cos(theta) * node.ring - node.size / 2,
-        y: node.centerY + Math.sin(theta) * node.ring - node.size / 2
-      };
-      homePoint.current = next;
-      if (!isDragging.current) {
-        currentPoint.current = next;
-        pan.setValue(next);
-      }
-    };
-
-    syncHome(0);
-    const orbitId = orbit.addListener(({ value }) => syncHome(value));
-    const pxId = pan.x.addListener(({ value }) => { currentPoint.current = { ...currentPoint.current, x: value }; });
-    const pyId = pan.y.addListener(({ value }) => { currentPoint.current = { ...currentPoint.current, y: value }; });
-
-    const startOrbit = () => {
-      orbit.setValue(0);
-      orbitLoop.current = Animated.loop(Animated.timing(orbit, {
-        toValue: 1,
-        duration: node.orbitDuration,
-        easing: Easing.linear,
-        useNativeDriver: false
-      }));
-      orbitLoop.current.start();
-    };
-
-    startOrbit();
-
-    return () => {
-      orbitLoop.current?.stop();
-      orbit.removeListener(orbitId);
-      pan.x.removeListener(pxId);
-      pan.y.removeListener(pyId);
-    };
-  }, [node.angle, node.centerX, node.centerY, node.orbitDirection, node.orbitDuration, node.ring, node.size, orbit, pan]);
-
-  const resumeOrbit = () => {
-    orbitLoop.current?.stop();
-    orbit.setValue(0);
-    orbitLoop.current = Animated.loop(Animated.timing(orbit, {
-      toValue: 1,
-      duration: node.orbitDuration,
-      easing: Easing.linear,
-      useNativeDriver: false
-    }));
-    orbitLoop.current.start();
-  };
+    startRef.current = { x: node.x, y: node.y };
+  }, [node.x, node.y]);
 
   const responder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 3 || Math.abs(gesture.dy) > 3,
     onPanResponderGrant: () => {
-      isDragging.current = true;
-      orbitLoop.current?.stop();
-      dragOrigin.current = { ...currentPoint.current };
+      movedRef.current = false;
+      startRef.current = { x: node.x, y: node.y };
+      onDragStart(node.id);
     },
-    onPanResponderMove: (_, g) => pan.setValue({ x: dragOrigin.current.x + g.dx, y: dragOrigin.current.y + g.dy }),
-    onPanResponderRelease: () => {
-      const cx = currentPoint.current.x + node.size / 2;
-      const cy = currentPoint.current.y + node.size / 2;
-      onDrop(cx, cy, node.tag);
-      Animated.spring(pan, { toValue: homePoint.current, friction: 9, tension: 42, useNativeDriver: false }).start(() => {
-        currentPoint.current = { ...homePoint.current };
-        isDragging.current = false;
-        resumeOrbit();
-      });
+    onPanResponderMove: (_, gesture) => {
+      movedRef.current = true;
+      onDragMove(node.id, startRef.current.x + gesture.dx, startRef.current.y + gesture.dy);
     },
-    onPanResponderTerminate: () => {
-      Animated.spring(pan, { toValue: homePoint.current, friction: 9, tension: 42, useNativeDriver: false }).start(() => {
-        currentPoint.current = { ...homePoint.current };
-        isDragging.current = false;
-        resumeOrbit();
-      });
-    }
+    onPanResponderRelease: (_, gesture) => onDragEnd(node.id, startRef.current.x + gesture.dx, startRef.current.y + gesture.dy, movedRef.current),
+    onPanResponderTerminate: (_, gesture) => onDragEnd(node.id, startRef.current.x + gesture.dx, startRef.current.y + gesture.dy, movedRef.current)
   })).current;
 
   return (
-    <Animated.View
+    <View
       {...responder.panHandlers}
       style={[
-        styles.node,
+        styles.blob,
         {
-          width: node.size,
-          height: node.size,
-          borderRadius: node.size / 2,
-          backgroundColor: node.color,
-          shadowColor: node.color,
-          transform: [{ translateX: pan.x }, { translateY: pan.y }]
+          left: node.x,
+          top: node.y,
+          width: node.width,
+          height: node.height,
+          backgroundColor: hexToRgba(node.color, 0.74),
+          shadowColor: node.color
         }
       ]}
     >
-      <View style={[styles.nodeGlow, { backgroundColor: node.glow }]} />
-      <Text style={[styles.nodeName, { color: node.text }]} numberOfLines={2}>{node.tag.name}</Text>
-    </Animated.View>
+      <View style={[styles.blobSheen, { backgroundColor: hexToRgba(node.glow, 0.28) }]} />
+      <Text style={[styles.blobText, { color: node.text }]} numberOfLines={2}>{node.tag.name}</Text>
+    </View>
   );
 }
 
@@ -293,14 +247,14 @@ export default function App() {
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [tagMessage, setTagMessage] = useState("");
-  const [showAllWeights, setShowAllWeights] = useState(false);
   const [health, setHealth] = useState({ loading: false, ok: null, message: "" });
   const [stageSize, setStageSize] = useState({ width: 1, height: 1 });
-  const [galaxyNodes, setGalaxyNodes] = useState([]);
+  const [blobNodes, setBlobNodes] = useState([]);
   const [progressLayout, setProgressLayout] = useState(null);
   const progressTrackRef = useRef(null);
   const completeSentFor = useRef(null);
   const autoNextLock = useRef(false);
+  const dragAnchorRef = useRef({});
   const userId = session?.userId || null;
   const displayName = session?.name || session?.deviceId || "访客";
 
@@ -322,7 +276,6 @@ export default function App() {
   }, [newTagName, tags]);
   const onboardingGroups = useMemo(() => CATEGORY_ORDER.map((type) => [type, groupedTags.find(([groupType]) => groupType === type)?.[1] || []]).filter(([, items]) => items.length > 0), [groupedTags]);
   const currentOnboarding = onboardingGroups[Math.min(onboardingStep, Math.max(0, onboardingGroups.length - 1))] || null;
-  const visibleWeightTags = useMemo(() => activeProfileTags.slice(0, showAllWeights ? EXPANDED_WEIGHT_LIMIT : COLLAPSED_WEIGHT_LIMIT), [activeProfileTags, showAllWeights]);
 
   const loadTags = async () => {
     const res = await fetch(`${API_BASE}/tags`);
@@ -409,7 +362,7 @@ export default function App() {
   useEffect(() => () => { if (sound) sound.unloadAsync().catch(() => {}); }, [sound]);
 
   useEffect(() => {
-    setGalaxyNodes(buildGalaxyNodes(activeProfileTags, stageSize));
+    setBlobNodes(buildBlobNodes(activeProfileTags, stageSize));
   }, [activeProfileTags, stageSize, width]);
   const submitAuth = async () => {
     const cleanId = accountId.trim();
@@ -483,16 +436,58 @@ export default function App() {
     }, 40);
   };
 
-  const handleGalaxyDrop = (x, y, tag) => {
+  const getDropZone = (x, y) => {
     const zoneHeight = 78;
-    const third = stageSize.width / 3;
-    if (y > 18 && y < 18 + zoneHeight) {
-      if (x < third) { animateTagWeightChange(tag, 0, "remove"); return "delete"; }
-      if (x < third * 2) { animateTagWeightChange(tag, Math.max(0.03, Number(tag.weight || 0) * 0.82)); return "weaken"; }
-      animateTagWeightChange(tag, Math.min(1, Number(tag.weight || 0) * 1.08 + 0.04));
-      return "boost";
+    const top = 18;
+    if (y < top || y > top + zoneHeight) return null;
+    const third = Math.max(1, stageSize.width) / 3;
+    if (x < third) return "delete";
+    if (x < third * 2) return "weaken";
+    return "boost";
+  };
+
+  const handleBlobDragStart = (id) => {
+    const node = blobNodes.find((item) => item.id === id);
+    if (!node) return;
+    dragAnchorRef.current[id] = { x: node.anchorX, y: node.anchorY };
+  };
+
+  const handleBlobDragMove = (id, nextX, nextY) => {
+    setBlobNodes((prev) => {
+      const next = prev.map((item) => item.id === id ? {
+        ...item,
+        x: clamp(nextX, BLOB_PADDING, Math.max(BLOB_PADDING, stageSize.width - item.width - BLOB_PADDING)),
+        y: clamp(nextY, BLOB_TOP_INSET, Math.max(BLOB_TOP_INSET, stageSize.height - item.height - 18))
+      } : { ...item });
+      return relaxBlobLayout(next, stageSize, id);
+    });
+  };
+
+  const handleBlobDragEnd = (id, nextX, nextY, moved) => {
+    const dragged = blobNodes.find((item) => item.id === id);
+    if (!dragged) return;
+    const droppedX = nextX + dragged.width / 2;
+    const droppedY = nextY + dragged.height / 2;
+    const zone = moved ? getDropZone(droppedX, droppedY) : null;
+
+    if (zone) {
+      const anchor = dragAnchorRef.current[id] || { x: dragged.anchorX, y: dragged.anchorY };
+      setBlobNodes((prev) => prev.map((item) => item.id === id ? { ...item, x: anchor.x, y: anchor.y } : item));
+      if (zone === "delete") animateTagWeightChange(dragged.tag, 0, "remove");
+      if (zone === "weaken") animateTagWeightChange(dragged.tag, Math.max(0.03, Number(dragged.tag.weight || 0) * 0.82));
+      if (zone === "boost") animateTagWeightChange(dragged.tag, Math.min(1, Number(dragged.tag.weight || 0) * 1.08 + 0.04));
+      return;
     }
-    return null;
+
+    setBlobNodes((prev) => {
+      const next = prev.map((item) => item.id === id ? {
+        ...item,
+        x: clamp(nextX, BLOB_PADDING, Math.max(BLOB_PADDING, stageSize.width - item.width - BLOB_PADDING)),
+        y: clamp(nextY, BLOB_TOP_INSET, Math.max(BLOB_TOP_INSET, stageSize.height - item.height - 18))
+      } : { ...item });
+      const relaxed = relaxBlobLayout(next, stageSize, null);
+      return relaxed.map((item) => item.id === id ? { ...item, anchorX: item.x, anchorY: item.y } : item);
+    });
   };
 
   const submitNamedTag = async (name, chosenType) => {
@@ -772,37 +767,50 @@ export default function App() {
 
   const renderGalaxy = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="标签画像" title="把偏好养成一片真正会呼吸的星系" subtitle="大标签可拖动到顶部功能区，背景里的微光标签会围绕轨道缓慢运行，等待被再次探索。" />
+      <ScreenTitle eyebrow="标签画像" title="把偏好整理成一片可编辑的色场" subtitle="拖动色块时会互相挤开。拖进顶部功能区会回到原位并执行删除、弱化或增强；未拖入时会停在新位置。" />
       <View style={styles.galaxyFrame} onLayout={(event) => setStageSize(event.nativeEvent.layout)}>
-        <View style={styles.galaxyAuraOne} /><View style={styles.galaxyAuraTwo} /><View style={styles.galaxyAuraThree} />
+        <View style={styles.blobMistLayer} pointerEvents="none">
+          {blobNodes.map((node) => (
+            <View
+              key={`mist-${node.id}`}
+              style={[
+                styles.blobMist,
+                {
+                  left: node.x - node.width * 0.52,
+                  top: node.y - node.height * 0.6,
+                  width: node.width * 2.15,
+                  height: node.height * 2.15,
+                  borderRadius: Math.max(node.width, node.height) * 1.2,
+                  backgroundColor: hexToRgba(node.color, 0.18),
+                  shadowColor: node.color
+                }
+              ]}
+            />
+          ))}
+        </View>
         <View style={styles.zoneRow}>
           <View style={[styles.zoneCard, styles.zoneDelete]}><Text style={styles.zoneMini}>删除</Text><Text style={styles.zoneText}>移出画像</Text></View>
           <View style={[styles.zoneCard, styles.zoneWeaken]}><Text style={styles.zoneMini}>弱化</Text><Text style={styles.zoneText}>轻一点</Text></View>
           <View style={[styles.zoneCard, styles.zoneBoost]}><Text style={styles.zoneMini}>增强</Text><Text style={styles.zoneText}>更靠近你</Text></View>
         </View>
-        <View style={styles.orbitA} /><View style={styles.orbitB} /><View style={styles.orbitC} />
-        {galaxyNodes.length === 0 ? <View style={styles.emptyGalaxy}><Text style={styles.emptyGalaxyTitle}>还没有标签星球</Text><Text style={styles.emptyGalaxyText}>先在下方加入标签，或者重新进行首次标签选择。</Text></View> : <>
-          {galaxyNodes.filter((node) => node.compact).map((node) => <GalaxyDust key={"dust-" + node.tag.tag_id} node={node} />)}
-          {galaxyNodes.filter((node) => !node.compact).map((node) => <GalaxyNode key={node.tag.tag_id} node={node} onDrop={handleGalaxyDrop} />)}
-        </>}
-      </View>
-      <View style={styles.groupCard}>
-        <View style={styles.rowBetween}>
-          <Text style={styles.groupTitle}>当前画像权重</Text>
-          {activeProfileTags.length > COLLAPSED_WEIGHT_LIMIT ? <TouchableOpacity onPress={() => setShowAllWeights((prev) => !prev)}><Text style={styles.queueAction}>{showAllWeights ? "收起" : "查看更多"}</Text></TouchableOpacity> : null}
-        </View>
-        {activeProfileTags.length === 0 ? <Text style={styles.placeholder}>暂无画像标签</Text> : visibleWeightTags.map((tag) => <View key={tag.tag_id} style={styles.weightRow}><Text style={styles.weightTitle}>{tag.name}</Text><View style={styles.weightTrack}><View style={[styles.weightFill, { width: String(Math.max(10, Number(tag.weight || 0) * 100)) + "%" }]} /></View></View>)}
+        {blobNodes.length === 0 ? (
+          <View style={styles.emptyGalaxy}><Text style={styles.emptyGalaxyTitle}>还没有标签</Text><Text style={styles.emptyGalaxyText}>先在下方添加标签，或重新进行首次标签选择。</Text></View>
+        ) : (
+          blobNodes.map((node) => <TagBlob key={node.id} node={node} onDragStart={handleBlobDragStart} onDragMove={handleBlobDragMove} onDragEnd={handleBlobDragEnd} />)
+        )}
       </View>
       <View style={styles.groupCard}>
         <Text style={styles.groupTitle}>新增标签</Text>
         <TextInput value={newTagName} onChangeText={setNewTagName} placeholder="标签名称" placeholderTextColor="#9D978E" style={styles.input} />
-        {existingTagMatch ? <Text style={styles.hintText}>已识别到现有标签分类：{existingTagMatch.type}，会直接加入你的画像。</Text> : <Text style={styles.hintText}>如果这是一个全新的标签，提交后会在下方选择类别。</Text>}
+        {existingTagMatch ? <Text style={styles.hintText}>已识别到现有标签分类：{existingTagMatch.type}，会直接加入你的画像。</Text> : <Text style={styles.hintText}>如果这是一个全新标签，提交后再选择类别。</Text>}
         <TouchableOpacity style={styles.primary} onPress={submitUserTag}><Text style={styles.primaryText}>加入我的画像</Text></TouchableOpacity>
         {showCategoryPicker ? <View style={styles.categoryPickerCard}><Text style={styles.categoryPickerTitle}>给“{pendingTagName}”选择一个类别</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryPickerRow}>{CATEGORY_ORDER.map((type) => <TouchableOpacity key={type} style={[styles.categoryChip, selectedCategory === type && styles.categoryChipActive]} onPress={() => setSelectedCategory(type)}><Text style={[styles.categoryChipText, selectedCategory === type && styles.categoryChipTextActive]}>{type}</Text></TouchableOpacity>)}</ScrollView><View style={styles.rowGap}><TouchableOpacity style={[styles.secondarySoft, styles.flex]} onPress={() => { setShowCategoryPicker(false); setPendingTagName(""); }}><Text style={styles.secondaryText}>取消</Text></TouchableOpacity><TouchableOpacity style={[styles.primary, styles.flex]} onPress={confirmCustomTagType}><Text style={styles.primaryText}>确认分类</Text></TouchableOpacity></View></View> : null}
         {tagMessage ? <Text style={styles.hintText}>{tagMessage}</Text> : null}
       </View>
     </ScrollView>
-  );  const renderSettings = () => (
+  );
+
+  const renderSettings = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
       <ScreenTitle eyebrow="账户中心" title="设置与连接状态" subtitle="这是一版简单账户系统，先保证用户能快速回到自己的数据。" />
       <View style={styles.groupCard}><Text style={styles.groupTitle}>当前账户</Text><View style={styles.accountCard}><Text style={styles.accountName}>{displayName}</Text><Text style={styles.accountMeta}>账户 ID：{session?.deviceId}</Text><Text style={styles.accountMeta}>用户 ID：{session?.userId}</Text></View></View>
@@ -846,11 +854,11 @@ const styles = StyleSheet.create({
   controlsRow: { flexDirection: "row", gap: 10, marginTop: 22 }, controlBtn: { flex: 1, backgroundColor: "#FFFCF8", borderRadius: 18, paddingVertical: 15, alignItems: "center", shadowColor: "#D9D0C4", shadowOpacity: 0.06, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 2 }, controlText: { color: "#181613", fontSize: 15, fontWeight: "700" }, playBtn: { flex: 1, backgroundColor: "#111217", borderRadius: 18, paddingVertical: 15, alignItems: "center" }, playText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
   section: { marginBottom: 18 }, queueToggle: { backgroundColor: "rgba(255,252,247,0.94)", borderRadius: 24, padding: 18, marginBottom: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", shadowColor: "#D8D1C6", shadowOpacity: 0.07, shadowOffset: { width: 0, height: 8 }, shadowRadius: 14, elevation: 2 }, queueLabel: { color: "#181613", fontSize: 18, fontWeight: "800" }, queueHint: { color: "#7A746B", fontSize: 13, marginTop: 4 }, queueAction: { color: "#6C675F", fontSize: 14, fontWeight: "700" },
   listItem: { backgroundColor: "#FFFCF8", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", shadowColor: "#DDD5CA", shadowOpacity: 0.05, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 2 }, listTitle: { color: "#181613", fontSize: 15, fontWeight: "700" }, listSub: { color: "#766F67", fontSize: 13, marginTop: 4, lineHeight: 18 }, chevron: { color: "#B0A89C", fontSize: 20, marginLeft: 12 }, placeholder: { color: "#8C867E", fontSize: 14 },
-  galaxyFrame: { height: 430, borderRadius: 32, overflow: "hidden", backgroundColor: "#11131C", marginBottom: 18 }, galaxyAuraOne: { position: "absolute", width: 220, height: 220, borderRadius: 999, backgroundColor: "rgba(83,120,255,0.28)", top: 80, right: -40 }, galaxyAuraTwo: { position: "absolute", width: 170, height: 170, borderRadius: 999, backgroundColor: "rgba(247,141,112,0.22)", bottom: 28, left: -24 }, galaxyAuraThree: { position: "absolute", width: 130, height: 130, borderRadius: 999, backgroundColor: "rgba(141,222,177,0.18)", top: 160, left: 40 }, orbitA: { position: "absolute", width: 280, height: 280, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", top: 110, left: 48 }, orbitB: { position: "absolute", width: 180, height: 180, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)", top: 160, left: 110 }, orbitC: { position: "absolute", width: 360, height: 360, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.04)", top: 70, left: 8 },
-  zoneRow: { position: "absolute", top: 16, left: 14, right: 14, flexDirection: "row", gap: 10, zIndex: 2 }, zoneCard: { flex: 1, borderRadius: 18, paddingVertical: 12, paddingHorizontal: 10 }, zoneDelete: { backgroundColor: "rgba(104,28,28,0.84)" }, zoneWeaken: { backgroundColor: "rgba(37,58,86,0.86)" }, zoneBoost: { backgroundColor: "rgba(25,75,42,0.88)" }, zoneMini: { color: "rgba(255,255,255,0.72)", fontSize: 11, fontWeight: "700", letterSpacing: 1 }, zoneText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800", marginTop: 4 },
-  emptyGalaxy: { position: "absolute", left: 26, right: 26, bottom: 42, backgroundColor: "rgba(255,255,255,0.08)", padding: 18, borderRadius: 22 }, emptyGalaxyTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" }, emptyGalaxyText: { color: "rgba(255,255,255,0.72)", fontSize: 13, lineHeight: 20, marginTop: 6 },
-  dustOrbit: { position: "absolute", alignItems: "center" }, dustParticle: { position: "absolute", top: 0, left: "50%", marginLeft: -4, shadowOpacity: 0.35, shadowOffset: { width: 0, height: 0 }, shadowRadius: 8, opacity: 0.72 },
-  node: { position: "absolute", justifyContent: "center", alignItems: "center", shadowOpacity: 0.24, shadowOffset: { width: 0, height: 10 }, shadowRadius: 16, elevation: 8, padding: 10 }, nodeGlow: { position: "absolute", width: 40, height: 40, borderRadius: 999, top: 8, right: 8, opacity: 0.28 }, nodeName: { fontSize: 13, fontWeight: "800", lineHeight: 17, textAlign: "center", paddingHorizontal: 8 }, categoryPickerCard: { marginTop: 14, backgroundColor: "#F7F2EA", borderRadius: 22, padding: 14 }, categoryPickerTitle: { color: "#181613", fontSize: 15, fontWeight: "700", marginBottom: 12 }, categoryPickerRow: { paddingRight: 8 }, categoryChip: { backgroundColor: "#ECE4D9", borderRadius: 999, paddingHorizontal: 16, paddingVertical: 12, marginRight: 10 }, categoryChipActive: { backgroundColor: "#111217" }, categoryChipText: { color: "#6E675F", fontSize: 14, fontWeight: "700" }, categoryChipTextActive: { color: "#FFFFFF" },
+  galaxyFrame: { height: 560, borderRadius: 32, overflow: "hidden", backgroundColor: "#F1E8DA", marginBottom: 18, position: "relative" }, blobMistLayer: { ...StyleSheet.absoluteFillObject }, blobMist: { position: "absolute", shadowOpacity: 0.34, shadowOffset: { width: 0, height: 0 }, shadowRadius: 36 },
+  zoneRow: { position: "absolute", top: 16, left: 14, right: 14, flexDirection: "row", gap: 10, zIndex: 3 }, zoneCard: { flex: 1, borderRadius: 18, paddingVertical: 12, paddingHorizontal: 10 }, zoneDelete: { backgroundColor: "rgba(104,28,28,0.84)" }, zoneWeaken: { backgroundColor: "rgba(37,58,86,0.86)" }, zoneBoost: { backgroundColor: "rgba(25,75,42,0.88)" }, zoneMini: { color: "rgba(255,255,255,0.72)", fontSize: 11, fontWeight: "700", letterSpacing: 1 }, zoneText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800", marginTop: 4 },
+  emptyGalaxy: { position: "absolute", left: 26, right: 26, bottom: 42, backgroundColor: "rgba(255,255,255,0.18)", padding: 18, borderRadius: 22 }, emptyGalaxyTitle: { color: "#1F1A15", fontSize: 18, fontWeight: "800" }, emptyGalaxyText: { color: "#5D564F", fontSize: 13, lineHeight: 20, marginTop: 6 },
+  blob: { position: "absolute", borderRadius: 30, justifyContent: "center", paddingHorizontal: 18, shadowOpacity: 0.22, shadowOffset: { width: 0, height: 12 }, shadowRadius: 24, elevation: 6 }, blobSheen: { position: "absolute", right: 14, top: 12, width: 44, height: 44, borderRadius: 999 }, blobText: { fontSize: 20, fontWeight: "800", letterSpacing: -0.3 },
+  categoryPickerCard: { marginTop: 14, backgroundColor: "#F7F2EA", borderRadius: 22, padding: 14 }, categoryPickerTitle: { color: "#181613", fontSize: 15, fontWeight: "700", marginBottom: 12 }, categoryPickerRow: { paddingRight: 8 }, categoryChip: { backgroundColor: "#ECE4D9", borderRadius: 999, paddingHorizontal: 16, paddingVertical: 12, marginRight: 10 }, categoryChipActive: { backgroundColor: "#111217" }, categoryChipText: { color: "#6E675F", fontSize: 14, fontWeight: "700" }, categoryChipTextActive: { color: "#FFFFFF" },
   onboardingProgressHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, onboardingProgressTrack: { height: 10, borderRadius: 999, backgroundColor: "#ECE4D9", overflow: "hidden", marginBottom: 16 }, onboardingProgressFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" },
   rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }, weightRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 }, weightTitle: { color: "#181613", fontSize: 14, fontWeight: "700", width: 88 }, weightSub: { color: "#8A8175", fontSize: 12, marginTop: 3 }, weightTrack: { flex: 1, height: 10, borderRadius: 999, backgroundColor: "#ECE4D9", overflow: "hidden", marginLeft: 12 }, weightFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" },
   accountCard: { backgroundColor: "#F7F3ED", borderRadius: 22, padding: 16 }, accountName: { color: "#181613", fontSize: 22, fontWeight: "800", marginBottom: 8 }, accountMeta: { color: "#70685E", fontSize: 14, marginTop: 3 },
