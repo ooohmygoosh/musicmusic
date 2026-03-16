@@ -21,7 +21,8 @@ const COEF_COMPLETE = 0.05;
 const NORMALIZE_EVERY = 10;
 const MAX_TAGS_TOTAL = 6;
 const MAX_PER_TYPE = 2;
-const REUSE_SIMILARITY_MIN = Number(process.env.REUSE_SIMILARITY_MIN || 0.45);
+const REUSE_SIMILARITY_MIN = Number(process.env.REUSE_SIMILARITY_MIN || 0.38);
+const PREFETCH_REUSE_SIMILARITY_MIN = Number(process.env.PREFETCH_REUSE_SIMILARITY_MIN || 0.28);
 const INIT_REUSE_SIMILARITY_MIN = Number(process.env.INIT_REUSE_SIMILARITY_MIN || 0.3);
 
 const PROMPT_GUIDE = {
@@ -857,7 +858,7 @@ app.post("/generate", async (request, reply) => {
   );
   const job = rows[0];
 
-  const reusableSong = await findReusableSong(user_id, tagIds);
+  const reusableSong = await findReusableSong(user_id, tagIds, prefetch ? PREFETCH_REUSE_SIMILARITY_MIN : REUSE_SIMILARITY_MIN);
   if (reusableSong) {
     const songId = await reuseSongForUser(job, reusableSong);
     return {

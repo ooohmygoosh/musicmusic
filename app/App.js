@@ -245,6 +245,8 @@ export default function App() {
   const progressTrackRef = useRef(null);
   const completeSentFor = useRef(null);
   const autoNextLock = useRef(false);
+  const prefetchLock = useRef(false);
+  const prefetchedForSong = useRef(null);
   const userId = session?.userId || null;
   const displayName = session?.name || session?.deviceId || "访客";
 
@@ -456,14 +458,17 @@ export default function App() {
     await submitNamedTag(pendingTagName, selectedCategory);
   };
 
-  const generate = async () => {
-    if (!userId) return;
-    await fetch(`${API_BASE}/generate`, {
+  const generate = async (options = {}) => {
+    if (!userId) return null;
+    const res = await fetch(`${API_BASE}/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, instrumental: true })
+      body: JSON.stringify({ user_id: userId, instrumental: true, prefetch: !!options.preferReuse })
     });
+    if (!res.ok && !options.silent) throw new Error("generate failed");
+    const data = await res.json().catch(() => null);
     await refreshSongs(userId);
+    return data;
   };
 
   const attachStatus = (status) => {
@@ -503,25 +508,54 @@ export default function App() {
     } catch {}
   };
 
+  const getPlayableQueue = () => songs.filter((item) => !item.is_hidden && item.audio_url);
+
+  const findNextPlayableSong = (list, currentId) => {
+    if (!Array.isArray(list) || list.length === 0) return null;
+    const index = currentId ? list.findIndex((item) => Number(item.id) === Number(currentId)) : -1;
+    if (index >= 0 && index < list.length - 1) return list[index + 1];
+    return null;
+  };
+
+  const prefetchNextSong = async () => {
+    if (!userId || !current?.id || prefetchLock.current) return;
+    const queue = getPlayableQueue();
+    const currentIndex = queue.findIndex((item) => Number(item.id) === Number(current.id));
+    const remaining = currentIndex >= 0 ? queue.slice(currentIndex + 1) : [];
+    if (remaining.length >= 2) return;
+    if (prefetchedForSong.current === Number(current.id)) return;
+    prefetchLock.current = true;
+    prefetchedForSong.current = Number(current.id);
+    try {
+      await generate({ silent: true, preferReuse: true });
+      await refreshSongs(userId);
+    } catch {} finally {
+      prefetchLock.current = false;
+    }
+  };
+
   const handleAutoNext = async (action) => {
     if (!userId || autoNextLock.current) return;
     autoNextLock.current = true;
     try {
       await feedback(action);
       const currentId = current?.id;
-      const index = currentId ? songs.findIndex((item) => Number(item.id) === Number(currentId)) : -1;
-      if (index >= 0 && index < songs.length - 1) return play(songs[index + 1]);
-      await generate();
+      const immediateNext = findNextPlayableSong(getPlayableQueue(), currentId);
+      if (immediateNext) {
+        await play(immediateNext);
+        return;
+      }
+      await generate({ preferReuse: true });
       const fresh = await refreshSongs(userId);
-      const refreshedIndex = currentId ? fresh.findIndex((item) => Number(item.id) === Number(currentId)) : -1;
-      if (refreshedIndex >= 0 && refreshedIndex < fresh.length - 1) await play(fresh[refreshedIndex + 1]);
+      const next = findNextPlayableSong(fresh.filter((item) => !item.is_hidden && item.audio_url), currentId) || fresh.find((item) => !item.is_hidden && item.audio_url);
+      if (next) await play(next);
     } finally { autoNextLock.current = false; }
   };
 
   const handleNext = async () => {
     if (!current) return generate();
-    const index = songs.findIndex((item) => Number(item.id) === Number(current.id));
-    if (index >= 0 && index < songs.length - 1) return play(songs[index + 1]);
+    const next = findNextPlayableSong(getPlayableQueue(), current.id);
+    if (next) return play(next);
     await handleAutoNext("skip");
   };
 
@@ -576,6 +610,11 @@ export default function App() {
     setProfileTags([]); setSongs([]); setFavorites([]); setPlaylists([]); setPlaylistSongs([]); setCurrent(null);
     setActiveTab("player"); setShowPlaylistPicker(false);
   };
+
+  useEffect(() => {
+    if (!current?.id || !playback.isPlaying) return;
+    prefetchNextSong().catch(() => {});
+  }, [current?.id, playback.isPlaying, songs.length, userId]);
 
   const progressResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => true,
