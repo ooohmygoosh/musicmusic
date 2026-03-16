@@ -432,7 +432,7 @@ app.get("/favorites", async (request, reply) => {
     return;
   }
   const { rows } = await query(
-    "SELECT s.id, s.title, s.cover_url, s.prompt, sa.audio_url, f.created_at FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true WHERE f.user_id = $1 AND f.action = 'like' ORDER BY f.created_at DESC LIMIT 100",
+    "SELECT s.id, s.title, s.cover_url, s.prompt, sa.audio_url, f.created_at, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE f.user_id = $1 AND f.action = 'like' GROUP BY s.id, sa.audio_url, f.created_at ORDER BY f.created_at DESC LIMIT 100",
     [Number(user_id)]
   );
   return { items: rows };
@@ -467,7 +467,7 @@ app.post("/playlists", async (request, reply) => {
 app.get("/playlists/:id/songs", async (request, reply) => {
   const { id } = request.params;
   const { rows } = await query(
-    "SELECT s.id, s.title, s.cover_url, s.prompt, sa.audio_url, ps.created_at FROM playlist_songs ps JOIN songs s ON s.id = ps.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true WHERE ps.playlist_id = $1 ORDER BY ps.created_at DESC",
+    "SELECT s.id, s.title, s.cover_url, s.prompt, sa.audio_url, ps.created_at, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM playlist_songs ps JOIN songs s ON s.id = ps.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE ps.playlist_id = $1 GROUP BY s.id, sa.audio_url, ps.created_at ORDER BY ps.created_at DESC",
     [Number(id)]
   );
   return { items: rows };
@@ -1121,14 +1121,15 @@ app.post("/feedback", async (request, reply) => {
 });
 
 app.get("/songs", async (request, reply) => {
-  const { user_id } = request.query || {};
+  const { user_id, include_history } = request.query || {};
   if (!user_id) {
     reply.code(400).send({ error: "user_id required" });
     return;
   }
+  const includeHistory = String(include_history || "").toLowerCase() === "true";
   const { rows } = await query(
-    "SELECT DISTINCT ON (q.song_id) s.id, s.title, s.cover_url, s.prompt, sa.audio_url, q.created_at, q.source, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 AND COALESCE(q.is_hidden, false) = false GROUP BY q.song_id, s.id, s.title, s.cover_url, s.prompt, sa.audio_url, q.created_at, q.source ORDER BY q.song_id, q.created_at DESC",
-    [Number(user_id)]
+    "SELECT DISTINCT ON (q.song_id) s.id, s.title, s.cover_url, s.prompt, sa.audio_url, q.created_at, q.source, COALESCE(q.is_hidden, false) AS is_hidden, q.acted_at, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 AND ($2::boolean = true OR COALESCE(q.is_hidden, false) = false) GROUP BY q.song_id, s.id, s.title, s.cover_url, s.prompt, sa.audio_url, q.created_at, q.source, q.is_hidden, q.acted_at ORDER BY q.song_id, q.created_at DESC",
+    [Number(user_id), includeHistory]
   );
   rows.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   return { items: rows.slice(-50) };

@@ -197,6 +197,10 @@ export default function App() {
   const [askType, setAskType] = useState(false);
   const [pendingTag, setPendingTag] = useState("");
   const [selectedType, setSelectedType] = useState(TYPES[0]);
+  const [favoritePickerOpen, setFavoritePickerOpen] = useState(false);
+  const [expandedPlaylistId, setExpandedPlaylistId] = useState(null);
+  const [playlistSongs, setPlaylistSongs] = useState({});
+  const [playlistLoadingId, setPlaylistLoadingId] = useState(null);
 
   const currentSong = songs[currentIndex] || null;
   const sortedUserTags = useMemo(() => [...(userTags || [])].sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0)), [userTags]);
@@ -222,6 +226,22 @@ export default function App() {
 
   async function playSongAt(index, shouldAutoPlay = true) {
     autoPlayRef.current = shouldAutoPlay;
+    if (index === currentIndex) {
+      if (soundRef.current) {
+        try {
+          await soundRef.current.setPositionAsync(0);
+          if (shouldAutoPlay) {
+            await soundRef.current.playAsync();
+            setPlaying(true);
+          }
+        } catch {
+          await prepareSound();
+        }
+      } else {
+        await prepareSound();
+      }
+      return;
+    }
     setCurrentIndex(index);
   }
 
@@ -271,7 +291,7 @@ export default function App() {
     setBusy(true);
     try {
       const [songRes, favRes, utRes, plRes] = await Promise.all([
-        api(`/songs?user_id=${user.id}`),
+        api(`/songs?user_id=${user.id}&include_history=true`),
         api(`/favorites?user_id=${user.id}`),
         api(`/user-tags?user_id=${user.id}`),
         api(`/playlists?user_id=${user.id}`)
@@ -293,6 +313,14 @@ export default function App() {
 
   function findSongIndex(songId, nextSongs = songs) {
     return (nextSongs || []).findIndex((item) => Number(item.id) === Number(songId));
+  }
+
+  function getNextPlayableIndex(fromIndex, nextSongs = songs) {
+    const list = nextSongs || [];
+    for (let i = fromIndex + 1; i < list.length; i += 1) {
+      if (!list[i]?.is_hidden) return i;
+    }
+    return -1;
   }
 
   function startJobPolling(jobId) {
@@ -453,7 +481,7 @@ export default function App() {
       });
       const nextSongs = await refreshAll();
       if (action === "skip" || action === "complete") {
-        const nextIndex = currentIndex < nextSongs.length - 1 ? currentIndex + 1 : -1;
+        const nextIndex = getNextPlayableIndex(currentIndex, nextSongs);
         if (nextIndex >= 0) await playSongAt(nextIndex, true);
         else await generateSong();
       }
@@ -478,15 +506,54 @@ export default function App() {
     }
   }
 
-  async function addToPlaylist(playlistId, songId) {
+  async function addToPlaylist(playlistId, songId, options = {}) {
     try {
       await api(`/playlists/${playlistId}/add`, { method: "POST", body: JSON.stringify({ song_id: songId }) });
-      Alert.alert("已加入歌单", "这首歌已经加入对应歌单。");
+      if (!options.silent) Alert.alert("已加入歌单", "这首歌已经加入对应歌单。");
+      if (expandedPlaylistId === playlistId) {
+        const data = await api(`/playlists/${playlistId}/songs`);
+        setPlaylistSongs((prev) => ({ ...prev, [playlistId]: data?.items || [] }));
+      }
     } catch (e) {
       Alert.alert("加入失败", e.message);
     }
   }
 
+  function openFavoritePicker() {
+    if (!currentSong?.id) return;
+    setFavoritePickerOpen((v) => !v);
+  }
+
+  async function saveCurrentSongToPlaylist(playlistId) {
+    if (!currentSong?.id) return;
+    try {
+      await handleFeedback("like", { silent: false });
+      await addToPlaylist(playlistId, currentSong.id, { silent: true });
+      setFavoritePickerOpen(false);
+      await refreshAll();
+      Alert.alert("收藏成功", "已经收藏并加入你选择的歌单。");
+    } catch (e) {
+      Alert.alert("收藏失败", e.message);
+    }
+  }
+
+  async function togglePlaylist(playlistId) {
+    if (expandedPlaylistId === playlistId) {
+      setExpandedPlaylistId(null);
+      return;
+    }
+    setExpandedPlaylistId(playlistId);
+    if (playlistSongs[playlistId]) return;
+    setPlaylistLoadingId(playlistId);
+    try {
+      const data = await api(`/playlists/${playlistId}/songs`);
+      setPlaylistSongs((prev) => ({ ...prev, [playlistId]: data?.items || [] }));
+    } catch (e) {
+      Alert.alert("歌单加载失败", e.message);
+    } finally {
+      setPlaylistLoadingId(null);
+    }
+  }
   async function submitTag() {
     const name = tagName.trim();
     if (!name) return;
@@ -583,19 +650,32 @@ export default function App() {
                 <View style={styles.bar}><View style={[styles.barFill, { width: durMs ? `${(posMs / durMs) * 100}%` : "0%" }]} /></View>
                 <View style={styles.barMeta}><Text style={styles.mono}>{fmt(posMs)}</Text><Text style={styles.mono}>{fmt(durMs)}</Text></View>
                 <View style={styles.row}>
-                  <TouchableOpacity style={styles.softBtn} onPress={() => handleFeedback("like")}><Text style={styles.softText}>收藏</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.softBtn} onPress={openFavoritePicker}><Text style={styles.softText}>收藏</Text></TouchableOpacity>
                   <TouchableOpacity style={styles.darkBtn} onPress={togglePlayback}><Text style={styles.darkText}>{generating ? "等待中" : playing ? "暂停" : currentSong ? "播放" : "生成"}</Text></TouchableOpacity>
                   <TouchableOpacity style={styles.softBtn} onPress={() => handleFeedback("skip")}><Text style={styles.softText}>下一曲</Text></TouchableOpacity>
                 </View>
+                {favoritePickerOpen ? (
+                  <View style={styles.inlinePicker}>
+                    <Text style={styles.inlinePickerTitle}>滑动选择要收藏进哪个歌单</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagsRow}>
+                      {playlists.length ? playlists.map((pl) => (
+                        <TouchableOpacity key={pl.id} style={styles.tagChip} onPress={() => saveCurrentSongToPlaylist(pl.id)}>
+                          <Text style={styles.tagChipText}>{pl.name}</Text>
+                        </TouchableOpacity>
+                      )) : <Text style={styles.empty}>先去收藏页新建一个歌单。</Text>}
+                    </ScrollView>
+                  </View>
+                ) : null}
               </Section>
-              <Section title="播放列表" sub="如果后面还有歌，就直接接着放；没有就自动继续生成。">
+              <Section title="播放列表" sub="会保留听过的歌，点任意一首就立即切换并自动播放。">
                 {songs.length ? songs.map((song, index) => (
-                  <Pressable key={song.id} style={styles.listRow} onPress={() => playSongAt(index, true)}>
+                  <Pressable key={`${song.id}-${song.created_at || index}`} style={[styles.listRow, song.is_hidden && styles.listRowMuted]} onPress={() => playSongAt(index, true)}>
                     <Text style={styles.listIndex}>{index + 1}</Text>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.listTitle}>{song.title || `歌曲 ${song.id}`}</Text>
                       <Text style={styles.listSub}>{tagLine(song)}</Text>
                     </View>
+                    <Text style={styles.listMeta}>{song.is_hidden ? "已听过" : index === currentIndex ? "播放中" : "可播放"}</Text>
                   </Pressable>
                 )) : <Text style={styles.empty}>还没有歌曲，先点上面的生成。</Text>}
               </Section>
@@ -604,13 +684,46 @@ export default function App() {
 
           {tab === "favorites" && (
             <>
-              <Section title="歌单" sub="先把收藏和歌单稳定跑起来。">
+              <Section title="歌单" sub="点开歌单就能看到里面的歌曲，也可以直接从这里开始播放。">
                 <View style={styles.rowGap}>
                   <TextInput value={playlistName} onChangeText={setPlaylistName} placeholder="新歌单名称" placeholderTextColor="#8D877D" style={[styles.input, { flex: 1 }]} />
                   <TouchableOpacity style={styles.darkBtnSmall} onPress={createPlaylist}><Text style={styles.darkText}>新建</Text></TouchableOpacity>
                 </View>
                 {playlists.length ? playlists.map((pl) => (
-                  <View key={pl.id} style={styles.pillRow}><Text style={styles.pillTitle}>{pl.name}</Text><Text style={styles.pillMeta}>{pl.song_count} 首</Text></View>
+                  <View key={pl.id} style={styles.playlistBlock}>
+                    <TouchableOpacity style={styles.pillRow} onPress={() => togglePlaylist(pl.id)}>
+                      <Text style={styles.pillTitle}>{pl.name}</Text>
+                      <Text style={styles.pillMeta}>{expandedPlaylistId === pl.id ? "收起" : `${pl.song_count} 首`}</Text>
+                    </TouchableOpacity>
+                    {expandedPlaylistId === pl.id ? (
+                      <View style={styles.playlistSongs}>
+                        {playlistLoadingId === pl.id ? (
+                          <ActivityIndicator color="#1C1916" />
+                        ) : (playlistSongs[pl.id] || []).length ? (
+                          (playlistSongs[pl.id] || []).map((song) => (
+                            <Pressable
+                              key={`${pl.id}-${song.id}-${song.created_at || "x"}`}
+                              style={styles.playlistSongRow}
+                              onPress={() => {
+                                const existingIndex = songs.findIndex((item) => Number(item.id) === Number(song.id));
+                                if (existingIndex >= 0) {
+                                  playSongAt(existingIndex, true);
+                                  setTab("player");
+                                }
+                              }}
+                            >
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.listTitle}>{song.title || `歌曲 ${song.id}`}</Text>
+                                <Text style={styles.listSub}>{tagLine(song)}</Text>
+                              </View>
+                            </Pressable>
+                          ))
+                        ) : (
+                          <Text style={styles.empty}>这个歌单里还没有歌曲。</Text>
+                        )}
+                      </View>
+                    ) : null}
+                  </View>
                 )) : <Text style={styles.empty}>还没有歌单。</Text>}
               </Section>
               <Section title="收藏歌曲" sub="每一首喜欢的歌都可以放进不同歌单。">
@@ -754,17 +867,24 @@ const styles = StyleSheet.create({
   darkBtnSmall: { backgroundColor: "#1C1916", paddingVertical: 14, paddingHorizontal: 16, borderRadius: 18, alignItems: "center" },
   darkBtnFull: { backgroundColor: "#1C1916", paddingVertical: 16, borderRadius: 18, alignItems: "center", marginTop: 12 },
   darkText: { color: "#FFF", fontWeight: "800" },
-  listRow: { flexDirection: "row", gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "rgba(28,25,22,0.06)" },
+  listRow: { flexDirection: "row", gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "rgba(28,25,22,0.06)", alignItems: "center" },
+  listRowMuted: { opacity: 0.72 },
   listIndex: { width: 28, color: "#514B44", fontWeight: "700", paddingTop: 2 },
+  listMeta: { color: "#7B746C", fontSize: 12, fontWeight: "700" },
   listTitle: { color: "#1B1713", fontWeight: "700", fontSize: 16 },
   listSub: { marginTop: 4, color: "#6B655D" },
   empty: { color: "#6B655D", fontSize: 15, lineHeight: 22 },
-  pillRow: { backgroundColor: "rgba(255,255,255,0.66)", borderRadius: 18, paddingHorizontal: 16, paddingVertical: 14, marginBottom: 10, flexDirection: "row", justifyContent: "space-between" },
+  playlistBlock: { marginBottom: 10 },
+  pillRow: { backgroundColor: "rgba(255,255,255,0.66)", borderRadius: 18, paddingHorizontal: 16, paddingVertical: 14, flexDirection: "row", justifyContent: "space-between" },
+  playlistSongs: { paddingTop: 10, gap: 8 },
+  playlistSongRow: { backgroundColor: "rgba(255,255,255,0.42)", borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12 },
   pillTitle: { color: "#1D1814", fontWeight: "700" },
   pillMeta: { color: "#6B655D" },
   songCard: { backgroundColor: "rgba(255,255,255,0.58)", borderRadius: 22, padding: 16, marginBottom: 12 },
   songCardTitle: { color: "#1B1713", fontWeight: "800", fontSize: 18 },
   songCardSub: { color: "#6A645C", lineHeight: 20, marginTop: 6 },
+  inlinePicker: { marginTop: 14, padding: 14, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.5)" },
+  inlinePickerTitle: { color: "#4E473F", fontWeight: "700" },
   tagsRow: { gap: 10, paddingTop: 10 },
   tagChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.78)" },
   tagChipActive: { backgroundColor: "#1C1916" },
@@ -792,6 +912,21 @@ const styles = StyleSheet.create({
   tabText: { color: "#5A534B", fontWeight: "800" },
   tabTextActive: { color: "#FFF" }
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
