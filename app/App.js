@@ -323,6 +323,16 @@ export default function App() {
     return -1;
   }
 
+  function resolvePlaybackIndex(nextSongs, anchorIndex, preferredSongId = null) {
+    if (preferredSongId) {
+      const preferredIndex = findSongIndex(preferredSongId, nextSongs);
+      if (preferredIndex >= 0) return preferredIndex;
+    }
+    const sequentialIndex = getNextPlayableIndex(anchorIndex, nextSongs);
+    if (sequentialIndex >= 0) return sequentialIndex;
+    return nextSongs.length ? nextSongs.length - 1 : -1;
+  }
+
   function startJobPolling(jobId) {
     if (!jobId || !user?.id) return;
     stopJobPolling();
@@ -347,16 +357,12 @@ export default function App() {
           setGenerating(false);
           setGenerationStatus(item.status === "reused" ? "已复用库存歌曲" : "生成完成，已加入播放列表");
           setGenerationJobId(null);
+          const anchorIndex = currentIndex;
           const nextSongs = await refreshAll();
-          const songId = item.song?.id;
-          if (songId) {
-            const index = findSongIndex(songId, nextSongs);
-            if (index >= 0) {
-              await playSongAt(index, true);
-              return;
-            }
+          const targetIndex = resolvePlaybackIndex(nextSongs, anchorIndex, item.song?.id || null);
+          if (targetIndex >= 0) {
+            await playSongAt(targetIndex, true);
           }
-          if (nextSongs.length) await playSongAt(nextSongs.length - 1, true);
         }
       } catch (error) {
         setNotice(error.message);
@@ -445,8 +451,10 @@ export default function App() {
         setNotice("这次优先复用了库存歌曲。");
         setGenerating(false);
         setGenerationStatus("已复用库存歌曲");
+        const anchorIndex = currentIndex;
         const nextSongs = await refreshAll();
-        if (nextSongs.length) await playSongAt(nextSongs.length - 1, true);
+        const targetIndex = resolvePlaybackIndex(nextSongs, anchorIndex, data.song_id || null);
+        if (targetIndex >= 0) await playSongAt(targetIndex, true);
         return;
       }
       if (data.existing && data.job_id) {
@@ -912,6 +920,9 @@ const styles = StyleSheet.create({
   tabText: { color: "#5A534B", fontWeight: "800" },
   tabTextActive: { color: "#FFF" }
 });
+
+
+
 
 
 
