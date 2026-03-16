@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { SafeAreaView, View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, Animated, Easing, useWindowDimensions, Alert, PanResponder, ActivityIndicator } from "react-native";
+import { SafeAreaView, View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, useWindowDimensions, Alert, PanResponder, ActivityIndicator } from "react-native";
 import { Audio } from "expo-av";
 import { API_BASE } from "./config";
 
@@ -19,13 +19,6 @@ const TYPE_COLORS = {
 };
 
 const CATEGORY_ORDER = ["情绪", "风格", "乐器", "场景", "节奏"];
-const COLLAPSED_WEIGHT_LIMIT = 6;
-const EXPANDED_WEIGHT_LIMIT = 15;
-const BLOB_MIN_SIZE = 92;
-const BLOB_MAX_SIZE = 168;
-const BLOB_TOP_INSET = 112;
-const BLOB_PADDING = 18;
-const BLOB_RELAX_STEPS = 16;
 
 function formatTime(ms) {
   if (!ms || Number.isNaN(ms)) return "0:00";
@@ -72,7 +65,7 @@ function hexToRgba(hex, alpha) {
 
 function relaxBlobLayout(nodes, stageSize, draggingId = null) {
   const width = Math.max(320, stageSize.width || 0);
-  const height = Math.max(420, stageSize.height || 0);
+  const height = Math.max(620, stageSize.height || 0);
   const next = nodes.map((node) => ({ ...node }));
 
   for (let step = 0; step < BLOB_RELAX_STEPS; step += 1) {
@@ -105,7 +98,7 @@ function relaxBlobLayout(nodes, stageSize, draggingId = null) {
 
     for (const node of next) {
       node.x = clamp(node.x, BLOB_PADDING, width - node.width - BLOB_PADDING);
-      node.y = clamp(node.y, BLOB_TOP_INSET, height - node.height - 18);
+      node.y = clamp(node.y, BLOB_TOP_INSET, height - node.height - BLOB_BOTTOM_INSET);
     }
   }
 
@@ -114,7 +107,7 @@ function relaxBlobLayout(nodes, stageSize, draggingId = null) {
 
 function buildBlobNodes(tags, stageSize) {
   const width = Math.max(320, stageSize.width || 0);
-  const height = Math.max(420, stageSize.height || 0);
+  const height = Math.max(620, stageSize.height || 0);
   const chosen = tags.slice(0, EXPANDED_WEIGHT_LIMIT);
   if (chosen.length === 0) return [];
   const weights = chosen.map((tag) => Number(tag.weight || 0));
@@ -122,7 +115,7 @@ function buildBlobNodes(tags, stageSize) {
   const maxWeight = Math.max(...weights);
   const span = Math.max(0.0001, maxWeight - minWeight);
   const centerX = width / 2;
-  const centerY = BLOB_TOP_INSET + (height - BLOB_TOP_INSET) / 2;
+  const centerY = BLOB_TOP_INSET + (height - BLOB_TOP_INSET - BLOB_BOTTOM_INSET) / 2;
 
   const nodes = chosen.map((tag, index) => {
     const palette = typePalette(tag.type);
@@ -133,7 +126,7 @@ function buildBlobNodes(tags, stageSize) {
     const theta = index * 2.399963229728653;
     const radius = 30 + index * 18;
     const x = clamp(centerX + Math.cos(theta) * radius - nodeWidth / 2, BLOB_PADDING, width - nodeWidth - BLOB_PADDING);
-    const y = clamp(centerY + Math.sin(theta) * radius - nodeHeight / 2, BLOB_TOP_INSET, height - nodeHeight - 18);
+    const y = clamp(centerY + Math.sin(theta) * radius - nodeHeight / 2, BLOB_TOP_INSET, height - nodeHeight - BLOB_BOTTOM_INSET);
     return {
       id: tag.tag_id,
       tag,
@@ -248,13 +241,10 @@ export default function App() {
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [tagMessage, setTagMessage] = useState("");
   const [health, setHealth] = useState({ loading: false, ok: null, message: "" });
-  const [stageSize, setStageSize] = useState({ width: 1, height: 1 });
-  const [blobNodes, setBlobNodes] = useState([]);
   const [progressLayout, setProgressLayout] = useState(null);
   const progressTrackRef = useRef(null);
   const completeSentFor = useRef(null);
   const autoNextLock = useRef(false);
-  const dragAnchorRef = useRef({});
   const userId = session?.userId || null;
   const displayName = session?.name || session?.deviceId || "访客";
 
@@ -361,9 +351,6 @@ export default function App() {
   useEffect(() => { loadTags().catch(() => setTags([])); }, []);
   useEffect(() => () => { if (sound) sound.unloadAsync().catch(() => {}); }, [sound]);
 
-  useEffect(() => {
-    setBlobNodes(buildBlobNodes(activeProfileTags, stageSize));
-  }, [activeProfileTags, stageSize, width]);
   const submitAuth = async () => {
     const cleanId = accountId.trim();
     const cleanName = accountName.trim();
@@ -434,60 +421,6 @@ export default function App() {
         }
       }
     }, 40);
-  };
-
-  const getDropZone = (x, y) => {
-    const zoneHeight = 78;
-    const top = 18;
-    if (y < top || y > top + zoneHeight) return null;
-    const third = Math.max(1, stageSize.width) / 3;
-    if (x < third) return "delete";
-    if (x < third * 2) return "weaken";
-    return "boost";
-  };
-
-  const handleBlobDragStart = (id) => {
-    const node = blobNodes.find((item) => item.id === id);
-    if (!node) return;
-    dragAnchorRef.current[id] = { x: node.anchorX, y: node.anchorY };
-  };
-
-  const handleBlobDragMove = (id, nextX, nextY) => {
-    setBlobNodes((prev) => {
-      const next = prev.map((item) => item.id === id ? {
-        ...item,
-        x: clamp(nextX, BLOB_PADDING, Math.max(BLOB_PADDING, stageSize.width - item.width - BLOB_PADDING)),
-        y: clamp(nextY, BLOB_TOP_INSET, Math.max(BLOB_TOP_INSET, stageSize.height - item.height - 18))
-      } : { ...item });
-      return relaxBlobLayout(next, stageSize, id);
-    });
-  };
-
-  const handleBlobDragEnd = (id, nextX, nextY, moved) => {
-    const dragged = blobNodes.find((item) => item.id === id);
-    if (!dragged) return;
-    const droppedX = nextX + dragged.width / 2;
-    const droppedY = nextY + dragged.height / 2;
-    const zone = moved ? getDropZone(droppedX, droppedY) : null;
-
-    if (zone) {
-      const anchor = dragAnchorRef.current[id] || { x: dragged.anchorX, y: dragged.anchorY };
-      setBlobNodes((prev) => prev.map((item) => item.id === id ? { ...item, x: anchor.x, y: anchor.y } : item));
-      if (zone === "delete") animateTagWeightChange(dragged.tag, 0, "remove");
-      if (zone === "weaken") animateTagWeightChange(dragged.tag, Math.max(0.03, Number(dragged.tag.weight || 0) * 0.82));
-      if (zone === "boost") animateTagWeightChange(dragged.tag, Math.min(1, Number(dragged.tag.weight || 0) * 1.08 + 0.04));
-      return;
-    }
-
-    setBlobNodes((prev) => {
-      const next = prev.map((item) => item.id === id ? {
-        ...item,
-        x: clamp(nextX, BLOB_PADDING, Math.max(BLOB_PADDING, stageSize.width - item.width - BLOB_PADDING)),
-        y: clamp(nextY, BLOB_TOP_INSET, Math.max(BLOB_TOP_INSET, stageSize.height - item.height - 18))
-      } : { ...item });
-      const relaxed = relaxBlobLayout(next, stageSize, null);
-      return relaxed.map((item) => item.id === id ? { ...item, anchorX: item.x, anchorY: item.y } : item);
-    });
   };
 
   const submitNamedTag = async (name, chosenType) => {
@@ -767,49 +700,88 @@ export default function App() {
 
   const renderGalaxy = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="标签画像" title="把偏好整理成一片可编辑的色场" subtitle="拖动色块时会互相挤开。拖进顶部功能区会回到原位并执行删除、弱化或增强；未拖入时会停在新位置。" />
-      <View style={styles.galaxyFrame} onLayout={(event) => setStageSize(event.nativeEvent.layout)}>
-        <View style={styles.blobMistLayer} pointerEvents="none">
-          {blobNodes.map((node) => (
-            <View
-              key={`mist-${node.id}`}
-              style={[
-                styles.blobMist,
-                {
-                  left: node.x - node.width * 0.52,
-                  top: node.y - node.height * 0.6,
-                  width: node.width * 2.15,
-                  height: node.height * 2.15,
-                  borderRadius: Math.max(node.width, node.height) * 1.2,
-                  backgroundColor: hexToRgba(node.color, 0.18),
-                  shadowColor: node.color
-                }
-              ]}
-            />
-          ))}
+      <ScreenTitle
+        eyebrow={"\u6807\u7b7e\u753b\u50cf"}
+        title={"\u7528\u6700\u7b80\u5355\u7684\u65b9\u5f0f\u7ba1\u7406\u4f60\u7684\u6807\u7b7e"}
+        subtitle={"\u53ea\u4fdd\u7559\u6807\u7b7e\u5217\u8868\u3001\u589e\u5f3a\u3001\u51cf\u5f31\u3001\u5220\u9664\u548c\u65b0\u589e\u6807\u7b7e\u3002"}
+      />
+
+      {activeProfileTags.length === 0 ? (
+        <View style={styles.groupCard}>
+          <Text style={styles.groupTitle}>{"\u8fd8\u6ca1\u6709\u6807\u7b7e"}</Text>
+          <Text style={styles.placeholder}>{"\u5148\u5728\u4e0b\u65b9\u65b0\u589e\u6807\u7b7e\uff0c\u6216\u91cd\u65b0\u5b8c\u6210\u9996\u6b21\u6807\u7b7e\u9009\u62e9\u3002"}</Text>
         </View>
-        <View style={styles.zoneRow}>
-          <View style={[styles.zoneCard, styles.zoneDelete]}><Text style={styles.zoneMini}>删除</Text><Text style={styles.zoneText}>移出画像</Text></View>
-          <View style={[styles.zoneCard, styles.zoneWeaken]}><Text style={styles.zoneMini}>弱化</Text><Text style={styles.zoneText}>轻一点</Text></View>
-          <View style={[styles.zoneCard, styles.zoneBoost]}><Text style={styles.zoneMini}>增强</Text><Text style={styles.zoneText}>更靠近你</Text></View>
-        </View>
-        {blobNodes.length === 0 ? (
-          <View style={styles.emptyGalaxy}><Text style={styles.emptyGalaxyTitle}>还没有标签</Text><Text style={styles.emptyGalaxyText}>先在下方添加标签，或重新进行首次标签选择。</Text></View>
-        ) : (
-          blobNodes.map((node) => <TagBlob key={node.id} node={node} onDragStart={handleBlobDragStart} onDragMove={handleBlobDragMove} onDragEnd={handleBlobDragEnd} />)
-        )}
-      </View>
+      ) : (
+        CATEGORY_ORDER.map((type) => {
+          const items = activeProfileTags.filter((item) => item.type === type);
+          if (items.length === 0) return null;
+          return (
+            <View key={type} style={styles.groupCard}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.groupTitle}>{type}</Text>
+                <Text style={styles.groupMeta}>{items.length} {"\u4e2a\u6807\u7b7e"}</Text>
+              </View>
+              {items.map((tag) => (
+                <View key={tag.tag_id} style={styles.tagRowSimple}>
+                  <View style={styles.tagMeta}>
+                    <View style={[styles.tagTypeBadge, { backgroundColor: `${typePalette(tag.type)[0]}22` }]}>
+                      <Text style={[styles.tagTypeBadgeText, { color: typePalette(tag.type)[2] }]}>{tag.type}</Text>
+                    </View>
+                    <Text style={styles.tagNameText}>{tag.name}</Text>
+                  </View>
+                  <View style={styles.tagActions}>
+                    <TouchableOpacity style={styles.tagActionButton} onPress={() => animateTagWeightChange(tag, Math.max(0.03, Number(tag.weight || 0) - 0.12))}>
+                      <Text style={styles.tagActionText}>-</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.tagActionButtonPrimary} onPress={() => animateTagWeightChange(tag, Math.min(1, Number(tag.weight || 0) + 0.12))}>
+                      <Text style={styles.tagActionTextPrimary}>+</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.tagRemoveButton} onPress={() => animateTagWeightChange(tag, 0, "remove")}>
+                      <Text style={styles.tagRemoveText}>{"\u5220\u9664"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+            </View>
+          );
+        })
+      )}
+
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>新增标签</Text>
-        <TextInput value={newTagName} onChangeText={setNewTagName} placeholder="标签名称" placeholderTextColor="#9D978E" style={styles.input} />
-        {existingTagMatch ? <Text style={styles.hintText}>已识别到现有标签分类：{existingTagMatch.type}，会直接加入你的画像。</Text> : <Text style={styles.hintText}>如果这是一个全新标签，提交后再选择类别。</Text>}
-        <TouchableOpacity style={styles.primary} onPress={submitUserTag}><Text style={styles.primaryText}>加入我的画像</Text></TouchableOpacity>
-        {showCategoryPicker ? <View style={styles.categoryPickerCard}><Text style={styles.categoryPickerTitle}>给“{pendingTagName}”选择一个类别</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryPickerRow}>{CATEGORY_ORDER.map((type) => <TouchableOpacity key={type} style={[styles.categoryChip, selectedCategory === type && styles.categoryChipActive]} onPress={() => setSelectedCategory(type)}><Text style={[styles.categoryChipText, selectedCategory === type && styles.categoryChipTextActive]}>{type}</Text></TouchableOpacity>)}</ScrollView><View style={styles.rowGap}><TouchableOpacity style={[styles.secondarySoft, styles.flex]} onPress={() => { setShowCategoryPicker(false); setPendingTagName(""); }}><Text style={styles.secondaryText}>取消</Text></TouchableOpacity><TouchableOpacity style={[styles.primary, styles.flex]} onPress={confirmCustomTagType}><Text style={styles.primaryText}>确认分类</Text></TouchableOpacity></View></View> : null}
+        <Text style={styles.groupTitle}>{"\u65b0\u589e\u6807\u7b7e"}</Text>
+        <TextInput value={newTagName} onChangeText={setNewTagName} placeholder={"\u6807\u7b7e\u540d\u79f0"} placeholderTextColor="#9D978E" style={styles.input} />
+        {existingTagMatch ? (
+          <Text style={styles.hintText}>{`\u8bc6\u522b\u5230\u73b0\u6709\u5206\u7c7b\uff1a${existingTagMatch.type}\uff0c\u4f1a\u76f4\u63a5\u52a0\u5165\u4f60\u7684\u6807\u7b7e\u3002`}</Text>
+        ) : (
+          <Text style={styles.hintText}>{"\u5982\u679c\u8fd9\u662f\u4e00\u4e2a\u5168\u65b0\u6807\u7b7e\uff0c\u63d0\u4ea4\u540e\u518d\u9009\u62e9\u7c7b\u522b\u3002"}</Text>
+        )}
+        <TouchableOpacity style={styles.primary} onPress={submitUserTag}>
+          <Text style={styles.primaryText}>{"\u52a0\u5165\u6211\u7684\u6807\u7b7e"}</Text>
+        </TouchableOpacity>
+        {showCategoryPicker ? (
+          <View style={styles.categoryPickerCard}>
+            <Text style={styles.categoryPickerTitle}>{`\u7ed9\u201c${pendingTagName}\u201d\u9009\u62e9\u4e00\u4e2a\u7c7b\u522b`}</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryPickerRow}>
+              {CATEGORY_ORDER.map((type) => (
+                <TouchableOpacity key={type} style={[styles.categoryChip, selectedCategory === type && styles.categoryChipActive]} onPress={() => setSelectedCategory(type)}>
+                  <Text style={[styles.categoryChipText, selectedCategory === type && styles.categoryChipTextActive]}>{type}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <View style={styles.rowGap}>
+              <TouchableOpacity style={[styles.secondarySoft, styles.flex]} onPress={() => { setShowCategoryPicker(false); setPendingTagName(""); }}>
+                <Text style={styles.secondaryText}>{"\u53d6\u6d88"}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.primary, styles.flex]} onPress={confirmCustomTagType}>
+                <Text style={styles.primaryText}>{"\u786e\u8ba4\u5206\u7c7b"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
         {tagMessage ? <Text style={styles.hintText}>{tagMessage}</Text> : null}
       </View>
     </ScrollView>
   );
-
   const renderSettings = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
       <ScreenTitle eyebrow="账户中心" title="设置与连接状态" subtitle="这是一版简单账户系统，先保证用户能快速回到自己的数据。" />
@@ -854,10 +826,19 @@ const styles = StyleSheet.create({
   controlsRow: { flexDirection: "row", gap: 10, marginTop: 22 }, controlBtn: { flex: 1, backgroundColor: "#FFFCF8", borderRadius: 18, paddingVertical: 15, alignItems: "center", shadowColor: "#D9D0C4", shadowOpacity: 0.06, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 2 }, controlText: { color: "#181613", fontSize: 15, fontWeight: "700" }, playBtn: { flex: 1, backgroundColor: "#111217", borderRadius: 18, paddingVertical: 15, alignItems: "center" }, playText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
   section: { marginBottom: 18 }, queueToggle: { backgroundColor: "rgba(255,252,247,0.94)", borderRadius: 24, padding: 18, marginBottom: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", shadowColor: "#D8D1C6", shadowOpacity: 0.07, shadowOffset: { width: 0, height: 8 }, shadowRadius: 14, elevation: 2 }, queueLabel: { color: "#181613", fontSize: 18, fontWeight: "800" }, queueHint: { color: "#7A746B", fontSize: 13, marginTop: 4 }, queueAction: { color: "#6C675F", fontSize: 14, fontWeight: "700" },
   listItem: { backgroundColor: "#FFFCF8", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", shadowColor: "#DDD5CA", shadowOpacity: 0.05, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 2 }, listTitle: { color: "#181613", fontSize: 15, fontWeight: "700" }, listSub: { color: "#766F67", fontSize: 13, marginTop: 4, lineHeight: 18 }, chevron: { color: "#B0A89C", fontSize: 20, marginLeft: 12 }, placeholder: { color: "#8C867E", fontSize: 14 },
-  galaxyFrame: { height: 560, borderRadius: 32, overflow: "hidden", backgroundColor: "#F1E8DA", marginBottom: 18, position: "relative" }, blobMistLayer: { ...StyleSheet.absoluteFillObject }, blobMist: { position: "absolute", shadowOpacity: 0.34, shadowOffset: { width: 0, height: 0 }, shadowRadius: 36 },
-  zoneRow: { position: "absolute", top: 16, left: 14, right: 14, flexDirection: "row", gap: 10, zIndex: 3 }, zoneCard: { flex: 1, borderRadius: 18, paddingVertical: 12, paddingHorizontal: 10 }, zoneDelete: { backgroundColor: "rgba(104,28,28,0.84)" }, zoneWeaken: { backgroundColor: "rgba(37,58,86,0.86)" }, zoneBoost: { backgroundColor: "rgba(25,75,42,0.88)" }, zoneMini: { color: "rgba(255,255,255,0.72)", fontSize: 11, fontWeight: "700", letterSpacing: 1 }, zoneText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800", marginTop: 4 },
-  emptyGalaxy: { position: "absolute", left: 26, right: 26, bottom: 42, backgroundColor: "rgba(255,255,255,0.18)", padding: 18, borderRadius: 22 }, emptyGalaxyTitle: { color: "#1F1A15", fontSize: 18, fontWeight: "800" }, emptyGalaxyText: { color: "#5D564F", fontSize: 13, lineHeight: 20, marginTop: 6 },
-  blob: { position: "absolute", borderRadius: 30, justifyContent: "center", paddingHorizontal: 18, shadowOpacity: 0.22, shadowOffset: { width: 0, height: 12 }, shadowRadius: 24, elevation: 6 }, blobSheen: { position: "absolute", right: 14, top: 12, width: 44, height: 44, borderRadius: 999 }, blobText: { fontSize: 20, fontWeight: "800", letterSpacing: -0.3 },
+  groupMeta: { color: "#8A8175", fontSize: 13, fontWeight: "700" },
+  tagRowSimple: { backgroundColor: "#FFFCF8", borderRadius: 22, padding: 16, marginTop: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  tagMeta: { flex: 1 },
+  tagTypeBadge: { alignSelf: "flex-start", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, marginBottom: 8 },
+  tagTypeBadgeText: { fontSize: 11, fontWeight: "800" },
+  tagNameText: { color: "#181613", fontSize: 18, fontWeight: "800" },
+  tagActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  tagActionButton: { width: 36, height: 36, borderRadius: 12, backgroundColor: "#EEE7DD", alignItems: "center", justifyContent: "center" },
+  tagActionButtonPrimary: { width: 36, height: 36, borderRadius: 12, backgroundColor: "#111217", alignItems: "center", justifyContent: "center" },
+  tagActionText: { color: "#181613", fontSize: 20, fontWeight: "800" },
+  tagActionTextPrimary: { color: "#FFFFFF", fontSize: 20, fontWeight: "800" },
+  tagRemoveButton: { borderRadius: 12, backgroundColor: "#5A1A1A", paddingHorizontal: 12, paddingVertical: 10 },
+  tagRemoveText: { color: "#FFFFFF", fontSize: 13, fontWeight: "800" },
   categoryPickerCard: { marginTop: 14, backgroundColor: "#F7F2EA", borderRadius: 22, padding: 14 }, categoryPickerTitle: { color: "#181613", fontSize: 15, fontWeight: "700", marginBottom: 12 }, categoryPickerRow: { paddingRight: 8 }, categoryChip: { backgroundColor: "#ECE4D9", borderRadius: 999, paddingHorizontal: 16, paddingVertical: 12, marginRight: 10 }, categoryChipActive: { backgroundColor: "#111217" }, categoryChipText: { color: "#6E675F", fontSize: 14, fontWeight: "700" }, categoryChipTextActive: { color: "#FFFFFF" },
   onboardingProgressHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, onboardingProgressTrack: { height: 10, borderRadius: 999, backgroundColor: "#ECE4D9", overflow: "hidden", marginBottom: 16 }, onboardingProgressFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" },
   rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }, weightRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 }, weightTitle: { color: "#181613", fontSize: 14, fontWeight: "700", width: 88 }, weightSub: { color: "#8A8175", fontSize: 12, marginTop: 3 }, weightTrack: { flex: 1, height: 10, borderRadius: 999, backgroundColor: "#ECE4D9", overflow: "hidden", marginLeft: 12 }, weightFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" },
