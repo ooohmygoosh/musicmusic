@@ -1,854 +1,796 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
-import { SafeAreaView, View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, Animated, Easing, useWindowDimensions, Alert, PanResponder, ActivityIndicator } from "react-native";
+import { ActivityIndicator, Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { Audio } from "expo-av";
 import { API_BASE } from "./config";
 
-const TABS = [
-  { key: "player", label: "播放", icon: "◉" },
-  { key: "favorites", label: "收藏", icon: "♡" },
-  { key: "galaxy", label: "画像", icon: "✦" },
-  { key: "settings", label: "设置", icon: "⌘" }
-];
-
-const TYPE_COLORS = {
-  情绪: ["#F58F73", "#FFF1EB", "#5B281E"],
-  风格: ["#6C87E8", "#EAF0FF", "#243563"],
-  乐器: ["#69B884", "#E7FFF0", "#1D5230"],
-  场景: ["#D4A24D", "#FFF4DB", "#634410"],
-  节奏: ["#9A78E6", "#F2EBFF", "#473171"]
+const TABS = ["player", "favorites", "profile", "settings"];
+const TYPES = ["情绪", "风格", "乐器", "场景", "节奏", "人声"];
+const COLORS = {
+  情绪: "#FF9681",
+  风格: "#7D8CFF",
+  乐器: "#73B48A",
+  场景: "#F6B56D",
+  节奏: "#68A9DC",
+  人声: "#B496FF",
+  其他: "#E39C7B"
 };
 
-const CATEGORY_ORDER = ["情绪", "风格", "乐器", "场景", "节奏"];
-const COLLAPSED_WEIGHT_LIMIT = 6;
-const EXPANDED_WEIGHT_LIMIT = 15;
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+const normalizeTags = (tags) => Array.isArray(tags) ? tags.filter(Boolean).map((t) => String(t).trim()).filter(Boolean) : [];
+const fmt = (ms) => {
+  const total = Math.max(0, Math.floor((ms || 0) / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+};
+const colorFor = (type) => COLORS[type] || COLORS["其他"];
 
-function formatTime(ms) {
-  if (!ms || Number.isNaN(ms)) return "0:00";
-  const s = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
-function typePalette(type) {
-  return TYPE_COLORS[type] || ["#82B9FF", "#EAF5FF", "#26496F"];
-}
-
-function uniqueTagNames(tags) {
-  return Array.from(new Set((tags || []).filter(Boolean)));
-}
-
-function fallbackTagText(prompt) {
-  if (!prompt) return "";
-  return String(prompt)
-    .replace(/([\u4e00-\u9fa5A-Za-z]+)\s*:\s*/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function songTagText(song) {
-  const names = uniqueTagNames(song?.tags);
-  if (names.length > 0) return names.join(" · ");
-  return "标签整理中";
-}
-
-function buildGalaxyNodes(tags, stageSize) {
-  const width = Math.max(280, stageSize.width || 0);
-  const height = Math.max(320, stageSize.height || 0);
-  const centerX = width / 2;
-  const centerY = height / 2 + 28;
-  const expanded = tags.slice(0, EXPANDED_WEIGHT_LIMIT);
-  const compact = tags.slice(EXPANDED_WEIGHT_LIMIT);
-
-  const expandedNodes = expanded.map((tag, index) => {
-    const palette = typePalette(tag.type);
-    const ringIndex = index < 5 ? 0 : index < 10 ? 1 : 2;
-    const ringCounts = [Math.min(5, expanded.length), Math.max(0, Math.min(5, expanded.length - 5)), Math.max(0, Math.min(5, expanded.length - 10))];
-    const indexInRing = ringIndex === 0 ? index : ringIndex === 1 ? index - 5 : index - 10;
-    const ringCount = Math.max(1, ringCounts[ringIndex] || 1);
-    const radius = [62, 108, 148][ringIndex];
-    const angle = (-Math.PI / 2) + ((Math.PI * 2) / ringCount) * indexInRing + ringIndex * 0.18;
-    const size = 58 + Math.min(40, Number(tag.weight || 0) * 48);
-    const baseX = centerX + Math.cos(angle) * radius - size / 2;
-    const baseY = centerY + Math.sin(angle) * radius - size / 2;
-    return {
-      tag,
-      compact: false,
-      size,
-      baseX,
-      baseY,
-      ring: radius,
-      angle,
-      centerX,
-      centerY,
-      orbitDuration: 32000 + ringIndex * 5000 + index * 900,
-      orbitDirection: index % 2 === 0 ? 1 : -1,
-      seed: index + 1,
-      color: palette[0],
-      glow: palette[1],
-      text: palette[2]
-    };
+async function api(path, options = {}) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options
   });
-
-  const compactNodes = compact.map((tag, index) => {
-    const palette = typePalette(tag.type);
-    const ring = 188 + (index % 5) * 20;
-    const angle = ((Math.PI * 2) / Math.max(compact.length, 10)) * index + (index % 2) * 0.18;
-    const size = 6 + Math.min(8, Number(tag.weight || 0) * 10);
-    return {
-      tag,
-      compact: true,
-      size,
-      ring,
-      angle,
-      seed: index + 1,
-      color: palette[0],
-      glow: palette[1],
-      text: palette[2],
-      centerX,
-      centerY
-    };
-  });
-
-  return [...expandedNodes, ...compactNodes];
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+  if (!res.ok) throw new Error(data?.error || data?.detail || data?.raw || `请求失败：${res.status}`);
+  return data;
 }
 
-function ScreenTitle({ eyebrow, title, subtitle }) {
+function Backdrop({ tags }) {
+  const blobs = useMemo(() => {
+    const top = (tags || []).filter((x) => x?.is_active !== false).slice(0, 6);
+    const pos = [
+      { top: -40, left: -50 },
+      { top: 60, right: -60 },
+      { top: 240, left: 10 },
+      { top: 320, right: -30 },
+      { bottom: 170, left: -40 },
+      { bottom: 110, right: -50 }
+    ];
+    return top.map((item, i) => ({
+      id: item.tag_id || `${item.name}-${i}`,
+      color: colorFor(item.type),
+      size: 180 + clamp(Number(item.weight || 0.3), 0.15, 1) * 160,
+      ...pos[i % pos.length]
+    }));
+  }, [tags]);
+
   return (
-    <View style={styles.titleBlock}>
-      {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
-      <Text style={styles.title}>{title}</Text>
-      {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <View style={styles.bgBase} />
+      {blobs.map((blob) => (
+        <View
+          key={blob.id}
+          style={[
+            styles.blob,
+            {
+              width: blob.size,
+              height: blob.size,
+              borderRadius: blob.size / 2,
+              backgroundColor: blob.color,
+              top: blob.top,
+              left: blob.left,
+              right: blob.right,
+              bottom: blob.bottom
+            }
+          ]}
+        />
+      ))}
+      <View style={styles.bgVeil} />
     </View>
   );
 }
 
-function SeedTag({ item, selected, onPress }) {
+function Section({ title, sub, children }) {
   return (
-    <TouchableOpacity onPress={() => onPress(item)} style={[styles.seedTag, selected && styles.seedTagSelected]}>
-      <Text style={[styles.seedType, selected && styles.seedTypeSelected]}>{item.type}</Text>
-      <Text style={[styles.seedName, selected && styles.seedNameSelected]}>{item.name}</Text>
-    </TouchableOpacity>
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>{title}</Text>
+      {!!sub && <Text style={styles.cardSub}>{sub}</Text>}
+      <View style={{ marginTop: 12 }}>{children}</View>
+    </View>
   );
 }
 
-function GalaxyDust({ node }) {
-  const angle = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    const orbit = Animated.loop(Animated.timing(angle, {
-      toValue: 1,
-      duration: 26000 + node.seed * 1100,
-      easing: Easing.linear,
-      useNativeDriver: true
-    }));
-    orbit.start();
-    return () => orbit.stop();
-  }, [angle, node.seed]);
-
-  const rotate = angle.interpolate({ inputRange: [0, 1], outputRange: [node.angle + "rad", node.angle + Math.PI * 2 + "rad"] });
-
+function AuthScreen({
+  mode,
+  setMode,
+  deviceId,
+  setDeviceId,
+  displayName,
+  setDisplayName,
+  submitting,
+  onSubmit
+}) {
   return (
-    <Animated.View pointerEvents="none" style={[styles.dustOrbit, { width: node.ring * 2, height: node.ring * 2, marginLeft: -node.ring, marginTop: -node.ring, left: node.centerX, top: node.centerY, transform: [{ rotate }] }]}>
-      <View style={[styles.dustParticle, { width: node.size, height: node.size, borderRadius: node.size / 2, backgroundColor: node.color, shadowColor: node.color }]} />
-    </Animated.View>
+    <SafeAreaView style={styles.authShell}>
+      <View style={styles.authCard}>
+        <Text style={styles.heroEyebrow}>TPY MUSIC</Text>
+        <Text style={styles.heroTitle}>重新开始，一版稳定的新界面。</Text>
+        <Text style={styles.heroSubtitle}>先把登录、选标签、播放、收藏、画像这些核心流程稳稳跑起来。</Text>
+        <View style={styles.segmentRow}>
+          <TouchableOpacity style={[styles.segmentButton, mode === "login" && styles.segmentButtonActive]} onPress={() => setMode("login")}>
+            <Text style={[styles.segmentText, mode === "login" && styles.segmentTextActive]}>登录</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.segmentButton, mode === "register" && styles.segmentButtonActive]} onPress={() => setMode("register")}>
+            <Text style={[styles.segmentText, mode === "register" && styles.segmentTextActive]}>注册</Text>
+          </TouchableOpacity>
+        </View>
+        <TextInput value={deviceId} onChangeText={setDeviceId} placeholder="设备标识 / 用户名" placeholderTextColor="#8D877D" style={styles.input} autoCapitalize="none" />
+        <TextInput value={displayName} onChangeText={setDisplayName} placeholder="显示名称" placeholderTextColor="#8D877D" style={styles.input} />
+        <TouchableOpacity style={styles.primaryButton} onPress={onSubmit} disabled={submitting}>
+          {submitting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.primaryButtonText}>{mode === "login" ? "进入应用" : "创建账户"}</Text>}
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
   );
 }
 
-function GalaxyNode({ node, onDrop }) {
-  const orbit = useRef(new Animated.Value(0)).current;
-  const pan = useRef(new Animated.ValueXY({ x: node.baseX, y: node.baseY })).current;
-  const dragOrigin = useRef({ x: node.baseX, y: node.baseY });
-  const currentPoint = useRef({ x: node.baseX, y: node.baseY });
-  const homePoint = useRef({ x: node.baseX, y: node.baseY });
-  const isDragging = useRef(false);
-  const orbitLoop = useRef(null);
-
-  useEffect(() => {
-    const syncHome = (progress = 0) => {
-      const theta = node.angle + progress * Math.PI * 2 * node.orbitDirection;
-      const next = {
-        x: node.centerX + Math.cos(theta) * node.ring - node.size / 2,
-        y: node.centerY + Math.sin(theta) * node.ring - node.size / 2
-      };
-      homePoint.current = next;
-      if (!isDragging.current) {
-        currentPoint.current = next;
-        pan.setValue(next);
-      }
-    };
-
-    syncHome(0);
-    const orbitId = orbit.addListener(({ value }) => syncHome(value));
-    const pxId = pan.x.addListener(({ value }) => { currentPoint.current = { ...currentPoint.current, x: value }; });
-    const pyId = pan.y.addListener(({ value }) => { currentPoint.current = { ...currentPoint.current, y: value }; });
-
-    const startOrbit = () => {
-      orbit.setValue(0);
-      orbitLoop.current = Animated.loop(Animated.timing(orbit, {
-        toValue: 1,
-        duration: node.orbitDuration,
-        easing: Easing.linear,
-        useNativeDriver: false
-      }));
-      orbitLoop.current.start();
-    };
-
-    startOrbit();
-
-    return () => {
-      orbitLoop.current?.stop();
-      orbit.removeListener(orbitId);
-      pan.x.removeListener(pxId);
-      pan.y.removeListener(pyId);
-    };
-  }, [node.angle, node.centerX, node.centerY, node.orbitDirection, node.orbitDuration, node.ring, node.size, orbit, pan]);
-
-  const resumeOrbit = () => {
-    orbitLoop.current?.stop();
-    orbit.setValue(0);
-    orbitLoop.current = Animated.loop(Animated.timing(orbit, {
-      toValue: 1,
-      duration: node.orbitDuration,
-      easing: Easing.linear,
-      useNativeDriver: false
-    }));
-    orbitLoop.current.start();
-  };
-
-  const responder = useRef(PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderGrant: () => {
-      isDragging.current = true;
-      orbitLoop.current?.stop();
-      dragOrigin.current = { ...currentPoint.current };
-    },
-    onPanResponderMove: (_, g) => pan.setValue({ x: dragOrigin.current.x + g.dx, y: dragOrigin.current.y + g.dy }),
-    onPanResponderRelease: () => {
-      const cx = currentPoint.current.x + node.size / 2;
-      const cy = currentPoint.current.y + node.size / 2;
-      onDrop(cx, cy, node.tag);
-      Animated.spring(pan, { toValue: homePoint.current, friction: 9, tension: 42, useNativeDriver: false }).start(() => {
-        currentPoint.current = { ...homePoint.current };
-        isDragging.current = false;
-        resumeOrbit();
-      });
-    },
-    onPanResponderTerminate: () => {
-      Animated.spring(pan, { toValue: homePoint.current, friction: 9, tension: 42, useNativeDriver: false }).start(() => {
-        currentPoint.current = { ...homePoint.current };
-        isDragging.current = false;
-        resumeOrbit();
-      });
-    }
-  })).current;
-
+function OnboardingScreen({ tags, typeIndex, selected, toggleTag, onBack, onNext, onFinish }) {
+  const currentType = TYPES[typeIndex];
+  const options = tags.filter((tag) => tag.type === currentType);
+  const progress = (typeIndex + 1) / TYPES.length;
   return (
-    <Animated.View
-      {...responder.panHandlers}
-      style={[
-        styles.node,
-        {
-          width: node.size,
-          height: node.size,
-          borderRadius: node.size / 2,
-          backgroundColor: node.color,
-          shadowColor: node.color,
-          transform: [{ translateX: pan.x }, { translateY: pan.y }]
-        }
-      ]}
-    >
-      <View style={[styles.nodeGlow, { backgroundColor: node.glow }]} />
-      <Text style={[styles.nodeName, { color: node.text }]} numberOfLines={2}>{node.tag.name}</Text>
-    </Animated.View>
+    <SafeAreaView style={styles.authShell}>
+      <View style={styles.authCard}>
+        <Text style={styles.heroEyebrow}>初始标签</Text>
+        <Text style={styles.heroTitle}>先选你现在最在意的 {currentType}</Text>
+        <Text style={styles.heroSubtitle}>只会把你选中的标签加入画像，其他内容后面通过探索和手动添加慢慢补进来。</Text>
+        <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${progress * 100}%` }]} /></View>
+        <Text style={styles.progressText}>第 {typeIndex + 1} / {TYPES.length} 类</Text>
+        <ScrollView style={styles.selectionList} contentContainerStyle={styles.selectionListContent}>
+          {options.map((tag) => {
+            const checked = selected.includes(tag.id);
+            return (
+              <TouchableOpacity key={tag.id} style={[styles.choiceChip, checked && styles.choiceChipActive]} onPress={() => toggleTag(tag.id)}>
+                <Text style={[styles.choiceChipText, checked && styles.choiceChipTextActive]}>{tag.name}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+        <View style={styles.onboardingActions}>
+          <TouchableOpacity style={styles.ghostButton} onPress={onBack} disabled={typeIndex === 0}>
+            <Text style={styles.ghostButtonText}>上一步</Text>
+          </TouchableOpacity>
+          {typeIndex < TYPES.length - 1 ? (
+            <TouchableOpacity style={styles.primaryButtonCompact} onPress={onNext}>
+              <Text style={styles.primaryButtonText}>下一个类别</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={styles.primaryButtonCompact} onPress={onFinish}>
+              <Text style={styles.primaryButtonText}>完成并进入</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    </SafeAreaView>
   );
 }
 
 export default function App() {
-  const { width } = useWindowDimensions();
-  const [activeTab, setActiveTab] = useState("player");
-  const [authMode, setAuthMode] = useState("login");
-  const [accountId, setAccountId] = useState("demo-device");
-  const [accountName, setAccountName] = useState("");
-  const [session, setSession] = useState(null);
-  const [authLoading, setAuthLoading] = useState(false);
-  const [needsOnboarding, setNeedsOnboarding] = useState(false);
-  const [tags, setTags] = useState([]);
-  const [seedSelection, setSeedSelection] = useState(new Set());
-  const [profileTags, setProfileTags] = useState([]);
+  const soundRef = useRef(null);
+  const autoPlayRef = useRef(false);
+  const jobPollRef = useRef(null);
+  const feedbackRef = useRef({ inFlight: false, key: "", finishedSongId: null });
+  const [mode, setMode] = useState("login");
+  const [deviceId, setDeviceId] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [user, setUser] = useState(null);
+  const [tab, setTab] = useState("player");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [allTags, setAllTags] = useState([]);
+  const [needInit, setNeedInit] = useState(false);
+  const [step, setStep] = useState(0);
+  const [initTagIds, setInitTagIds] = useState([]);
   const [songs, setSongs] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [favorites, setFavorites] = useState([]);
   const [playlists, setPlaylists] = useState([]);
-  const [playlistSongs, setPlaylistSongs] = useState([]);
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState(null);
-  const [newPlaylistName, setNewPlaylistName] = useState("");
-  const [current, setCurrent] = useState(null);
-  const [sound, setSound] = useState(null);
-  const [currentSoundId, setCurrentSoundId] = useState(null);
-  const [playback, setPlayback] = useState({ position: 0, duration: 1, isPlaying: false });
-  const [showQueue, setShowQueue] = useState(false);
-  const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
-  const [newTagName, setNewTagName] = useState("");
-  const [pendingTagName, setPendingTagName] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState(CATEGORY_ORDER[0] || "");
-  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
-  const [onboardingStep, setOnboardingStep] = useState(0);
-  const [tagMessage, setTagMessage] = useState("");
-  const [showAllWeights, setShowAllWeights] = useState(false);
-  const [health, setHealth] = useState({ loading: false, ok: null, message: "" });
-  const [stageSize, setStageSize] = useState({ width: 1, height: 1 });
-  const [galaxyNodes, setGalaxyNodes] = useState([]);
-  const [progressLayout, setProgressLayout] = useState(null);
-  const progressTrackRef = useRef(null);
-  const completeSentFor = useRef(null);
-  const autoNextLock = useRef(false);
-  const userId = session?.userId || null;
-  const displayName = session?.name || session?.deviceId || "访客";
+  const [userTags, setUserTags] = useState([]);
+  const [posMs, setPosMs] = useState(0);
+  const [durMs, setDurMs] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [generationJobId, setGenerationJobId] = useState(null);
+  const [generationStatus, setGenerationStatus] = useState("");
+  const [playlistName, setPlaylistName] = useState("");
+  const [tagName, setTagName] = useState("");
+  const [askType, setAskType] = useState(false);
+  const [pendingTag, setPendingTag] = useState("");
+  const [selectedType, setSelectedType] = useState(TYPES[0]);
 
-  const groupedTags = useMemo(() => {
-    const map = new Map();
-    for (const tag of tags) {
-      const list = map.get(tag.type) || [];
-      list.push(tag);
-      map.set(tag.type, list);
+  const currentSong = songs[currentIndex] || null;
+  const sortedUserTags = useMemo(() => [...(userTags || [])].sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0)), [userTags]);
+
+  useEffect(() => { loadTags(); return () => { stopJobPolling(); unload(); }; }, []);
+  useEffect(() => { if (user && !needInit) refreshAll(); }, [user?.id, needInit]);
+  useEffect(() => { prepareSound(); return () => {}; }, [currentSong?.id, currentSong?.audio_url]);
+  useEffect(() => { feedbackRef.current.finishedSongId = null; }, [currentSong?.id]);
+
+  function stopJobPolling() {
+    if (jobPollRef.current) {
+      clearInterval(jobPollRef.current);
+      jobPollRef.current = null;
     }
-    return Array.from(map.entries());
-  }, [tags]);
+  }
 
-  const activeProfileTags = useMemo(() => profileTags.filter((item) => item.is_active !== false && Number(item.weight || 0) > 0), [profileTags]);
-  const existingTagMatch = useMemo(() => {
-    const clean = newTagName.trim().toLowerCase();
-    if (!clean) return null;
-    return tags.find((tag) => String(tag.name || "").trim().toLowerCase() === clean) || null;
-  }, [newTagName, tags]);
-  const onboardingGroups = useMemo(() => CATEGORY_ORDER.map((type) => [type, groupedTags.find(([groupType]) => groupType === type)?.[1] || []]).filter(([, items]) => items.length > 0), [groupedTags]);
-  const currentOnboarding = onboardingGroups[Math.min(onboardingStep, Math.max(0, onboardingGroups.length - 1))] || null;
-  const visibleWeightTags = useMemo(() => activeProfileTags.slice(0, showAllWeights ? EXPANDED_WEIGHT_LIMIT : COLLAPSED_WEIGHT_LIMIT), [activeProfileTags, showAllWeights]);
-
-  const loadTags = async () => {
-    const res = await fetch(`${API_BASE}/tags`);
-    const data = await res.json();
-    setTags(data.items || []);
-  };
-
-  const ensureUser = async (device = accountId.trim(), displayName = accountName.trim()) => {
-    const res = await fetch(`${API_BASE}/users`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_id: device, display_name: displayName || undefined })
-    });
-    const data = await res.json();
-    return data.user;
-  };
-
-  const loadProfileTags = async (uid) => {
-    if (!uid) return [];
-    const res = await fetch(`${API_BASE}/user-tags?user_id=${uid}`);
-    const data = await res.json();
-    const items = data.items || [];
-    setProfileTags(items);
-    return items;
-  };
-
-  const refreshSongs = async (uid, options = {}) => {
-    if (!uid) return [];
-    const res = await fetch(`${API_BASE}/songs?user_id=${uid}`);
-    const data = await res.json();
-    const seen = new Set();
-    const items = (data.items || []).filter((item) => {
-      const key = item.id || item.audio_url;
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    }).sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
-    setSongs(items);
-    if (items.length > 0 && (options.preferLatest || !current)) {
-      setCurrent(items[items.length - 1]);
+  async function unload() {
+    if (soundRef.current) {
+      try { await soundRef.current.unloadAsync(); } catch {}
+      soundRef.current = null;
     }
-    return items;
-  };
+  }
 
-  const refreshFavorites = async (uid) => {
-    if (!uid) return [];
-    const res = await fetch(`${API_BASE}/favorites?user_id=${uid}`);
-    const data = await res.json();
-    setFavorites(data.items || []);
-    return data.items || [];
-  };
+  async function playSongAt(index, shouldAutoPlay = true) {
+    autoPlayRef.current = shouldAutoPlay;
+    setCurrentIndex(index);
+  }
 
-  const loadPlaylists = async (uid) => {
-    if (!uid) return [];
-    const res = await fetch(`${API_BASE}/playlists?user_id=${uid}`);
-    const data = await res.json();
-    setPlaylists(data.items || []);
-    return data.items || [];
-  };
-
-  const loadPlaylistSongs = async (playlistId) => {
-    if (!playlistId) return [];
-    const res = await fetch(`${API_BASE}/playlists/${playlistId}/songs`);
-    const data = await res.json();
-    setPlaylistSongs(data.items || []);
-    return data.items || [];
-  };
-
-  const bootstrapUser = async (user, nameOverride) => {
-    setSession({ userId: user.id, deviceId: user.device_id, name: nameOverride || accountName.trim() || user.device_id });
-    const profile = await loadProfileTags(user.id);
-    await Promise.all([refreshSongs(user.id, { preferLatest: true }), refreshFavorites(user.id), loadPlaylists(user.id)]);
-    const active = (profile || []).filter((item) => item.is_active !== false && Number(item.weight || 0) > 0);
-    setNeedsOnboarding(active.length === 0);
-    setOnboardingStep(0);
-  };
-
-  useEffect(() => { loadTags().catch(() => setTags([])); }, []);
-  useEffect(() => () => { if (sound) sound.unloadAsync().catch(() => {}); }, [sound]);
-
-  useEffect(() => {
-    setGalaxyNodes(buildGalaxyNodes(activeProfileTags, stageSize));
-  }, [activeProfileTags, stageSize, width]);
-  const submitAuth = async () => {
-    const cleanId = accountId.trim();
-    const cleanName = accountName.trim();
-    if (!cleanId) return Alert.alert("还差一步", "请输入账户 ID");
-    if (authMode === "register" && !cleanName) return Alert.alert("还差一步", "注册时请填写昵称");
-    setAuthLoading(true);
+  async function prepareSound() {
+    if (!currentSong?.audio_url) {
+      await unload();
+      setPlaying(false); setPosMs(0); setDurMs(0);
+      return;
+    }
     try {
-      const user = await ensureUser(cleanId, cleanName);
-      await bootstrapUser(user, cleanName || cleanId);
-    } catch (err) {
-      Alert.alert("连接失败", String(err));
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const submitOnboarding = async () => {
-    if (!userId || seedSelection.size === 0) return Alert.alert("请选择标签", "至少先选一个标签方向");
-    await fetch(`${API_BASE}/init-tags`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, tag_ids: Array.from(seedSelection) })
-    });
-    await loadProfileTags(userId);
-    await refreshSongs(userId, { preferLatest: true });
-    await refreshFavorites(userId);
-    await loadPlaylists(userId);
-    setNeedsOnboarding(false);
-    setOnboardingStep(0);
-    setActiveTab("player");
-  };
-
-  const persistWeight = async (tagId, weight) => {
-    if (!userId) return;
-    await fetch(`${API_BASE}/user-tags/weight`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, tag_id: tagId, weight })
-    });
-  };
-
-  const persistRemoveProfileTag = async (tag) => {
-    if (!userId) return;
-    await fetch(`${API_BASE}/user-tags/remove`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, tag_id: tag.tag_id })
-    });
-  };
-
-  const animateTagWeightChange = (tag, nextWeight, mode = "update") => {
-    const startWeight = Number(tag.weight || 0);
-    const endWeight = Math.max(0, Math.min(1, nextWeight));
-    const steps = 10;
-    let step = 0;
-    const timer = setInterval(() => {
-      step += 1;
-      const ratio = step / steps;
-      const eased = 1 - Math.pow(1 - ratio, 2);
-      const value = startWeight + (endWeight - startWeight) * eased;
-      setProfileTags((prev) => prev.map((item) => item.tag_id === tag.tag_id ? { ...item, weight: value, is_active: mode === "remove" ? true : item.is_active } : item));
-      if (step >= steps) {
-        clearInterval(timer);
-        if (mode === "remove") {
-          persistRemoveProfileTag(tag).then(() => loadProfileTags(userId)).catch(() => loadProfileTags(userId));
-        } else {
-          persistWeight(tag.tag_id, endWeight).then(() => loadProfileTags(userId)).catch(() => loadProfileTags(userId));
+      const shouldPlay = autoPlayRef.current;
+      autoPlayRef.current = false;
+      await unload();
+      const { sound, status } = await Audio.Sound.createAsync(
+        { uri: currentSong.audio_url },
+        { shouldPlay },
+        (s) => {
+          if (!s.isLoaded) return;
+          setPosMs(s.positionMillis || 0);
+          setDurMs(s.durationMillis || 0);
+          setPlaying(!!s.isPlaying);
+          if (s.didJustFinish && feedbackRef.current.finishedSongId !== currentSong?.id) {
+            feedbackRef.current.finishedSongId = currentSong?.id;
+            handleFeedback("complete", { silent: true });
+          }
         }
+      );
+      soundRef.current = sound;
+      setPosMs(status.positionMillis || 0);
+      setDurMs(status.durationMillis || 0);
+      setPlaying(!!status.isPlaying);
+    } catch (e) {
+      setNotice("音频加载失败");
+    }
+  }
+  async function loadTags() {
+    try {
+      const data = await api("/tags");
+      setAllTags(data?.items || []);
+    } catch (e) {
+      setNotice(e.message);
+    }
+  }
+
+  async function refreshAll() {
+    if (!user?.id) return [];
+    setBusy(true);
+    try {
+      const [songRes, favRes, utRes, plRes] = await Promise.all([
+        api(`/songs?user_id=${user.id}`),
+        api(`/favorites?user_id=${user.id}`),
+        api(`/user-tags?user_id=${user.id}`),
+        api(`/playlists?user_id=${user.id}`)
+      ]);
+      const nextSongs = songRes?.items || [];
+      setSongs(nextSongs);
+      setCurrentIndex((v) => clamp(v, 0, Math.max(0, nextSongs.length - 1)));
+      setFavorites(favRes?.items || []);
+      setUserTags(utRes?.items || []);
+      setPlaylists(plRes?.items || []);
+      return nextSongs;
+    } catch (e) {
+      setNotice(e.message);
+      return [];
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function findSongIndex(songId, nextSongs = songs) {
+    return (nextSongs || []).findIndex((item) => Number(item.id) === Number(songId));
+  }
+
+  function startJobPolling(jobId) {
+    if (!jobId || !user?.id) return;
+    stopJobPolling();
+    setGenerationJobId(jobId);
+    setGenerating(true);
+    setGenerationStatus("等待天谱乐回调...");
+    jobPollRef.current = setInterval(async () => {
+      try {
+        const data = await api(`/generation-jobs/${jobId}`);
+        const item = data?.item;
+        if (!item) return;
+        if (item.status === "failed") {
+          stopJobPolling();
+          setGenerating(false);
+          setGenerationStatus("");
+          setGenerationJobId(null);
+          Alert.alert("生成失败", item.error || "生成任务失败");
+          return;
+        }
+        if (item.status === "done" || item.status === "reused") {
+          stopJobPolling();
+          setGenerating(false);
+          setGenerationStatus(item.status === "reused" ? "已复用库存歌曲" : "生成完成，已加入播放列表");
+          setGenerationJobId(null);
+          const nextSongs = await refreshAll();
+          const songId = item.song?.id;
+          if (songId) {
+            const index = findSongIndex(songId, nextSongs);
+            if (index >= 0) {
+              await playSongAt(index, true);
+              return;
+            }
+          }
+          if (nextSongs.length) await playSongAt(nextSongs.length - 1, true);
+        }
+      } catch (error) {
+        setNotice(error.message);
       }
-    }, 40);
-  };
-
-  const handleGalaxyDrop = (x, y, tag) => {
-    const zoneHeight = 78;
-    const third = stageSize.width / 3;
-    if (y > 18 && y < 18 + zoneHeight) {
-      if (x < third) { animateTagWeightChange(tag, 0, "remove"); return "delete"; }
-      if (x < third * 2) { animateTagWeightChange(tag, Math.max(0.03, Number(tag.weight || 0) * 0.82)); return "weaken"; }
-      animateTagWeightChange(tag, Math.min(1, Number(tag.weight || 0) * 1.08 + 0.04));
-      return "boost";
+    }, 2500);
+  }
+  async function submitAuth() {
+    if (!deviceId.trim()) {
+      Alert.alert("提示", "请先填写设备标识或用户名。");
+      return;
     }
-    return null;
-  };
-
-  const submitNamedTag = async (name, chosenType) => {
-    const cleanName = String(name || "").trim();
-    if (!userId || !cleanName) return setTagMessage("请输入标签名称");
-    const res = await fetch(`${API_BASE}/user-tags`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, name: cleanName, type: chosenType || undefined })
-    });
-    const data = await res.json();
-    if (!res.ok) return setTagMessage(data.error || "添加失败");
-    setNewTagName("");
-    setPendingTagName("");
-    setShowCategoryPicker(false);
-    setTagMessage(existingTagMatch ? "已加入当前画像" : "标签已提交，会在探索到它后进入画像");
-    await loadTags();
-    await loadProfileTags(userId);
-  };
-
-  const submitUserTag = async () => {
-    setTagMessage("");
-    const cleanName = newTagName.trim();
-    if (!userId || !cleanName) return setTagMessage("请输入标签名称");
-    if (existingTagMatch) return submitNamedTag(cleanName, existingTagMatch.type);
-    setPendingTagName(cleanName);
-    setSelectedCategory(CATEGORY_ORDER[0] || "情绪");
-    setShowCategoryPicker(true);
-  };
-
-  const confirmCustomTagType = async () => {
-    if (!pendingTagName) return;
-    await submitNamedTag(pendingTagName, selectedCategory);
-  };
-
-  const generate = async () => {
-    if (!userId) return;
-    await fetch(`${API_BASE}/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, instrumental: true })
-    });
-    await refreshSongs(userId, { preferLatest: true });
-  };
-
-  const attachStatus = (status) => {
-    if (!status?.isLoaded) return;
-    setPlayback({ position: status.positionMillis || 0, duration: status.durationMillis || 1, isPlaying: status.isPlaying });
-    if (status.didJustFinish && current && completeSentFor.current !== current.id) {
-      completeSentFor.current = current.id;
-      handleAutoNext("complete").catch(() => {});
-    }
-  };
-
-  const play = async (song) => {
-    if (!song?.audio_url) return;
-    if (sound) await sound.unloadAsync().catch(() => {});
-    completeSentFor.current = null;
-    const created = await Audio.Sound.createAsync({ uri: song.audio_url }, { shouldPlay: true, progressUpdateIntervalMillis: 1000 }, attachStatus);
-    setSound(created.sound);
-    setCurrent(song);
-    setCurrentSoundId(song.id);
-  };
-
-  const togglePlay = async () => {
-    if (!current) return generate();
-    if (!sound || currentSoundId !== current.id) return play(current);
-    if (playback.isPlaying) await sound.pauseAsync();
-    else await sound.playAsync();
-  };
-
-  const feedback = async (action) => {
-    if (!userId || !current) return;
+    setBusy(true);
     try {
-      await fetch(`${API_BASE}/feedback`, {
+      const res = await api("/users", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, song_id: current.id, action, played_seconds: Math.floor((playback.position || 0) / 1000) })
+        body: JSON.stringify({ device_id: deviceId.trim(), display_name: displayName.trim() || deviceId.trim() })
       });
-    } catch {}
-  };
-
-  const handleAutoNext = async (action) => {
-    if (!userId || autoNextLock.current) return;
-    autoNextLock.current = true;
-    try {
-      await feedback(action);
-      const index = current ? songs.findIndex((item) => item.id === current.id) : -1;
-      if (index >= 0 && index < songs.length - 1) return play(songs[index + 1]);
-      await generate();
-      const fresh = await refreshSongs(userId, { preferLatest: true });
-      if (fresh.length > 0) await play(fresh[fresh.length - 1]);
-    } finally { autoNextLock.current = false; }
-  };
-
-  const handleNext = async () => {
-    if (!current) return generate();
-    const index = songs.findIndex((item) => item.id === current.id);
-    if (index >= 0 && index < songs.length - 1) return play(songs[index + 1]);
-    await handleAutoNext("skip");
-  };
-
-  const createPlaylist = async () => {
-    if (!userId || !newPlaylistName.trim()) return;
-    await fetch(`${API_BASE}/playlists`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, name: newPlaylistName.trim() }) });
-    setNewPlaylistName("");
-    await loadPlaylists(userId);
-  };
-
-  const addSongToPlaylist = async (playlistId, song = current) => {
-    if (!song || !playlistId) return;
-    await fetch(`${API_BASE}/playlists/${playlistId}/add`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ song_id: song.id }) });
-  };
-
-  const testConnection = async () => {
-    setHealth({ loading: true, ok: null, message: "" });
-    try {
-      const res = await fetch(`${API_BASE}/tags`);
-      const data = await res.json();
-      setHealth({ loading: false, ok: res.ok, message: `API: ${API_BASE} | 标签数 ${data.items ? data.items.length : 0}` });
-    } catch (err) {
-      setHealth({ loading: false, ok: false, message: `API: ${API_BASE} | ${String(err)}` });
+      setUser(res.user);
+      if (mode === "register") {
+        setNeedInit(true);
+        setInitTagIds([]);
+        setStep(0);
+      } else {
+        setNeedInit(false);
+      }
+    } catch (e) {
+      Alert.alert("登录失败", e.message);
+    } finally {
+      setBusy(false);
     }
-  };
+  }
 
-  const logout = async () => {
-    if (sound) await sound.unloadAsync().catch(() => {});
-    setSession(null); setNeedsOnboarding(false); setSeedSelection(new Set()); setOnboardingStep(0);
-    setProfileTags([]); setSongs([]); setFavorites([]); setPlaylists([]); setPlaylistSongs([]); setCurrent(null);
-    setActiveTab("player"); setShowPlaylistPicker(false);
-  };
+  const currentType = TYPES[step];
+  const initOptions = allTags.filter((tag) => tag.type === currentType);
 
-  const progressResponder = useRef(PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderMove: (_, g) => {
-      if (!progressLayout || !sound) return;
-      const localX = Math.min(progressLayout.width, Math.max(0, g.moveX - progressLayout.pageX));
-      const percent = progressLayout.width > 0 ? localX / progressLayout.width : 0;
-      setPlayback((prev) => ({ ...prev, position: Math.floor(percent * (playback.duration || 0)) }));
-    },
-    onPanResponderRelease: async (_, g) => {
-      if (!progressLayout || !sound) return;
-      const localX = Math.min(progressLayout.width, Math.max(0, g.moveX - progressLayout.pageX));
-      const percent = progressLayout.width > 0 ? localX / progressLayout.width : 0;
-      await sound.setPositionAsync(Math.floor(percent * (playback.duration || 0)));
+  async function finishInit() {
+    if (!initTagIds.length) {
+      Alert.alert("还差一步", "至少选择一个初始标签。");
+      return;
     }
-  })).current;
+    try {
+      const data = await api("/init-tags", { method: "POST", body: JSON.stringify({ user_id: user.id, tag_ids: initTagIds }) });
+      setNeedInit(false);
+      const nextSongs = await refreshAll();
+      const seededIds = data?.seeded_song_ids || [];
+      if (seededIds.length) {
+        const index = nextSongs.findIndex((item) => seededIds.includes(Number(item.id)));
+        if (index >= 0) await playSongAt(index, true);
+      }
+    } catch (e) {
+      Alert.alert("初始化失败", e.message);
+    }
+  }
 
-  const renderAuth = () => (
-    <SafeAreaView style={styles.page}>
-      <ScrollView contentContainerStyle={styles.authShell} showsVerticalScrollIndicator={false}>
-        <View style={styles.authBlobA} /><View style={styles.authBlobB} />
-        <View style={styles.authCard}>
-          <Text style={styles.authEyebrow}>TPY MUSIC</Text>
-          <Text style={styles.authTitle}>先登录，再把你的音乐世界接回来</Text>
-          <Text style={styles.authSubtitle}>这一版先做轻量账户系统：我们用账户 ID 识别用户。登录后会直接拉回标签、收藏、歌单与历史歌曲。</Text>
-          <View style={styles.authModeRow}>
-            <TouchableOpacity style={[styles.authMode, authMode === "login" && styles.authModeActive]} onPress={() => setAuthMode("login")}><Text style={[styles.authModeText, authMode === "login" && styles.authModeTextActive]}>登录</Text></TouchableOpacity>
-            <TouchableOpacity style={[styles.authMode, authMode === "register" && styles.authModeActive]} onPress={() => setAuthMode("register")}><Text style={[styles.authModeText, authMode === "register" && styles.authModeTextActive]}>注册</Text></TouchableOpacity>
-          </View>
-          {authMode === "register" ? <TextInput value={accountName} onChangeText={setAccountName} placeholder="昵称" placeholderTextColor="#9D978E" style={styles.input} /> : null}
-          <TextInput value={accountId} onChangeText={setAccountId} placeholder="账户 ID，例如 demo-device" placeholderTextColor="#9D978E" autoCapitalize="none" style={styles.input} />
-          <TouchableOpacity style={styles.primary} onPress={submitAuth} disabled={authLoading}>
-            {authLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>{authMode === "login" ? "登录并恢复数据" : "注册并继续"}</Text>}
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
-  );
+  function toggleInit(id) {
+    setInitTagIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  }
 
-  const renderOnboarding = () => (
-    <SafeAreaView style={styles.page}>
-      <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-        <ScreenTitle eyebrow="首次进入" title="先按类别建立你的初始标签池" subtitle="每次只专注一个类别，选中的标签会直接成为你的起点，后续新标签再通过探索和自定义慢慢扩展。" />
-        <View style={styles.groupCard}>
-          <View style={styles.onboardingProgressHeader}>
-            <Text style={styles.groupTitle}>{currentOnboarding ? currentOnboarding[0] : "已完成"}</Text>
-            <Text style={styles.hintText}>第 {Math.min(onboardingStep + 1, onboardingGroups.length || 1)} / {Math.max(1, onboardingGroups.length)} 类</Text>
-          </View>
-          <View style={styles.onboardingProgressTrack}>
-            <View style={[styles.onboardingProgressFill, { width: String(((Math.min(onboardingStep + 1, onboardingGroups.length || 1)) / Math.max(1, onboardingGroups.length)) * 100) + "%" }]} />
-          </View>
-          {currentOnboarding ? <View style={styles.seedWrap}>
-            {currentOnboarding[1].map((item) => <SeedTag key={item.id} item={item} selected={seedSelection.has(item.id)} onPress={(tag) => {
-              const next = new Set(seedSelection);
-              if (next.has(tag.id)) next.delete(tag.id); else next.add(tag.id);
-              setSeedSelection(next);
-            }} />)}
-          </View> : <Text style={styles.placeholder}>标签类别已全部选择完成</Text>}
-          <View style={styles.rowGap}>
-            <TouchableOpacity style={[styles.secondarySoft, styles.flex]} onPress={() => setOnboardingStep((prev) => Math.max(0, prev - 1))}>
-              <Text style={styles.secondaryText}>上一步</Text>
-            </TouchableOpacity>
-            {onboardingStep < onboardingGroups.length - 1 ? <TouchableOpacity style={[styles.primary, styles.flex]} onPress={() => setOnboardingStep((prev) => Math.min(onboardingGroups.length - 1, prev + 1))}><Text style={styles.primaryText}>下一个类别</Text></TouchableOpacity> : <TouchableOpacity style={[styles.primary, styles.flex]} onPress={submitOnboarding}><Text style={styles.primaryText}>完成选择并进入 App</Text></TouchableOpacity>}
-          </View>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
-  );
-  const renderPlayer = () => (
-    <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow={`你好，${displayName}`} title="现在播放" subtitle="登录后会自动带出你的歌曲与偏好，不用再等到生成时才识别用户。" />
-      <View style={styles.playerCard}>
-                <View style={styles.coverWrap}><View style={styles.cover}><View style={styles.coverGlowA} /><View style={styles.coverGlowB} /><View style={styles.coverGlowC} /><Text style={styles.coverText}>TPY</Text></View></View>
-        <Text style={styles.playerTitle}>{current?.title || "暂无歌曲"}</Text>
-        <Text style={styles.playerSub} numberOfLines={2}>{songTagText(current)}</Text>
-        <View style={styles.progressWrap}>
-          <View ref={progressTrackRef} style={styles.progressTrack} onLayout={() => {
-            if (!progressTrackRef.current) return;
-            progressTrackRef.current.measure((x, y, w, h, pageX, pageY) => setProgressLayout({ width: w, pageX, pageY }));
-          }} {...progressResponder.panHandlers}>
-            <View style={[styles.progressFill, { width: `${Math.min(1, (playback.position || 0) / (playback.duration || 1)) * 100}%` }]} />
-          </View>
-          <View style={styles.progressTimeRow}><Text style={styles.progressText}>{formatTime(playback.position)}</Text><Text style={styles.progressText}>{formatTime(playback.duration)}</Text></View>
-        </View>
-        <View style={styles.controlsRow}>
-          <TouchableOpacity style={styles.controlBtn} onPress={async () => {
-            if (!current) return;
-            await feedback("like");
-            const list = await loadPlaylists(userId);
-            if (list.length === 0) { Alert.alert("还没有歌单", "先去收藏页创建一个歌单吧。"); setActiveTab("favorites"); return; }
-            setShowPlaylistPicker(true);
-          }}><Text style={styles.controlText}>收藏</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.playBtn} onPress={togglePlay}><Text style={styles.playText}>{current ? (playback.isPlaying ? "暂停" : "播放") : "生成"}</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.controlBtn} onPress={handleNext}><Text style={styles.controlText}>下一曲</Text></TouchableOpacity>
-        </View>
-      </View>
-      {showPlaylistPicker ? <View style={styles.groupCard}><Text style={styles.groupTitle}>收藏到哪个歌单？</Text>{playlists.map((p) => <TouchableOpacity key={p.id} style={styles.listItem} onPress={async () => { await addSongToPlaylist(p.id); if (selectedPlaylistId === p.id) await loadPlaylistSongs(p.id); setShowPlaylistPicker(false); }}><View><Text style={styles.listTitle}>{p.name}</Text><Text style={styles.listSub}>歌曲 {p.song_count || 0}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}<TouchableOpacity style={styles.secondarySoft} onPress={() => setShowPlaylistPicker(false)}><Text style={styles.secondaryText}>取消</Text></TouchableOpacity></View> : null}
-      <View style={styles.section}><TouchableOpacity style={styles.queueToggle} onPress={() => setShowQueue((prev) => !prev)}><View><Text style={styles.queueLabel}>播放队列</Text><Text style={styles.queueHint}>有下一首就切换，没有就自动生成</Text></View><Text style={styles.queueAction}>{showQueue ? "收起" : "展开"}</Text></TouchableOpacity>{showQueue ? songs.map((item) => <TouchableOpacity key={item.id} style={styles.listItem} onPress={() => play(item)}><View style={styles.flex}><Text style={styles.listTitle}>{item.title || "未命名歌曲"}</Text><Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>) : null}</View>
-    </ScrollView>
-  );
+  async function togglePlayback() {
+    if (!soundRef.current) {
+      if (!currentSong) {
+        await generateSong();
+      } else {
+        autoPlayRef.current = true;
+        await prepareSound();
+      }
+      return;
+    }
+    const status = await soundRef.current.getStatusAsync();
+    if (status.isLoaded && status.isPlaying) {
+      await soundRef.current.pauseAsync();
+      setPlaying(false);
+    } else {
+      await soundRef.current.playAsync();
+      setPlaying(true);
+    }
+  }
 
-  const renderFavorites = () => (
-    <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="你的收藏" title="歌单与喜欢的歌曲" subtitle="播放器负责听，这里负责沉淀内容。" />
-      <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>新建歌单</Text>
-        <TextInput value={newPlaylistName} onChangeText={setNewPlaylistName} placeholder="比如：深夜情绪 / 周末通勤" placeholderTextColor="#9D978E" style={styles.input} />
-        <TouchableOpacity style={styles.primary} onPress={createPlaylist}><Text style={styles.primaryText}>创建歌单</Text></TouchableOpacity>
-      </View>
-      <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>我的歌单</Text>
-        {playlists.length === 0 ? <Text style={styles.placeholder}>还没有歌单</Text> : playlists.map((p) => <TouchableOpacity key={p.id} style={styles.listItem} onPress={async () => { setSelectedPlaylistId(p.id); await loadPlaylistSongs(p.id); }}><View><Text style={styles.listTitle}>{p.name}</Text><Text style={styles.listSub}>歌曲 {p.song_count || 0}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}
-      </View>
-      {selectedPlaylistId ? <View style={styles.groupCard}><Text style={styles.groupTitle}>当前歌单内容</Text>{playlistSongs.length === 0 ? <Text style={styles.placeholder}>这个歌单还没有歌曲</Text> : playlistSongs.map((song) => <TouchableOpacity key={song.id} style={styles.listItem} onPress={() => play(song)}><View style={styles.flex}><Text style={styles.listTitle}>{song.title || "未命名歌曲"}</Text><Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}</View> : null}
-      <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>收藏记录</Text>
-        {favorites.length === 0 ? <Text style={styles.placeholder}>还没有收藏歌曲</Text> : favorites.map((song) => <TouchableOpacity key={`${song.id}-${song.created_at || "fav"}`} style={styles.listItem} onPress={() => play(song)}><View style={styles.flex}><Text style={styles.listTitle}>{song.title || "未命名歌曲"}</Text><Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}
-      </View>
-    </ScrollView>
-  );
+  async function generateSong() {
+    if (!user?.id || generating) return;
+    setGenerating(true);
+    setGenerationStatus("正在匹配库存和生成任务...");
+    try {
+      const data = await api("/generate", { method: "POST", body: JSON.stringify({ user_id: user.id, instrumental: true }) });
+      if (data.reused) {
+        setNotice("这次优先复用了库存歌曲。");
+        setGenerating(false);
+        setGenerationStatus("已复用库存歌曲");
+        const nextSongs = await refreshAll();
+        if (nextSongs.length) await playSongAt(nextSongs.length - 1, true);
+        return;
+      }
+      if (data.existing && data.job_id) {
+        setNotice("已有生成任务正在处理中，我们继续等待这一首。");
+        startJobPolling(data.job_id);
+        return;
+      }
+      if (data.job_id) {
+        setNotice("已经提交新的生成任务。");
+        startJobPolling(data.job_id);
+        return;
+      }
+      setGenerating(false);
+      setGenerationStatus("");
+    } catch (e) {
+      setGenerating(false);
+      setGenerationStatus("");
+      Alert.alert("生成失败", e.message);
+    }
+  }
 
-  const renderGalaxy = () => (
-    <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="标签画像" title="把偏好养成一片真正会呼吸的星系" subtitle="大标签可拖动到顶部功能区，背景里的微光标签会围绕轨道缓慢运行，等待被再次探索。" />
-      <View style={styles.galaxyFrame} onLayout={(event) => setStageSize(event.nativeEvent.layout)}>
-        <View style={styles.galaxyAuraOne} /><View style={styles.galaxyAuraTwo} /><View style={styles.galaxyAuraThree} />
-        <View style={styles.zoneRow}>
-          <View style={[styles.zoneCard, styles.zoneDelete]}><Text style={styles.zoneMini}>删除</Text><Text style={styles.zoneText}>移出画像</Text></View>
-          <View style={[styles.zoneCard, styles.zoneWeaken]}><Text style={styles.zoneMini}>弱化</Text><Text style={styles.zoneText}>轻一点</Text></View>
-          <View style={[styles.zoneCard, styles.zoneBoost]}><Text style={styles.zoneMini}>增强</Text><Text style={styles.zoneText}>更靠近你</Text></View>
-        </View>
-        <View style={styles.orbitA} /><View style={styles.orbitB} /><View style={styles.orbitC} />
-        {galaxyNodes.length === 0 ? <View style={styles.emptyGalaxy}><Text style={styles.emptyGalaxyTitle}>还没有标签星球</Text><Text style={styles.emptyGalaxyText}>先在下方加入标签，或者重新进行首次标签选择。</Text></View> : <>
-          {galaxyNodes.filter((node) => node.compact).map((node) => <GalaxyDust key={"dust-" + node.tag.tag_id} node={node} />)}
-          {galaxyNodes.filter((node) => !node.compact).map((node) => <GalaxyNode key={node.tag.tag_id} node={node} onDrop={handleGalaxyDrop} />)}
-        </>}
-      </View>
-      <View style={styles.groupCard}>
-        <View style={styles.rowBetween}>
-          <Text style={styles.groupTitle}>当前画像权重</Text>
-          {activeProfileTags.length > COLLAPSED_WEIGHT_LIMIT ? <TouchableOpacity onPress={() => setShowAllWeights((prev) => !prev)}><Text style={styles.queueAction}>{showAllWeights ? "收起" : "查看更多"}</Text></TouchableOpacity> : null}
-        </View>
-        {activeProfileTags.length === 0 ? <Text style={styles.placeholder}>暂无画像标签</Text> : visibleWeightTags.map((tag) => <View key={tag.tag_id} style={styles.weightRow}><Text style={styles.weightTitle}>{tag.name}</Text><View style={styles.weightTrack}><View style={[styles.weightFill, { width: String(Math.max(10, Number(tag.weight || 0) * 100)) + "%" }]} /></View></View>)}
-      </View>
-      <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>新增标签</Text>
-        <TextInput value={newTagName} onChangeText={setNewTagName} placeholder="标签名称" placeholderTextColor="#9D978E" style={styles.input} />
-        {existingTagMatch ? <Text style={styles.hintText}>已识别到现有标签分类：{existingTagMatch.type}，会直接加入你的画像。</Text> : <Text style={styles.hintText}>如果这是一个全新的标签，提交后会在下方选择类别。</Text>}
-        <TouchableOpacity style={styles.primary} onPress={submitUserTag}><Text style={styles.primaryText}>加入我的画像</Text></TouchableOpacity>
-        {showCategoryPicker ? <View style={styles.categoryPickerCard}><Text style={styles.categoryPickerTitle}>给“{pendingTagName}”选择一个类别</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryPickerRow}>{CATEGORY_ORDER.map((type) => <TouchableOpacity key={type} style={[styles.categoryChip, selectedCategory === type && styles.categoryChipActive]} onPress={() => setSelectedCategory(type)}><Text style={[styles.categoryChipText, selectedCategory === type && styles.categoryChipTextActive]}>{type}</Text></TouchableOpacity>)}</ScrollView><View style={styles.rowGap}><TouchableOpacity style={[styles.secondarySoft, styles.flex]} onPress={() => { setShowCategoryPicker(false); setPendingTagName(""); }}><Text style={styles.secondaryText}>取消</Text></TouchableOpacity><TouchableOpacity style={[styles.primary, styles.flex]} onPress={confirmCustomTagType}><Text style={styles.primaryText}>确认分类</Text></TouchableOpacity></View></View> : null}
-        {tagMessage ? <Text style={styles.hintText}>{tagMessage}</Text> : null}
-      </View>
-    </ScrollView>
-  );  const renderSettings = () => (
-    <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="账户中心" title="设置与连接状态" subtitle="这是一版简单账户系统，先保证用户能快速回到自己的数据。" />
-      <View style={styles.groupCard}><Text style={styles.groupTitle}>当前账户</Text><View style={styles.accountCard}><Text style={styles.accountName}>{displayName}</Text><Text style={styles.accountMeta}>账户 ID：{session?.deviceId}</Text><Text style={styles.accountMeta}>用户 ID：{session?.userId}</Text></View></View>
-      <View style={styles.groupCard}><Text style={styles.groupTitle}>接口状态</Text><TouchableOpacity style={styles.secondarySoft} onPress={testConnection}><Text style={styles.secondaryText}>{health.loading ? "测试中..." : "测试 API 连接"}</Text></TouchableOpacity>{health.message ? <Text style={health.ok ? styles.okText : styles.errorText}>{health.message}</Text> : null}</View>
-      <View style={styles.groupCard}><Text style={styles.groupTitle}>账户操作</Text><TouchableOpacity style={styles.dangerButton} onPress={logout}><Text style={styles.dangerText}>退出当前账户</Text></TouchableOpacity></View>
-    </ScrollView>
-  );
+  async function handleFeedback(action, options = {}) {
+    if (!user?.id || !currentSong?.id) return;
+    const feedbackKey = `${currentSong.id}:${action}`;
+    if (feedbackRef.current.inFlight || feedbackRef.current.key === feedbackKey) return;
+    feedbackRef.current.inFlight = true;
+    feedbackRef.current.key = feedbackKey;
+    try {
+      await api("/feedback", {
+        method: "POST",
+        body: JSON.stringify({ user_id: user.id, song_id: currentSong.id, action, played_seconds: Math.floor(posMs / 1000) })
+      });
+      const nextSongs = await refreshAll();
+      if (action === "skip" || action === "complete") {
+        const nextIndex = currentIndex < nextSongs.length - 1 ? currentIndex + 1 : -1;
+        if (nextIndex >= 0) await playSongAt(nextIndex, true);
+        else await generateSong();
+      }
+    } catch (e) {
+      if (!options.silent) Alert.alert("操作失败", e.message);
+    } finally {
+      feedbackRef.current.inFlight = false;
+      setTimeout(() => {
+        if (feedbackRef.current.key === feedbackKey) feedbackRef.current.key = "";
+      }, 800);
+    }
+  }
 
-  if (!session) return renderAuth();
-  if (needsOnboarding) return renderOnboarding();
+  async function createPlaylist() {
+    if (!playlistName.trim()) return;
+    try {
+      await api("/playlists", { method: "POST", body: JSON.stringify({ user_id: user.id, name: playlistName.trim() }) });
+      setPlaylistName("");
+      await refreshAll();
+    } catch (e) {
+      Alert.alert("创建歌单失败", e.message);
+    }
+  }
+
+  async function addToPlaylist(playlistId, songId) {
+    try {
+      await api(`/playlists/${playlistId}/add`, { method: "POST", body: JSON.stringify({ song_id: songId }) });
+      Alert.alert("已加入歌单", "这首歌已经加入对应歌单。");
+    } catch (e) {
+      Alert.alert("加入失败", e.message);
+    }
+  }
+
+  async function submitTag() {
+    const name = tagName.trim();
+    if (!name) return;
+    const existing = allTags.find((t) => String(t.name).toLowerCase() === name.toLowerCase());
+    if (existing) return saveTag(name, existing.type);
+    setPendingTag(name);
+    setSelectedType(TYPES[0]);
+    setAskType(true);
+  }
+
+  async function saveTag(name, type) {
+    try {
+      await api("/user-tags", { method: "POST", body: JSON.stringify({ user_id: user.id, name, type }) });
+      setTagName("");
+      setPendingTag("");
+      setAskType(false);
+      await refreshAll();
+    } catch (e) {
+      Alert.alert("添加标签失败", e.message);
+    }
+  }
+
+  async function updateTag(tagId, mode) {
+    const target = userTags.find((x) => x.tag_id === tagId);
+    if (!target) return;
+    try {
+      if (mode === "remove") {
+        await api("/user-tags/remove", { method: "POST", body: JSON.stringify({ user_id: user.id, tag_id: tagId }) });
+      } else {
+        const weight = mode === "up" ? clamp(Number(target.weight || 0.3) + 0.08, 0, 1) : clamp(Number(target.weight || 0.3) - 0.08, 0, 1);
+        await api("/user-tags/weight", { method: "POST", body: JSON.stringify({ user_id: user.id, tag_id: tagId, weight }) });
+      }
+      await refreshAll();
+    } catch (e) {
+      Alert.alert("更新标签失败", e.message);
+    }
+  }
+
+  const tagLine = (song) => {
+    const tags = normalizeTags(song?.tags);
+    return tags.length ? tags.slice(0, 4).join(" · ") : "标签整理中";
+  };
+
+  if (!user) {
+    return (
+      <AuthScreen
+        mode={mode}
+        setMode={setMode}
+        deviceId={deviceId}
+        setDeviceId={setDeviceId}
+        displayName={displayName}
+        setDisplayName={setDisplayName}
+        submitting={busy}
+        onSubmit={submitAuth}
+      />
+    );
+  }
+
+  if (needInit) {
+    return (
+      <OnboardingScreen
+        tags={allTags}
+        typeIndex={step}
+        selected={initTagIds}
+        toggleTag={toggleInit}
+        onBack={() => setStep((s) => Math.max(0, s - 1))}
+        onNext={() => setStep((s) => Math.min(TYPES.length - 1, s + 1))}
+        onFinish={finishInit}
+      />
+    );
+  }
 
   return (
-    <SafeAreaView style={styles.page}>
-      <View style={styles.content}>
-        {activeTab === "player" && renderPlayer()}
-        {activeTab === "favorites" && renderFavorites()}
-        {activeTab === "galaxy" && renderGalaxy()}
-        {activeTab === "settings" && renderSettings()}
+    <SafeAreaView style={styles.shell}>
+      <Backdrop tags={sortedUserTags} />
+      <View style={styles.overlay}>
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.headerTitle}>{tab === "player" ? "音乐" : tab === "favorites" ? "收藏" : tab === "profile" ? "画像" : "设置"}</Text>
+            <Text style={styles.headerSub}>{notice || "这版先把稳定性和主流程彻底拉回来。"}</Text>
+          </View>
+          {busy && <ActivityIndicator color="#1B1713" />}
+        </View>
+
+        <ScrollView contentContainerStyle={styles.content}>
+          {tab === "player" && (
+            <>
+              <Section title="正在播放" sub={currentSong ? "像一个真正的播放器一样稳定工作。" : "先生成一首歌，我们再往下听。"}>
+                <View style={styles.cover}>
+                  <Text style={styles.coverText}>TPY</Text>
+                </View>
+                <Text style={styles.songTitle}>{currentSong?.title || "暂无歌曲"}</Text>
+                <Text style={styles.songSub}>{currentSong ? tagLine(currentSong) : "请先生成音乐"}</Text>{generationStatus ? <Text style={styles.waitText}>{generationStatus}</Text> : null}
+                <View style={styles.bar}><View style={[styles.barFill, { width: durMs ? `${(posMs / durMs) * 100}%` : "0%" }]} /></View>
+                <View style={styles.barMeta}><Text style={styles.mono}>{fmt(posMs)}</Text><Text style={styles.mono}>{fmt(durMs)}</Text></View>
+                <View style={styles.row}>
+                  <TouchableOpacity style={styles.softBtn} onPress={() => handleFeedback("like")}><Text style={styles.softText}>收藏</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.darkBtn} onPress={togglePlayback}><Text style={styles.darkText}>{generating ? "等待中" : playing ? "暂停" : currentSong ? "播放" : "生成"}</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.softBtn} onPress={() => handleFeedback("skip")}><Text style={styles.softText}>下一曲</Text></TouchableOpacity>
+                </View>
+              </Section>
+              <Section title="播放列表" sub="如果后面还有歌，就直接接着放；没有就自动继续生成。">
+                {songs.length ? songs.map((song, index) => (
+                  <Pressable key={song.id} style={styles.listRow} onPress={() => playSongAt(index, true)}>
+                    <Text style={styles.listIndex}>{index + 1}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.listTitle}>{song.title || `歌曲 ${song.id}`}</Text>
+                      <Text style={styles.listSub}>{tagLine(song)}</Text>
+                    </View>
+                  </Pressable>
+                )) : <Text style={styles.empty}>还没有歌曲，先点上面的生成。</Text>}
+              </Section>
+            </>
+          )}
+
+          {tab === "favorites" && (
+            <>
+              <Section title="歌单" sub="先把收藏和歌单稳定跑起来。">
+                <View style={styles.rowGap}>
+                  <TextInput value={playlistName} onChangeText={setPlaylistName} placeholder="新歌单名称" placeholderTextColor="#8D877D" style={[styles.input, { flex: 1 }]} />
+                  <TouchableOpacity style={styles.darkBtnSmall} onPress={createPlaylist}><Text style={styles.darkText}>新建</Text></TouchableOpacity>
+                </View>
+                {playlists.length ? playlists.map((pl) => (
+                  <View key={pl.id} style={styles.pillRow}><Text style={styles.pillTitle}>{pl.name}</Text><Text style={styles.pillMeta}>{pl.song_count} 首</Text></View>
+                )) : <Text style={styles.empty}>还没有歌单。</Text>}
+              </Section>
+              <Section title="收藏歌曲" sub="每一首喜欢的歌都可以放进不同歌单。">
+                {favorites.length ? favorites.map((song) => (
+                  <View key={`${song.id}-${song.created_at}`} style={styles.songCard}>
+                    <Text style={styles.songCardTitle}>{song.title || `歌曲 ${song.id}`}</Text>
+                    <Text style={styles.songCardSub}>{tagLine(song)}</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagsRow}>
+                      {playlists.map((pl) => (
+                        <TouchableOpacity key={`${song.id}-${pl.id}`} style={styles.tagChip} onPress={() => addToPlaylist(pl.id, song.id)}><Text style={styles.tagChipText}>加入 {pl.name}</Text></TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )) : <Text style={styles.empty}>你还没有收藏歌曲。</Text>}
+              </Section>
+            </>
+          )}
+
+          {tab === "profile" && (
+            <>
+              <Section title="标签画像" sub="这版先稳定展示和调整标签，不再保留旧的实验拖拽布局。">
+                <View style={styles.tagWrap}>
+                  {sortedUserTags.slice(0, 15).map((tag) => (
+                    <View key={tag.tag_id} style={[styles.tagCard, { backgroundColor: colorFor(tag.type) }]}> 
+                      <Text style={styles.tagType}>{tag.type}</Text>
+                      <Text style={styles.tagName}>{tag.name}</Text>
+                      <View style={styles.weightTrack}><View style={[styles.weightFill, { width: `${clamp(Number(tag.weight || 0.2), 0.1, 1) * 100}%` }]} /></View>
+                      <View style={styles.tagActions}>
+                        <TouchableOpacity onPress={() => updateTag(tag.tag_id, "down")}><Text style={styles.tagAction}>弱化</Text></TouchableOpacity>
+                        <TouchableOpacity onPress={() => updateTag(tag.tag_id, "up")}><Text style={styles.tagAction}>增强</Text></TouchableOpacity>
+                        <TouchableOpacity onPress={() => updateTag(tag.tag_id, "remove")}><Text style={styles.tagAction}>移除</Text></TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </Section>
+              <Section title="提交新标签" sub="如果后台已有这个标签，会直接按已有分类加入；没有时再选分类。">
+                <TextInput value={tagName} onChangeText={setTagName} placeholder="输入标签名称" placeholderTextColor="#8D877D" style={styles.input} />
+                <TouchableOpacity style={styles.darkBtnFull} onPress={submitTag}><Text style={styles.darkText}>加入画像</Text></TouchableOpacity>
+                {askType && (
+                  <View style={{ marginTop: 14 }}>
+                    <Text style={styles.askText}>没有找到现成标签，请给“{pendingTag}”选择类别</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagsRow}>
+                      {TYPES.map((type) => (
+                        <TouchableOpacity key={type} style={[styles.tagChip, selectedType === type && styles.tagChipActive]} onPress={() => setSelectedType(type)}><Text style={[styles.tagChipText, selectedType === type && styles.tagChipTextActive]}>{type}</Text></TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                    <TouchableOpacity style={styles.darkBtnFull} onPress={() => saveTag(pendingTag, selectedType)}><Text style={styles.darkText}>确认分类并加入</Text></TouchableOpacity>
+                  </View>
+                )}
+              </Section>
+            </>
+          )}
+
+          {tab === "settings" && (
+            <>
+              <Section title="当前账户" sub="这版先做成轻量账户系统，先把数据和流程跑顺。">
+                <View style={styles.infoRow}><Text style={styles.infoLabel}>用户 ID</Text><Text style={styles.infoValue}>{user?.id || "-"}</Text></View>
+                <View style={styles.infoRow}><Text style={styles.infoLabel}>设备标识</Text><Text style={styles.infoValue}>{user?.device_id || "-"}</Text></View>
+                <View style={styles.infoRow}><Text style={styles.infoLabel}>显示名称</Text><Text style={styles.infoValue}>{user?.display_name || "-"}</Text></View>
+              </Section>
+              <Section title="数据概览" sub="先给你一个轻量但稳定的总览。">
+                <View style={styles.stats}>
+                  <View style={styles.stat}><Text style={styles.statNum}>{songs.length}</Text><Text style={styles.statText}>播放列表</Text></View>
+                  <View style={styles.stat}><Text style={styles.statNum}>{favorites.length}</Text><Text style={styles.statText}>收藏歌曲</Text></View>
+                  <View style={styles.stat}><Text style={styles.statNum}>{sortedUserTags.length}</Text><Text style={styles.statText}>活跃标签</Text></View>
+                  <View style={styles.stat}><Text style={styles.statNum}>{playlists.length}</Text><Text style={styles.statText}>歌单数量</Text></View>
+                </View>
+              </Section>
+              <Section title="维护操作" sub="如果界面或数据有延迟，可以从这里刷新。">
+                <TouchableOpacity style={styles.softBtnFull} onPress={refreshAll}><Text style={styles.softText}>刷新全部数据</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.softBtnFull, { marginTop: 10 }]} onPress={() => { unload(); setUser(null); setSongs([]); setFavorites([]); setUserTags([]); setPlaylists([]); setTab("player"); }}><Text style={styles.softText}>退出当前账户</Text></TouchableOpacity>
+              </Section>
+            </>
+          )}
+        </ScrollView>
+
+        <View style={styles.tabBar}>
+          {TABS.map((item) => (
+            <TouchableOpacity key={item} style={[styles.tabItem, tab === item && styles.tabItemActive]} onPress={() => setTab(item)}>
+              <Text style={[styles.tabText, tab === item && styles.tabTextActive]}>{item === "player" ? "播放" : item === "favorites" ? "收藏" : item === "profile" ? "画像" : "设置"}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
-      <View style={styles.tabBarShell}><View style={styles.tabBar}>{TABS.map((tab) => <TouchableOpacity key={tab.key} style={styles.tabItem} onPress={() => setActiveTab(tab.key)}><Text style={[styles.tabIcon, activeTab === tab.key && styles.tabIconActive]}>{tab.icon}</Text><Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>{tab.label}</Text></TouchableOpacity>)}</View></View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: "#F6F3EC" },
-  content: { flex: 1 },
-  screenPadding: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 120 },
-  titleBlock: { marginBottom: 18 }, eyebrow: { fontSize: 11, fontWeight: "800", color: "#7A746B", letterSpacing: 1.1, textTransform: "uppercase", marginBottom: 8 }, title: { fontSize: 34, fontWeight: "800", color: "#181613", letterSpacing: -0.9 }, subtitle: { fontSize: 15, color: "#756F66", lineHeight: 22, marginTop: 8 },
-  authShell: { flexGrow: 1, justifyContent: "center", padding: 20 }, authBlobA: { position: "absolute", width: 280, height: 280, borderRadius: 999, backgroundColor: "rgba(105,147,255,0.18)", top: 80, right: -80 }, authBlobB: { position: "absolute", width: 220, height: 220, borderRadius: 999, backgroundColor: "rgba(243,147,110,0.18)", bottom: 90, left: -50 },
-  authCard: { backgroundColor: "rgba(255,255,255,0.82)", borderRadius: 30, padding: 22, shadowColor: "#4D4336", shadowOpacity: 0.14, shadowOffset: { width: 0, height: 18 }, shadowRadius: 28, elevation: 10 }, authEyebrow: { fontSize: 12, fontWeight: "800", color: "#7A746B", letterSpacing: 1.8, marginBottom: 12 }, authTitle: { fontSize: 31, fontWeight: "800", color: "#181613", lineHeight: 38, letterSpacing: -0.9 }, authSubtitle: { fontSize: 15, color: "#756F66", lineHeight: 22, marginTop: 10, marginBottom: 16 },
-  authModeRow: { flexDirection: "row", backgroundColor: "#ECE6DD", borderRadius: 18, padding: 4, marginBottom: 14 }, authMode: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 14 }, authModeActive: { backgroundColor: "#FFFFFF" }, authModeText: { color: "#8B8378", fontWeight: "700" }, authModeTextActive: { color: "#181613" },
-  input: { backgroundColor: "#FFFDFC", borderRadius: 18, paddingHorizontal: 16, paddingVertical: 15, marginBottom: 10, color: "#181613", shadowColor: "#D9D1C6", shadowOpacity: 0.08, shadowOffset: { width: 0, height: 8 }, shadowRadius: 18, elevation: 2 },
-  primary: { backgroundColor: "#111217", borderRadius: 20, paddingVertical: 16, alignItems: "center", marginTop: 6, shadowColor: "#111", shadowOpacity: 0.18, shadowOffset: { width: 0, height: 12 }, shadowRadius: 20, elevation: 8 }, primaryText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
-  secondarySoft: { backgroundColor: "rgba(255,255,255,0.8)", borderRadius: 18, paddingVertical: 14, alignItems: "center" }, secondaryText: { color: "#181613", fontSize: 14, fontWeight: "700" },
-  groupCard: { backgroundColor: "rgba(255,252,247,0.94)", borderRadius: 28, padding: 18, marginBottom: 18, shadowColor: "#D8D1C6", shadowOpacity: 0.08, shadowOffset: { width: 0, height: 10 }, shadowRadius: 20, elevation: 3 }, groupTitle: { color: "#181613", fontSize: 21, fontWeight: "800", marginBottom: 12, letterSpacing: -0.4 },
-  seedWrap: { flexDirection: "row", flexWrap: "wrap" }, seedTag: { backgroundColor: "#F7F3ED", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 12, marginRight: 8, marginBottom: 8, minWidth: 110 }, seedTagSelected: { backgroundColor: "#111217" }, seedType: { color: "#8A8175", fontSize: 11, fontWeight: "700", marginBottom: 5 }, seedTypeSelected: { color: "rgba(255,255,255,0.7)" }, seedName: { color: "#181613", fontSize: 14, fontWeight: "800" }, seedNameSelected: { color: "#FFFFFF" },
-  playerCard: { backgroundColor: "rgba(255,252,247,0.96)", borderRadius: 32, padding: 22, marginBottom: 18, shadowColor: "#D8D1C6", shadowOpacity: 0.08, shadowOffset: { width: 0, height: 12 }, shadowRadius: 18, elevation: 3 }, 
-  coverWrap: { alignItems: "center", marginBottom: 18 }, cover: { width: 228, height: 228, borderRadius: 34, alignItems: "center", justifyContent: "center", backgroundColor: "#18181C", overflow: "hidden" }, coverGlowA: { position: "absolute", width: 180, height: 180, borderRadius: 999, backgroundColor: "#4E67C8", top: -34, right: -20 }, coverGlowB: { position: "absolute", width: 140, height: 140, borderRadius: 999, backgroundColor: "#F19472", bottom: -18, left: -16 }, coverGlowC: { position: "absolute", width: 76, height: 76, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", top: 40, left: 42 }, coverText: { color: "#FFFFFF", fontSize: 34, fontWeight: "800", letterSpacing: 1.2 },
-  playerTitle: { color: "#181613", fontSize: 30, fontWeight: "800", textAlign: "center", letterSpacing: -0.8 }, playerSub: { color: "#6F6A62", fontSize: 15, lineHeight: 22, textAlign: "center", marginTop: 8 }, progressWrap: { marginTop: 22 }, progressTrack: { height: 10, borderRadius: 999, backgroundColor: "#E9E3D9", overflow: "hidden" }, progressFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" }, progressTimeRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 }, progressText: { color: "#7B746A", fontSize: 12, fontVariant: ["tabular-nums"] },
-  controlsRow: { flexDirection: "row", gap: 10, marginTop: 22 }, controlBtn: { flex: 1, backgroundColor: "#FFFCF8", borderRadius: 18, paddingVertical: 15, alignItems: "center", shadowColor: "#D9D0C4", shadowOpacity: 0.06, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 2 }, controlText: { color: "#181613", fontSize: 15, fontWeight: "700" }, playBtn: { flex: 1, backgroundColor: "#111217", borderRadius: 18, paddingVertical: 15, alignItems: "center" }, playText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
-  section: { marginBottom: 18 }, queueToggle: { backgroundColor: "rgba(255,252,247,0.94)", borderRadius: 24, padding: 18, marginBottom: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", shadowColor: "#D8D1C6", shadowOpacity: 0.07, shadowOffset: { width: 0, height: 8 }, shadowRadius: 14, elevation: 2 }, queueLabel: { color: "#181613", fontSize: 18, fontWeight: "800" }, queueHint: { color: "#7A746B", fontSize: 13, marginTop: 4 }, queueAction: { color: "#6C675F", fontSize: 14, fontWeight: "700" },
-  listItem: { backgroundColor: "#FFFCF8", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", shadowColor: "#DDD5CA", shadowOpacity: 0.05, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 2 }, listTitle: { color: "#181613", fontSize: 15, fontWeight: "700" }, listSub: { color: "#766F67", fontSize: 13, marginTop: 4, lineHeight: 18 }, chevron: { color: "#B0A89C", fontSize: 20, marginLeft: 12 }, placeholder: { color: "#8C867E", fontSize: 14 },
-  galaxyFrame: { height: 430, borderRadius: 32, overflow: "hidden", backgroundColor: "#11131C", marginBottom: 18 }, galaxyAuraOne: { position: "absolute", width: 220, height: 220, borderRadius: 999, backgroundColor: "rgba(83,120,255,0.28)", top: 80, right: -40 }, galaxyAuraTwo: { position: "absolute", width: 170, height: 170, borderRadius: 999, backgroundColor: "rgba(247,141,112,0.22)", bottom: 28, left: -24 }, galaxyAuraThree: { position: "absolute", width: 130, height: 130, borderRadius: 999, backgroundColor: "rgba(141,222,177,0.18)", top: 160, left: 40 }, orbitA: { position: "absolute", width: 280, height: 280, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", top: 110, left: 48 }, orbitB: { position: "absolute", width: 180, height: 180, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)", top: 160, left: 110 }, orbitC: { position: "absolute", width: 360, height: 360, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.04)", top: 70, left: 8 },
-  zoneRow: { position: "absolute", top: 16, left: 14, right: 14, flexDirection: "row", gap: 10, zIndex: 2 }, zoneCard: { flex: 1, borderRadius: 18, paddingVertical: 12, paddingHorizontal: 10 }, zoneDelete: { backgroundColor: "rgba(104,28,28,0.84)" }, zoneWeaken: { backgroundColor: "rgba(37,58,86,0.86)" }, zoneBoost: { backgroundColor: "rgba(25,75,42,0.88)" }, zoneMini: { color: "rgba(255,255,255,0.72)", fontSize: 11, fontWeight: "700", letterSpacing: 1 }, zoneText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800", marginTop: 4 },
-  emptyGalaxy: { position: "absolute", left: 26, right: 26, bottom: 42, backgroundColor: "rgba(255,255,255,0.08)", padding: 18, borderRadius: 22 }, emptyGalaxyTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" }, emptyGalaxyText: { color: "rgba(255,255,255,0.72)", fontSize: 13, lineHeight: 20, marginTop: 6 },
-  dustOrbit: { position: "absolute", alignItems: "center" }, dustParticle: { position: "absolute", top: 0, left: "50%", marginLeft: -4, shadowOpacity: 0.35, shadowOffset: { width: 0, height: 0 }, shadowRadius: 8, opacity: 0.72 },
-  node: { position: "absolute", justifyContent: "center", alignItems: "center", shadowOpacity: 0.24, shadowOffset: { width: 0, height: 10 }, shadowRadius: 16, elevation: 8, padding: 10 }, nodeGlow: { position: "absolute", width: 40, height: 40, borderRadius: 999, top: 8, right: 8, opacity: 0.28 }, nodeName: { fontSize: 13, fontWeight: "800", lineHeight: 17, textAlign: "center", paddingHorizontal: 8 }, categoryPickerCard: { marginTop: 14, backgroundColor: "#F7F2EA", borderRadius: 22, padding: 14 }, categoryPickerTitle: { color: "#181613", fontSize: 15, fontWeight: "700", marginBottom: 12 }, categoryPickerRow: { paddingRight: 8 }, categoryChip: { backgroundColor: "#ECE4D9", borderRadius: 999, paddingHorizontal: 16, paddingVertical: 12, marginRight: 10 }, categoryChipActive: { backgroundColor: "#111217" }, categoryChipText: { color: "#6E675F", fontSize: 14, fontWeight: "700" }, categoryChipTextActive: { color: "#FFFFFF" },
-  onboardingProgressHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, onboardingProgressTrack: { height: 10, borderRadius: 999, backgroundColor: "#ECE4D9", overflow: "hidden", marginBottom: 16 }, onboardingProgressFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" },
-  rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }, weightRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 }, weightTitle: { color: "#181613", fontSize: 14, fontWeight: "700", width: 88 }, weightSub: { color: "#8A8175", fontSize: 12, marginTop: 3 }, weightTrack: { flex: 1, height: 10, borderRadius: 999, backgroundColor: "#ECE4D9", overflow: "hidden", marginLeft: 12 }, weightFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" },
-  accountCard: { backgroundColor: "#F7F3ED", borderRadius: 22, padding: 16 }, accountName: { color: "#181613", fontSize: 22, fontWeight: "800", marginBottom: 8 }, accountMeta: { color: "#70685E", fontSize: 14, marginTop: 3 },
-  dangerButton: { backgroundColor: "#5A1A1A", borderRadius: 18, paddingVertical: 15, alignItems: "center" }, dangerText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" }, hintText: { color: "#7A746B", fontSize: 13, lineHeight: 20, marginTop: 10 }, okText: { color: "#1D8A4A", marginTop: 10, fontSize: 13 }, errorText: { color: "#B23B2C", marginTop: 10, fontSize: 13 },
-  tabBarShell: { position: "absolute", left: 0, right: 0, bottom: 12, alignItems: "center" }, tabBar: { flexDirection: "row", width: "92%", backgroundColor: "rgba(255,255,255,0.9)", borderRadius: 28, paddingHorizontal: 10, paddingVertical: 12, shadowColor: "#000", shadowOpacity: 0.1, shadowOffset: { width: 0, height: 12 }, shadowRadius: 26, elevation: 10 }, tabItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 6 }, tabIcon: { fontSize: 16, color: "#938E85", marginBottom: 4 }, tabIconActive: { color: "#171512" }, tabText: { fontSize: 11, color: "#938E85", fontWeight: "600" }, tabTextActive: { color: "#171512", fontWeight: "800" },
-  rowGap: { flexDirection: "row", gap: 10 }, flex: { flex: 1 }
+  shell: { flex: 1, backgroundColor: "#EEE5D8" },
+  overlay: { flex: 1, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10 },
+  bgBase: { ...StyleSheet.absoluteFillObject, backgroundColor: "#ECE2D4" },
+  blob: { position: "absolute", transform: [{ scale: 1.15 }], opacity: 0.24 },
+  bgVeil: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(255,248,241,0.52)" },
+  authShell: { flex: 1, backgroundColor: "#EEE5D8", padding: 20, justifyContent: "center" },
+  authCard: { backgroundColor: "rgba(255,255,255,0.72)", borderRadius: 28, padding: 24, gap: 14 },
+  heroEyebrow: { fontSize: 12, letterSpacing: 3, color: "#756C61", fontWeight: "700" },
+  heroTitle: { fontSize: 34, lineHeight: 40, color: "#1B1713", fontWeight: "800" },
+  heroSubtitle: { fontSize: 15, lineHeight: 22, color: "#5B554D" },
+  segmentRow: { flexDirection: "row", backgroundColor: "rgba(255,255,255,0.58)", borderRadius: 18, padding: 4, gap: 4 },
+  segmentButton: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 14 },
+  segmentButtonActive: { backgroundColor: "#1C1916" },
+  segmentText: { color: "#5A534B", fontWeight: "700" },
+  segmentTextActive: { color: "#FFF" },
+  input: { backgroundColor: "rgba(255,255,255,0.8)", borderRadius: 18, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16, color: "#221E1A" },
+  progressTrack: { height: 10, borderRadius: 999, backgroundColor: "rgba(28,25,22,0.1)", overflow: "hidden" },
+  progressFill: { height: "100%", backgroundColor: "#1C1916" },
+  progressText: { color: "#6A645C", fontSize: 13, fontWeight: "600" },
+  selectionList: { maxHeight: 280 },
+  selectionListContent: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  choiceChip: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.8)" },
+  choiceChipActive: { backgroundColor: "#1C1916" },
+  choiceChipText: { color: "#4F483F", fontWeight: "700" },
+  choiceChipTextActive: { color: "#FFF" },
+  onboardingActions: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
+  ghostButton: { paddingVertical: 14, paddingHorizontal: 18, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.65)" },
+  ghostButtonText: { color: "#4D473F", fontWeight: "700" },
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 4, paddingBottom: 10 },
+  headerTitle: { fontSize: 34, fontWeight: "800", color: "#1B1713" },
+  headerSub: { marginTop: 4, color: "#5B554D", fontSize: 14, lineHeight: 20, maxWidth: 280 },
+  content: { paddingBottom: 110 },
+  card: { backgroundColor: "rgba(255,255,255,0.62)", borderRadius: 26, padding: 18, marginBottom: 16 },
+  cardTitle: { fontSize: 24, fontWeight: "800", color: "#1B1713" },
+  cardSub: { marginTop: 4, fontSize: 14, lineHeight: 20, color: "#6A645C" },
+  cover: { width: 240, height: 240, alignSelf: "center", borderRadius: 40, backgroundColor: "#232126", alignItems: "center", justifyContent: "center" },
+  coverText: { color: "#FFF", fontSize: 42, fontWeight: "800" },
+  songTitle: { marginTop: 14, textAlign: "center", fontSize: 34, lineHeight: 40, color: "#1B1713", fontWeight: "800" },
+  songSub: { textAlign: "center", color: "#5F5850", fontSize: 16, lineHeight: 24, marginTop: 6 },`r`n  waitText: { textAlign: "center", color: "#7B6D5A", fontSize: 13, marginTop: 8 },
+  bar: { height: 8, borderRadius: 999, backgroundColor: "rgba(28,25,22,0.10)", overflow: "hidden", marginTop: 14 },
+  barFill: { height: "100%", backgroundColor: "#1C1916" },
+  barMeta: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 },
+  mono: { color: "#6B655D", fontSize: 13 },
+  row: { flexDirection: "row", gap: 12, alignItems: "center", marginTop: 14 },
+  rowGap: { flexDirection: "row", gap: 10, alignItems: "center" },
+  softBtn: { minWidth: 92, backgroundColor: "rgba(255,255,255,0.75)", paddingVertical: 16, paddingHorizontal: 14, borderRadius: 22, alignItems: "center" },
+  softBtnFull: { backgroundColor: "rgba(255,255,255,0.75)", paddingVertical: 16, borderRadius: 18, alignItems: "center" },
+  softText: { color: "#1C1916", fontWeight: "800" },
+  darkBtn: { flex: 1, backgroundColor: "#1C1916", paddingVertical: 16, borderRadius: 22, alignItems: "center" },
+  darkBtnSmall: { backgroundColor: "#1C1916", paddingVertical: 14, paddingHorizontal: 16, borderRadius: 18, alignItems: "center" },
+  darkBtnFull: { backgroundColor: "#1C1916", paddingVertical: 16, borderRadius: 18, alignItems: "center", marginTop: 12 },
+  darkText: { color: "#FFF", fontWeight: "800" },
+  listRow: { flexDirection: "row", gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "rgba(28,25,22,0.06)" },
+  listIndex: { width: 28, color: "#514B44", fontWeight: "700", paddingTop: 2 },
+  listTitle: { color: "#1B1713", fontWeight: "700", fontSize: 16 },
+  listSub: { marginTop: 4, color: "#6B655D" },
+  empty: { color: "#6B655D", fontSize: 15, lineHeight: 22 },
+  pillRow: { backgroundColor: "rgba(255,255,255,0.66)", borderRadius: 18, paddingHorizontal: 16, paddingVertical: 14, marginBottom: 10, flexDirection: "row", justifyContent: "space-between" },
+  pillTitle: { color: "#1D1814", fontWeight: "700" },
+  pillMeta: { color: "#6B655D" },
+  songCard: { backgroundColor: "rgba(255,255,255,0.58)", borderRadius: 22, padding: 16, marginBottom: 12 },
+  songCardTitle: { color: "#1B1713", fontWeight: "800", fontSize: 18 },
+  songCardSub: { color: "#6A645C", lineHeight: 20, marginTop: 6 },
+  tagsRow: { gap: 10, paddingTop: 10 },
+  tagChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.78)" },
+  tagChipActive: { backgroundColor: "#1C1916" },
+  tagChipText: { color: "#524B44", fontWeight: "700" },
+  tagChipTextActive: { color: "#FFF" },
+  tagWrap: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  tagCard: { borderRadius: 22, padding: 14, minHeight: 108, width: "47%" },
+  tagType: { color: "rgba(255,255,255,0.76)", fontSize: 12, fontWeight: "700" },
+  tagName: { color: "#FFF", fontSize: 24, fontWeight: "800", marginTop: 8 },
+  weightTrack: { marginTop: 12, height: 8, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.22)", overflow: "hidden" },
+  weightFill: { height: "100%", borderRadius: 999, backgroundColor: "rgba(255,255,255,0.9)" },
+  tagActions: { flexDirection: "row", justifyContent: "space-between", marginTop: 12 },
+  tagAction: { color: "#FFF", fontWeight: "700" },
+  askText: { color: "#4E473F", lineHeight: 20, fontWeight: "600" },
+  infoRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "rgba(28,25,22,0.06)" },
+  infoLabel: { color: "#6A645C", fontWeight: "700" },
+  infoValue: { color: "#1B1713", fontWeight: "700", maxWidth: 220, textAlign: "right" },
+  stats: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  stat: { width: "48%", backgroundColor: "rgba(255,255,255,0.58)", borderRadius: 22, paddingVertical: 18, paddingHorizontal: 14 },
+  statNum: { fontSize: 28, color: "#1B1713", fontWeight: "800" },
+  statText: { marginTop: 6, color: "#6A645C" },
+  tabBar: { position: "absolute", left: 12, right: 12, bottom: 10, backgroundColor: "rgba(255,255,255,0.84)", borderRadius: 28, padding: 8, flexDirection: "row", gap: 8 },
+  tabItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 14, borderRadius: 22 },
+  tabItemActive: { backgroundColor: "#1C1916" },
+  tabText: { color: "#5A534B", fontWeight: "800" },
+  tabTextActive: { color: "#FFF" }
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

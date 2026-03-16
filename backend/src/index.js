@@ -21,7 +21,8 @@ const COEF_COMPLETE = 0.05;
 const NORMALIZE_EVERY = 10;
 const MAX_TAGS_TOTAL = 6;
 const MAX_PER_TYPE = 2;
-const REUSE_SIMILARITY_MIN = Number(process.env.REUSE_SIMILARITY_MIN || 0.6);
+const REUSE_SIMILARITY_MIN = Number(process.env.REUSE_SIMILARITY_MIN || 0.45);
+const INIT_REUSE_SIMILARITY_MIN = Number(process.env.INIT_REUSE_SIMILARITY_MIN || 0.3);
 
 const PROMPT_GUIDE = {
   "\u60c5\u7eea": "Describe the emotional tone and energy arc.",
@@ -96,6 +97,33 @@ app.delete("/admin/tags/:id", async (request, reply) => {
   return { ok: true };
 });
 
+app.get("/admin/tag-blacklist", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const { rows } = await query("SELECT * FROM tag_blacklist ORDER BY created_at DESC, id DESC");
+  return { items: rows };
+});
+
+app.post("/admin/tag-blacklist", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const { word, reason } = request.body || {};
+  const cleanWord = String(word || "").trim();
+  if (!cleanWord) {
+    reply.code(400).send({ error: "word required" });
+    return;
+  }
+  const { rows } = await query(
+    "INSERT INTO tag_blacklist (word, reason) VALUES ($1, $2) ON CONFLICT (word) DO UPDATE SET reason = COALESCE(EXCLUDED.reason, tag_blacklist.reason) RETURNING *",
+    [cleanWord, reason ? String(reason).trim() : null]
+  );
+  return { item: rows[0] };
+});
+
+app.delete("/admin/tag-blacklist/:id", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const { id } = request.params;
+  await query("DELETE FROM tag_blacklist WHERE id = $1", [Number(id)]);
+  return { ok: true };
+});
 app.get("/admin/users", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
   const { rows } = await query("SELECT * FROM users ORDER BY created_at DESC");
@@ -275,37 +303,71 @@ app.post("/init-tags", async (request, reply) => {
     return;
   }
 
+  const allowedTagIds = [];
+  for (const tagId of tag_ids) {
+    const tagLookup = await query("SELECT id, name FROM tags WHERE id = $1 LIMIT 1", [Number(tagId)]);
+    const tag = tagLookup.rows[0];
+    if (!tag) continue;
+    if (await isBlockedTag(tag.name)) continue;
+    allowedTagIds.push(Number(tag.id));
+  }
+
+  if (allowedTagIds.length === 0) {
+    reply.code(400).send({ error: "all selected tags are blocked" });
+    return;
+  }
+
   await ensureUserTagWeights(user_id);
 
   await query(
     "UPDATE user_tags SET weight = $1, initial_weight = $1, update_count = 0, last_updated = NOW() WHERE user_id = $2 AND tag_id = ANY($3)",
-    [SELECTED_TAG_WEIGHT, user_id, tag_ids]
+    [SELECTED_TAG_WEIGHT, user_id, allowedTagIds]
   );
 
   await normalizeUserWeights(user_id);
-  return { ok: true };
+
+  const seededSongs = await findReusableSongs(user_id, allowedTagIds, 4, INIT_REUSE_SIMILARITY_MIN);
+  for (const song of seededSongs) {
+    await queueSongForUser(user_id, song.id, null, 'seeded');
+    await query("UPDATE songs SET reuse_count = reuse_count + 1 WHERE id = $1", [Number(song.id)]);
+  }
+
+  return {
+    ok: true,
+    seeded_song_ids: seededSongs.map((song) => Number(song.id))
+  };
 });
 
 app.post("/user-tags", async (request, reply) => {
   const { user_id, name, type } = request.body || {};
-  if (!user_id || !name || !type) {
-    reply.code(400).send({ error: "user_id, name, type required" });
+  if (!user_id || !name) {
+    reply.code(400).send({ error: "user_id and name required" });
     return;
   }
   const cleanName = String(name).trim();
-  const cleanType = String(type).trim();
-  if (!cleanName || !cleanType) {
-    reply.code(400).send({ error: "name and type required" });
+  const cleanType = type ? String(type).trim() : "";
+  if (!cleanName) {
+    reply.code(400).send({ error: "name required" });
+    return;
+  }
+  if (await isBlockedTag(cleanName)) {
+    reply.code(400).send({ error: "tag blocked by blacklist" });
     return;
   }
 
-  const { rows: existing } = await query(
-    "SELECT id, name, type FROM tags WHERE LOWER(name) = LOWER($1) AND LOWER(type) = LOWER($2) LIMIT 1",
-    [cleanName, cleanType]
+  let existing = await query(
+    cleanType
+      ? "SELECT id, name, type FROM tags WHERE LOWER(name) = LOWER($1) AND LOWER(type) = LOWER($2) LIMIT 1"
+      : "SELECT id, name, type FROM tags WHERE LOWER(name) = LOWER($1) ORDER BY is_system DESC, sort_order ASC, id ASC LIMIT 1",
+    cleanType ? [cleanName, cleanType] : [cleanName]
   );
 
-  let tag = existing[0];
+  let tag = existing.rows[0];
   if (!tag) {
+    if (!cleanType) {
+      reply.code(400).send({ error: "type required for new tag" });
+      return;
+    }
     const created = await query(
       "INSERT INTO tags (name, type, is_active, is_system) VALUES ($1, $2, true, false) RETURNING id, name, type",
       [cleanName, cleanType]
@@ -682,6 +744,23 @@ async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
   }
 }
 
+async function getGenerationJobDetail(jobId) {
+  const { rows } = await query(
+    "SELECT g.id, g.user_id, g.prompt, g.base_prompt, g.title_hint, g.cover_hint, g.status, g.error, g.item_ids, g.created_at, s.id AS song_id, s.title, s.cover_url, sa.audio_url, q.source, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM generation_jobs g LEFT JOIN user_song_queue q ON q.generation_job_id = g.id LEFT JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE g.id = $1 GROUP BY g.id, s.id, sa.audio_url, q.source ORDER BY s.id DESC NULLS LAST LIMIT 1",
+    [Number(jobId)]
+  );
+  return rows[0] || null;
+}
+
+async function isBlockedTag(name) {
+  const cleanName = String(name || "").trim();
+  if (!cleanName) return false;
+  const { rows } = await query(
+    "SELECT id FROM tag_blacklist WHERE LOWER(word) = LOWER($1) LIMIT 1",
+    [cleanName]
+  );
+  return rows.length > 0;
+}
 async function getUserExcludedSongIds(userId) {
   const { rows } = await query(
     "SELECT DISTINCT song_id FROM (SELECT song_id, created_at FROM user_song_queue WHERE user_id = $1 ORDER BY created_at DESC LIMIT 12) recent UNION SELECT DISTINCT song_id FROM feedback WHERE user_id = $1 AND action = 'skip' ORDER BY song_id",
@@ -697,23 +776,28 @@ async function queueSongForUser(userId, songId, jobId, source) {
   );
 }
 
-async function findReusableSong(userId, tagIds) {
-  if (!Array.isArray(tagIds) || tagIds.length === 0) return null;
+async function findReusableSongs(userId, tagIds, limit = 1, threshold = REUSE_SIMILARITY_MIN) {
+  if (!Array.isArray(tagIds) || tagIds.length === 0) return [];
   const excludedSongIds = await getUserExcludedSongIds(userId);
   const { rows } = await query(
-    "SELECT s.id, s.title, s.cover_url, s.prompt, s.model, s.duration, s.style, s.reuse_count, COUNT(DISTINCT st.tag_id)::int AS song_tag_count, COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::int AS matched_tag_count, (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) AS similarity FROM songs s JOIN song_assets sa ON sa.song_id = s.id AND sa.audio_url IS NOT NULL LEFT JOIN song_tags st ON st.song_id = s.id WHERE s.source_song_id IS NULL AND COALESCE(s.is_available, true) = true AND ($4::int[] = '{}'::int[] OR NOT (s.id = ANY($4::int[]))) GROUP BY s.id HAVING COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END) > 0 AND (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) >= $3 ORDER BY similarity DESC, s.reuse_count DESC, s.created_at DESC LIMIT 1",
-    [tagIds, tagIds.length, REUSE_SIMILARITY_MIN, excludedSongIds]
+    "SELECT s.id, s.title, s.cover_url, s.prompt, s.model, s.duration, s.style, s.reuse_count, COUNT(DISTINCT st.tag_id)::int AS song_tag_count, COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::int AS matched_tag_count, (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) AS similarity FROM songs s JOIN song_assets sa ON sa.song_id = s.id AND sa.audio_url IS NOT NULL LEFT JOIN song_tags st ON st.song_id = s.id WHERE s.source_song_id IS NULL AND COALESCE(s.is_available, true) = true AND ($4::int[] = '{}'::int[] OR NOT (s.id = ANY($4::int[]))) GROUP BY s.id HAVING COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END) > 0 AND (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) >= $3 ORDER BY similarity DESC, matched_tag_count DESC, s.reuse_count DESC, s.created_at DESC LIMIT $5",
+    [tagIds, tagIds.length, threshold, excludedSongIds, Number(limit)]
   );
-  if (rows.length === 0) return null;
-
-  const asset = await query(
-    "SELECT item_id, audio_url FROM song_assets WHERE song_id = $1 ORDER BY id DESC LIMIT 1",
-    [rows[0].id]
-  );
-  if (asset.rows.length === 0) return null;
-  return { ...rows[0], asset: asset.rows[0] };
+  const result = [];
+  for (const row of rows) {
+    const asset = await query(
+      "SELECT item_id, audio_url FROM song_assets WHERE song_id = $1 ORDER BY id DESC LIMIT 1",
+      [row.id]
+    );
+    if (asset.rows[0]) result.push({ ...row, asset: asset.rows[0] });
+  }
+  return result;
 }
 
+async function findReusableSong(userId, tagIds) {
+  const rows = await findReusableSongs(userId, tagIds, 1, REUSE_SIMILARITY_MIN);
+  return rows[0] || null;
+}
 async function reuseSongForUser(job, librarySong) {
   await queueSongForUser(job.user_id, librarySong.id, job.id, 'reused');
 
@@ -734,6 +818,31 @@ app.post("/generate", async (request, reply) => {
   if (!user_id) {
     reply.code(400).send({ error: "user_id required" });
     return;
+  }
+
+  const activeJobLookup = await query(
+    "SELECT id FROM generation_jobs WHERE user_id = $1 AND status IN ('pending', 'submitted') ORDER BY id DESC LIMIT 1",
+    [Number(user_id)]
+  );
+  if (activeJobLookup.rows[0]?.id) {
+    const activeJob = await getGenerationJobDetail(activeJobLookup.rows[0].id);
+    return {
+      job_id: Number(activeJobLookup.rows[0].id),
+      existing: true,
+      status: activeJob?.status || 'pending',
+      prompt: activeJob?.prompt || null,
+      base_prompt: activeJob?.base_prompt || null,
+      title_hint: activeJob?.title_hint || null,
+      cover_hint: activeJob?.cover_hint || null,
+      song_id: activeJob?.song_id || null,
+      song: activeJob?.song_id ? {
+        id: activeJob.song_id,
+        title: activeJob.title,
+        cover_url: activeJob.cover_url,
+        audio_url: activeJob.audio_url,
+        tags: activeJob.tags || []
+      } : null
+    };
   }
 
   const { prompt, tagIds, base_prompt, title_hint, cover_hint } = await buildPrompt(user_id);
@@ -758,7 +867,8 @@ app.post("/generate", async (request, reply) => {
       reused: true,
       song_id: songId,
       matched_song_id: reusableSong.id,
-      similarity: Number(reusableSong.similarity || 0)
+      similarity: Number(reusableSong.similarity || 0),
+      status: 'reused'
     };
   }
 
@@ -829,7 +939,38 @@ app.post("/generate", async (request, reply) => {
     [itemIds, job.id]
   );
 
-  return { job_id: job.id, item_ids: itemIds, prompt, base_prompt, title_hint, cover_hint, reused: false };
+  return { job_id: job.id, item_ids: itemIds, prompt, base_prompt, title_hint, cover_hint, reused: false, status: 'submitted' };
+});
+
+app.get("/generation-jobs/:id", async (request, reply) => {
+  const { id } = request.params;
+  const detail = await getGenerationJobDetail(id);
+  if (!detail) {
+    reply.code(404).send({ error: "generation job not found" });
+    return;
+  }
+  return {
+    item: {
+      id: detail.id,
+      user_id: detail.user_id,
+      status: detail.status,
+      prompt: detail.prompt,
+      base_prompt: detail.base_prompt,
+      title_hint: detail.title_hint,
+      cover_hint: detail.cover_hint,
+      error: detail.error,
+      item_ids: detail.item_ids || [],
+      created_at: detail.created_at,
+      song: detail.song_id ? {
+        id: detail.song_id,
+        title: detail.title,
+        cover_url: detail.cover_url,
+        audio_url: detail.audio_url,
+        tags: detail.tags || [],
+        source: detail.source || null
+      } : null
+    }
+  };
 });
 app.post("/callback/tpy", async (request, reply) => {
   const payload = request.body || {};
@@ -994,6 +1135,15 @@ app.get("/songs", async (request, reply) => {
 
 const port = Number(process.env.PORT || 8080);
 app.listen({ port, host: "0.0.0.0" });
+
+
+
+
+
+
+
+
+
 
 
 

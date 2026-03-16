@@ -1,6 +1,7 @@
 ﻿const tokenInput = document.getElementById("token");
 const tagGroups = document.getElementById("tagGroups");
 const tagTypeSummary = document.getElementById("tagTypeSummary");
+const blacklistList = document.getElementById("blacklistList");
 
 function getToken() {
   return localStorage.getItem("adminToken") || "";
@@ -105,3 +106,50 @@ document.getElementById("refreshTags").addEventListener("click", loadTags);
 
 tokenInput.value = getToken();
 loadTags();
+
+async function loadBlacklist() {
+  const res = await fetch("/admin/tag-blacklist", { headers: { "x-admin-token": getToken() } });
+  if (!res.ok) {
+    blacklistList.innerHTML = "<div class='item'>未授权或服务未启动</div>";
+    return;
+  }
+  const data = await res.json();
+  const items = data.items || [];
+  blacklistList.innerHTML = "";
+  if (!items.length) {
+    blacklistList.innerHTML = "<div class='item'>还没有屏蔽词</div>";
+    return;
+  }
+  items.forEach((item) => {
+    const div = document.createElement("div");
+    div.className = "item stacked-item";
+    div.innerHTML = `
+      <div>
+        <div><strong>${item.word}</strong></div>
+        <small>${item.reason || "无备注"}</small>
+      </div>
+      <div class="row compact-row">
+        <button data-delete-blacklist="${item.id}">移除</button>
+      </div>
+    `;
+    div.querySelector(`[data-delete-blacklist="${item.id}"]`).addEventListener("click", async () => {
+      await fetch(`/admin/tag-blacklist/${item.id}`, { method: "DELETE", headers: { "x-admin-token": getToken() } });
+      loadBlacklist();
+    });
+    blacklistList.appendChild(div);
+  });
+}
+
+async function addBlacklist() {
+  const word = document.getElementById("blacklistWord").value.trim();
+  const reason = document.getElementById("blacklistReason").value.trim();
+  if (!word) return;
+  await fetch("/admin/tag-blacklist", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-token": getToken() },
+    body: JSON.stringify({ word, reason })
+  });
+  document.getElementById("blacklistWord").value = "";
+  document.getElementById("blacklistReason").value = "";
+  loadBlacklist();
+}
