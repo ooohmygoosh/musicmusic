@@ -1097,11 +1097,12 @@ app.post("/feedback", async (request, reply) => {
     const relevance = Number(row.relevance || 1.0);
     const coef = behavior === "favorite" ? COEF_FAVORITE : behavior === "complete" ? COEF_COMPLETE : isLateSkip ? COEF_SKIP_LATE : COEF_SKIP_EARLY;
     const updateSql = behavior === "favorite" || behavior === "complete"
-      ? "UPDATE user_tags SET weight = LEAST(1.0, weight + $1 * $2 * (1 - weight)), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4"
-      : "UPDATE user_tags SET weight = GREATEST(0.0, weight - $1 * $2 * weight), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4";
+      ? "UPDATE user_tags SET weight = LEAST(1.0, weight + $1::numeric * $2::numeric * (1 - weight)), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4"
+      : "UPDATE user_tags SET weight = GREATEST(0.0, weight - $1::numeric * $2::numeric * weight), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4";
     try {
       await query(updateSql, [coef, relevance, Number(user_id), row.tag_id]);
     } catch (err) {
+      request.log.error({ err: String(err), user_id, song_id, action: normalizedAction, tag_id: row.tag_id }, "feedback weight update failed");
       reply.code(500).send({ error: "feedback update failed", detail: String(err) });
       return;
     }
@@ -1135,4 +1136,5 @@ app.get("/songs", async (request, reply) => {
 
 const port = Number(process.env.PORT || 8080);
 app.listen({ port, host: "0.0.0.0" });
+
 
