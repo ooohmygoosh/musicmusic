@@ -649,22 +649,58 @@ export default function App() {
         <ScrollView contentContainerStyle={styles.content}>
           {tab === "player" && (
             <>
-              <Section title="正在播放" sub={currentSong ? "像一个真正的播放器一样稳定工作。" : "先生成一首歌，我们再往下听。"}>
-                <View style={styles.cover}>
-                  <Text style={styles.coverText}>TPY</Text>
+              <View style={styles.playerTopRow}>
+                <View style={styles.statusChip}>
+                  <Text style={styles.statusChipText}>
+                    {currentSong ? (playing ? "正在播放" : "已暂停") : generating ? "生成中" : "待开始"}
+                  </Text>
                 </View>
-                <Text style={styles.songTitle}>{currentSong?.title || "暂无歌曲"}</Text>
-                <Text style={styles.songSub}>{currentSong ? tagLine(currentSong) : "请先生成音乐"}</Text>{generationStatus ? <Text style={styles.waitText}>{generationStatus}</Text> : null}
-                <View style={styles.bar}><View style={[styles.barFill, { width: durMs ? `${(posMs / durMs) * 100}%` : "0%" }]} /></View>
-                <View style={styles.barMeta}><Text style={styles.mono}>{fmt(posMs)}</Text><Text style={styles.mono}>{fmt(durMs)}</Text></View>
+                <View style={styles.sourceChip}>
+                  <Text style={styles.sourceChipText}>
+                    {currentSong?.is_hidden ? "来自历史播放" : currentSong ? "当前播放队列" : "等待生成歌曲"}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.playerCard}>
+                <View style={styles.coverShell}>
+                  <View style={styles.coverGlow} />
+                  <View style={styles.cover}>
+                    <Text style={styles.coverText}>TPY</Text>
+                  </View>
+                </View>
+
+                <View style={styles.songMetaBlock}>
+                  <Text style={styles.songTitle}>{currentSong?.title || "暂无歌曲"}</Text>
+                  <Text style={styles.songSub}>{currentSong ? tagLine(currentSong) : "先生成一首歌，再开始播放。"}</Text>
+                  {generationStatus ? <Text style={styles.waitText}>{generationStatus}</Text> : null}
+                </View>
+
+                <View style={styles.progressPanel}>
+                  <View style={styles.bar}>
+                    <View style={[styles.barFill, { width: durMs ? `${(posMs / durMs) * 100}%` : "0%" }]} />
+                  </View>
+                  <View style={styles.barMeta}>
+                    <Text style={styles.mono}>{fmt(posMs)}</Text>
+                    <Text style={styles.mono}>{fmt(durMs)}</Text>
+                  </View>
+                </View>
+
                 <View style={styles.row}>
-                  <TouchableOpacity style={styles.softBtn} onPress={openFavoritePicker}><Text style={styles.softText}>收藏</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.darkBtn} onPress={togglePlayback}><Text style={styles.darkText}>{generating ? "等待中" : playing ? "暂停" : currentSong ? "播放" : "生成"}</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.softBtn} onPress={() => handleFeedback("skip")}><Text style={styles.softText}>下一曲</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.softBtn} onPress={openFavoritePicker}>
+                    <Text style={styles.softText}>收藏</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.darkBtn} onPress={togglePlayback}>
+                    <Text style={styles.darkText}>{generating ? "等待中" : playing ? "暂停" : currentSong ? "播放" : "生成"}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.softBtn} onPress={() => handleFeedback("skip")}>
+                    <Text style={styles.softText}>下一曲</Text>
+                  </TouchableOpacity>
                 </View>
+
                 {favoritePickerOpen ? (
                   <View style={styles.inlinePicker}>
-                    <Text style={styles.inlinePickerTitle}>滑动选择要收藏进哪个歌单</Text>
+                    <Text style={styles.inlinePickerTitle}>选择要收藏进的歌单</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagsRow}>
                       {playlists.length ? playlists.map((pl) => (
                         <TouchableOpacity key={pl.id} style={styles.tagChip} onPress={() => saveCurrentSongToPlaylist(pl.id)}>
@@ -674,16 +710,27 @@ export default function App() {
                     </ScrollView>
                   </View>
                 ) : null}
-              </Section>
-              <Section title="播放列表" sub="会保留听过的歌，点任意一首就立即切换并自动播放。">
+              </View>
+
+              <Section title="播放队列" sub="默认按顺序播放，已听过的内容会留在列表里。">
                 {songs.length ? songs.map((song, index) => (
-                  <Pressable key={`${song.id}-${song.created_at || index}`} style={[styles.listRow, song.is_hidden && styles.listRowMuted]} onPress={() => playSongAt(index, true)}>
-                    <Text style={styles.listIndex}>{index + 1}</Text>
+                  <Pressable
+                    key={`${song.id}-${song.created_at || index}`}
+                    style={[
+                      styles.queueRow,
+                      song.is_hidden && styles.listRowMuted,
+                      index === currentIndex && styles.queueRowActive,
+                    ]}
+                    onPress={() => playSongAt(index, true)}
+                  >
+                    <View style={[styles.queueIndexWrap, index === currentIndex && styles.queueIndexWrapActive]}>
+                      <Text style={[styles.listIndex, index === currentIndex && styles.queueIndexActive]}>{index + 1}</Text>
+                    </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.listTitle}>{song.title || `歌曲 ${song.id}`}</Text>
                       <Text style={styles.listSub}>{tagLine(song)}</Text>
                     </View>
-                    <Text style={styles.listMeta}>{song.is_hidden ? "已听过" : index === currentIndex ? "播放中" : "可播放"}</Text>
+                    <Text style={styles.listMeta}>{song.is_hidden ? "已听过" : index === currentIndex ? "播放中" : "待播放"}</Text>
                   </Pressable>
                 )) : <Text style={styles.empty}>还没有歌曲，先点上面的生成。</Text>}
               </Section>
@@ -857,11 +904,21 @@ const styles = StyleSheet.create({
   card: { backgroundColor: "rgba(255,255,255,0.62)", borderRadius: 26, padding: 18, marginBottom: 16 },
   cardTitle: { fontSize: 24, fontWeight: "800", color: "#1B1713" },
   cardSub: { marginTop: 4, fontSize: 14, lineHeight: 20, color: "#6A645C" },
+  playerTopRow: { flexDirection: "row", gap: 10, marginBottom: 12 },
+  statusChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.72)" },
+  statusChipText: { color: "#3B342D", fontSize: 12, fontWeight: "800" },
+  sourceChip: { flex: 1, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.48)" },
+  sourceChipText: { color: "#5B554D", fontSize: 12, fontWeight: "700" },
+  playerCard: { backgroundColor: "rgba(255,255,255,0.68)", borderRadius: 32, padding: 20, marginBottom: 16 },
+  coverShell: { alignSelf: "center", width: 268, height: 268, alignItems: "center", justifyContent: "center", marginTop: 6 },
+  coverGlow: { position: "absolute", width: 260, height: 260, borderRadius: 999, backgroundColor: "rgba(92,82,71,0.10)", transform: [{ scaleX: 1.08 }, { scaleY: 0.92 }] },
   cover: { width: 240, height: 240, alignSelf: "center", borderRadius: 40, backgroundColor: "#232126", alignItems: "center", justifyContent: "center" },
   coverText: { color: "#FFF", fontSize: 42, fontWeight: "800" },
+  songMetaBlock: { marginTop: 2 },
   songTitle: { marginTop: 14, textAlign: "center", fontSize: 34, lineHeight: 40, color: "#1B1713", fontWeight: "800" },
   songSub: { textAlign: "center", color: "#5F5850", fontSize: 16, lineHeight: 24, marginTop: 6 },
   waitText: { textAlign: "center", color: "#7B6D5A", fontSize: 13, marginTop: 8 },
+  progressPanel: { marginTop: 12, paddingTop: 2 },
   bar: { height: 8, borderRadius: 999, backgroundColor: "rgba(28,25,22,0.10)", overflow: "hidden", marginTop: 14 },
   barFill: { height: "100%", backgroundColor: "#1C1916" },
   barMeta: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 },
@@ -882,6 +939,11 @@ const styles = StyleSheet.create({
   listTitle: { color: "#1B1713", fontWeight: "700", fontSize: 16 },
   listSub: { marginTop: 4, color: "#6B655D" },
   empty: { color: "#6B655D", fontSize: 15, lineHeight: 22 },
+  queueRow: { flexDirection: "row", gap: 12, paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: "rgba(28,25,22,0.06)", alignItems: "center", borderRadius: 18 },
+  queueRowActive: { backgroundColor: "rgba(255,255,255,0.42)" },
+  queueIndexWrap: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.34)" },
+  queueIndexWrapActive: { backgroundColor: "#1C1916" },
+  queueIndexActive: { color: "#FFF", width: "auto", paddingTop: 0 },
   playlistBlock: { marginBottom: 10 },
   pillRow: { backgroundColor: "rgba(255,255,255,0.66)", borderRadius: 18, paddingHorizontal: 16, paddingVertical: 14, flexDirection: "row", justifyContent: "space-between" },
   playlistSongs: { paddingTop: 10, gap: 8 },
