@@ -330,7 +330,7 @@ export default function App() {
     }
     const sequentialIndex = getNextPlayableIndex(anchorIndex, nextSongs);
     if (sequentialIndex >= 0) return sequentialIndex;
-    return nextSongs.length ? nextSongs.length - 1 : -1;
+    return (nextSongs || []).findIndex((item) => !item?.is_hidden);
   }
 
   function startJobPolling(jobId) {
@@ -478,6 +478,7 @@ export default function App() {
 
   async function handleFeedback(action, options = {}) {
     if (!user?.id || !currentSong?.id) return;
+    const currentSongId = currentSong.id;
     const feedbackKey = `${currentSong.id}:${action}`;
     if (feedbackRef.current.inFlight || feedbackRef.current.key === feedbackKey) return;
     feedbackRef.current.inFlight = true;
@@ -489,7 +490,8 @@ export default function App() {
       });
       const nextSongs = await refreshAll();
       if (action === "skip" || action === "complete") {
-        const nextIndex = getNextPlayableIndex(currentIndex, nextSongs);
+        const anchorIndex = findSongIndex(currentSongId, nextSongs);
+        const nextIndex = getNextPlayableIndex(anchorIndex >= 0 ? anchorIndex : currentIndex, nextSongs);
         if (nextIndex >= 0) await playSongAt(nextIndex, true);
         else await generateSong();
       }
@@ -982,6 +984,7 @@ const styles = StyleSheet.create({
   tabText: { color: "#5A534B", fontWeight: "800" },
   tabTextActive: { color: "#FFF" }
 });
+
 
 
 
