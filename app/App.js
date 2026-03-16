@@ -182,7 +182,7 @@ export default function App() {
   const [step, setStep] = useState(0);
   const [initTagIds, setInitTagIds] = useState([]);
   const [songs, setSongs] = useState([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [currentSongId, setCurrentSongId] = useState(null);
   const [favorites, setFavorites] = useState([]);
   const [playlists, setPlaylists] = useState([]);
   const [userTags, setUserTags] = useState([]);
@@ -202,11 +202,21 @@ export default function App() {
   const [playlistSongs, setPlaylistSongs] = useState({});
   const [playlistLoadingId, setPlaylistLoadingId] = useState(null);
 
-  const currentSong = songs[currentIndex] || null;
+  const currentIndex = useMemo(() => songs.findIndex((item) => Number(item.id) === Number(currentSongId)), [songs, currentSongId]);
+  const currentSong = currentIndex >= 0 ? songs[currentIndex] : songs[0] || null;
   const sortedUserTags = useMemo(() => [...(userTags || [])].sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0)), [userTags]);
 
   useEffect(() => { loadTags(); return () => { stopJobPolling(); unload(); }; }, []);
   useEffect(() => { if (user && !needInit) refreshAll(); }, [user?.id, needInit]);
+  useEffect(() => {
+    if (!songs.length) {
+      if (currentSongId !== null) setCurrentSongId(null);
+      return;
+    }
+    if (currentSongId === null || songs.findIndex((item) => Number(item.id) === Number(currentSongId)) < 0) {
+      setCurrentSongId(songs[0].id);
+    }
+  }, [songs, currentSongId]);
   useEffect(() => { prepareSound(); return () => {}; }, [currentSong?.id, currentSong?.audio_url]);
   useEffect(() => { feedbackRef.current.finishedSongId = null; }, [currentSong?.id]);
 
@@ -225,8 +235,10 @@ export default function App() {
   }
 
   async function playSongAt(index, shouldAutoPlay = true) {
+    const target = songs[index];
+    if (!target) return;
     autoPlayRef.current = shouldAutoPlay;
-    if (index === currentIndex) {
+    if (Number(target.id) === Number(currentSongId)) {
       if (soundRef.current) {
         try {
           await soundRef.current.setPositionAsync(0);
@@ -242,7 +254,7 @@ export default function App() {
       }
       return;
     }
-    setCurrentIndex(index);
+    setCurrentSongId(target.id);
   }
 
   async function prepareSound() {
@@ -298,7 +310,6 @@ export default function App() {
       ]);
       const nextSongs = songRes?.items || [];
       setSongs(nextSongs);
-      setCurrentIndex((v) => clamp(v, 0, Math.max(0, nextSongs.length - 1)));
       setFavorites(favRes?.items || []);
       setUserTags(utRes?.items || []);
       setPlaylists(plRes?.items || []);
@@ -764,7 +775,18 @@ export default function App() {
                               onPress={() => {
                                 const existingIndex = songs.findIndex((item) => Number(item.id) === Number(song.id));
                                 if (existingIndex >= 0) {
-                                  playSongAt(existingIndex, true);
+                                  const existingSong = songs[existingIndex];
+                                  const reordered = [...songs];
+                                  reordered.splice(existingIndex, 1);
+                                  reordered.push({ ...existingSong, is_hidden: false });
+                                  setSongs(reordered);
+                                  autoPlayRef.current = true;
+                                  setCurrentSongId(existingSong.id);
+                                  setTab("player");
+                                } else {
+                                  setSongs((prev) => [...prev, { ...song, is_hidden: false }]);
+                                  autoPlayRef.current = true;
+                                  setCurrentSongId(song.id);
                                   setTab("player");
                                 }
                               }}
@@ -852,7 +874,7 @@ export default function App() {
               </Section>
               <Section title="维护操作" sub="如果界面或数据有延迟，可以从这里刷新。">
                 <TouchableOpacity style={styles.softBtnFull} onPress={refreshAll}><Text style={styles.softText}>刷新全部数据</Text></TouchableOpacity>
-                <TouchableOpacity style={[styles.softBtnFull, { marginTop: 10 }]} onPress={() => { unload(); setUser(null); setSongs([]); setFavorites([]); setUserTags([]); setPlaylists([]); setTab("player"); }}><Text style={styles.softText}>退出当前账户</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.softBtnFull, { marginTop: 10 }]} onPress={() => { unload(); setUser(null); setSongs([]); setCurrentSongId(null); setFavorites([]); setUserTags([]); setPlaylists([]); setTab("player"); }}><Text style={styles.softText}>退出当前账户</Text></TouchableOpacity>
               </Section>
             </>
           )}
@@ -984,6 +1006,7 @@ const styles = StyleSheet.create({
   tabText: { color: "#5A534B", fontWeight: "800" },
   tabTextActive: { color: "#FFF" }
 });
+
 
 
 
