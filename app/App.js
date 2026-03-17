@@ -99,6 +99,10 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function hashString(input) {
   const text = String(input || "");
   let hash = 0;
@@ -141,12 +145,11 @@ function getFuncZones(stageSize) {
   const width = Math.max(320, stageSize.width || 0);
   const zoneTop = 26;
   const zoneHeight = 64;
-  const gap = 10;
-  const zoneWidth = (width - PORTRAIT_SIDE_INSET * 2 - gap * 2) / 3;
+  const gap = 12;
+  const zoneWidth = (width - PORTRAIT_SIDE_INSET * 2 - gap) / 2;
   return [
-    { id: 1, key: "delete", label: "Delete", hint: "Remove tag", x: PORTRAIT_SIDE_INSET, y: zoneTop, width: zoneWidth, height: zoneHeight },
-    { id: 2, key: "smaller", label: "Smaller", hint: "Current tag", x: PORTRAIT_SIDE_INSET + zoneWidth + gap, y: zoneTop, width: zoneWidth, height: zoneHeight },
-    { id: 3, key: "bigger", label: "Bigger", hint: "Current tag", x: PORTRAIT_SIDE_INSET + (zoneWidth + gap) * 2, y: zoneTop, width: zoneWidth, height: zoneHeight }
+    { id: 2, key: "smaller", label: "Softer", hint: "Lower weight", x: PORTRAIT_SIDE_INSET, y: zoneTop, width: zoneWidth, height: zoneHeight },
+    { id: 3, key: "bigger", label: "Stronger", hint: "Raise weight", x: PORTRAIT_SIDE_INSET + zoneWidth + gap, y: zoneTop, width: zoneWidth, height: zoneHeight }
   ];
 }
 
@@ -522,6 +525,7 @@ export default function App() {
   const [sound, setSound] = useState(null);
   const [currentSoundId, setCurrentSoundId] = useState(null);
   const [playback, setPlayback] = useState({ position: 0, duration: 1, isPlaying: false });
+  const [generationLoading, setGenerationLoading] = useState(false);
   const [showQueue, setShowQueue] = useState(false);
   const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
   const [newTagName, setNewTagName] = useState("");
@@ -535,6 +539,7 @@ export default function App() {
   const [portraitStageSize, setPortraitStageSize] = useState({ width: 1, height: 1 });
   const [portraitBlocks, setPortraitBlocks] = useState([]);
   const [activeZoneId, setActiveZoneId] = useState(-1);
+  const [isPortraitDragging, setIsPortraitDragging] = useState(false);
   const [progressLayout, setProgressLayout] = useState(null);
   const progressTrackRef = useRef(null);
   const completeSentFor = useRef(null);
@@ -677,43 +682,35 @@ export default function App() {
 
   const persistProfileTagWeight = async (tagId, weight) => {
     if (!userId) return;
-    await fetch(`${API_BASE}/user-tags/weight`, {
+    const res = await fetch(`${API_BASE}/user-tags/weight`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId, tag_id: tagId, weight })
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "weight update failed");
+    }
   };
 
-  const persistRemoveProfileTag = async (tag) => {
-    if (!userId) return;
-    await fetch(`${API_BASE}/user-tags/remove`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, tag_id: tag.tag_id })
-    });
+  const computeNextWeight = (currentWeight, zoneId) => {
+    const value = clamp(Number(currentWeight || 0), 0, 1);
+    if (zoneId === 2) {
+      const lowered = value - 0.22;
+      return lowered <= 0.08 ? 0 : Number(lowered.toFixed(3));
+    }
+    return Number(Math.min(1, value + 0.12).toFixed(3));
   };
 
   const applyProfileTagAction = (tag, zoneId) => {
     if (!tag || zoneId === -1) return;
-    if (zoneId === 1) {
-      setProfileTags((prev) => sortProfileTags(prev.map((item) => (
-        item.tag_id === tag.tag_id ? { ...item, is_active: false, weight: 0 } : item
-      ))));
-      persistRemoveProfileTag(tag)
-        .then(() => loadProfileTags(userId))
-        .catch(() => loadProfileTags(userId));
-      return;
-    }
-
-    const latestTag = profileTags.find((item) => item.tag_id === tag.tag_id) || tag;
-    const currentWeight = clamp(Number(latestTag.weight || 0), 0, 1);
-    const nextWeight = zoneId === 2
-      ? Math.max(0.01, currentWeight - 0.14)
-      : Math.min(1, currentWeight + 0.1);
+    const currentTag = profileTags.find((item) => item.tag_id === tag.tag_id);
+    const nextWeight = computeNextWeight(currentTag?.weight ?? tag.weight ?? 0, zoneId);
 
     setProfileTags((prev) => sortProfileTags(prev.map((item) => (
       item.tag_id === tag.tag_id ? { ...item, is_active: true, weight: nextWeight } : item
     ))));
+
     persistProfileTagWeight(tag.tag_id, nextWeight)
       .then(() => loadProfileTags(userId))
       .catch(() => loadProfileTags(userId));
@@ -764,7 +761,7 @@ export default function App() {
 
           keepBlockInBounds(block, stage);
         }
-        applyRepulsion(next, stage, 0.115, 2);
+        applyRepulsion(next, stage, 0.082, 1);
 
         const settled = next.filter((block) => !(block.isExiting && block.currentPos.y <= -140));
         for (const block of settled) {
@@ -792,27 +789,37 @@ export default function App() {
       const next = prev.map(cloneBlock);
       const target = next.find((item) => item.id === id);
       if (!target) return prev;
-      const settledPoint = sanitizeDragPoint(target, point, stage);
+      const fallbackPoint = lastDragPointRef.current || target.currentPos;
+      const isValidPoint = point
+        && Number.isFinite(point.x)
+        && Number.isFinite(point.y)
+        && point.x >= -48
+        && point.x <= stage.width + 48
+        && point.y >= -48
+        && point.y <= stage.height + 48;
+      const candidatePoint = isValidPoint ? point : fallbackPoint;
+      const settledPoint = sanitizeDragPoint(target, candidatePoint, stage);
       const zoneId = findZoneForBlock(target, settledPoint, stage);
       lastDragPointRef.current = settledPoint;
       setActiveZoneId(zoneId);
       target.currentPos = settledPoint;
       target.velocity = { x: 0, y: 0 };
-      target.needBackToAnchor = zoneId !== -1;
-      applyRepulsion(next, stage, 0.2, 2);
+      target.isEntering = false;
+      if (zoneId === -1) {
+        target.anchorPos = settledPoint;
+        target.needBackToAnchor = false;
+      } else {
+        target.needBackToAnchor = true;
+      }
+      applyRepulsion(next, stage, 0.11, 1);
       blocksRef.current = next;
       return next;
     });
   };
 
-  const finishDraggedBlock = (id, releasePoint) => {
+  const finishDraggedBlock = (id) => {
     const stage = stageSizeRef.current;
-    const fallbackPoint = lastDragPointRef.current;
-    const hasReleasePoint = releasePoint && Number.isFinite(releasePoint.x) && Number.isFinite(releasePoint.y);
-    const resolvedPoint = fallbackPoint && (!hasReleasePoint || Math.hypot(releasePoint.x - fallbackPoint.x, releasePoint.y - fallbackPoint.y) > 160)
-      ? fallbackPoint
-      : releasePoint;
-    const safePoint = resolvedPoint || fallbackPoint || { x: stage.width / 2, y: stage.height / 2 };
+    const safePoint = lastDragPointRef.current || { x: stage.width / 2, y: stage.height / 2 };
     let affectedTag = null;
     let activeZone = -1;
 
@@ -827,12 +834,11 @@ export default function App() {
       activeZone = zoneId;
       affectedTag = target.tag;
       target.isDragging = false;
+      target.isEntering = false;
       target.currentPos = settledPoint;
       target.velocity = { x: 0, y: 0 };
 
-      if (zoneId === 1) {
-        target.needBackToAnchor = false;
-      } else if (zoneId === 2) {
+      if (zoneId === 2) {
         target.targetSize = clamp(target.targetSize - PORTRAIT_STEP_SIZE, target.minSize, target.maxSize);
         target.needBackToAnchor = true;
       } else if (zoneId === 3) {
@@ -843,7 +849,7 @@ export default function App() {
         target.needBackToAnchor = false;
       }
 
-      applyRepulsion(next, stage, 0.16, 2);
+      applyRepulsion(next, stage, 0.09, 1);
       blocksRef.current = next;
       return next;
     });
@@ -852,6 +858,7 @@ export default function App() {
     dragOffsetRef.current = { x: 0, y: 0 };
     lastDragPointRef.current = null;
     setActiveZoneId(-1);
+    setIsPortraitDragging(false);
 
     if (affectedTag && activeZone !== -1) {
       applyProfileTagAction(affectedTag, activeZone);
@@ -870,6 +877,7 @@ export default function App() {
       const picked = pickBlockAtPoint(blocksRef.current, point);
       if (!picked) return;
       draggingIdRef.current = picked.id;
+      setIsPortraitDragging(true);
       lastDragPointRef.current = { ...picked.currentPos };
       dragOffsetRef.current = { x: picked.currentPos.x - point.x, y: picked.currentPos.y - point.y };
       setPortraitBlocks((prev) => {
@@ -878,6 +886,7 @@ export default function App() {
         if (index < 0) return prev;
         const [target] = next.splice(index, 1);
         target.isDragging = true;
+        target.isEntering = false;
         target.velocity = { x: 0, y: 0 };
         target.needBackToAnchor = false;
         next.push(target);
@@ -894,23 +903,15 @@ export default function App() {
       };
       moveDraggedBlock(id, point);
     },
-    onPanResponderRelease: (evt) => {
+    onPanResponderRelease: () => {
       const id = draggingIdRef.current;
       if (!id) return;
-      const point = {
-        x: evt.nativeEvent.locationX + dragOffsetRef.current.x,
-        y: evt.nativeEvent.locationY + dragOffsetRef.current.y
-      };
-      finishDraggedBlock(id, point);
+      finishDraggedBlock(id);
     },
-    onPanResponderTerminate: (evt) => {
+    onPanResponderTerminate: () => {
       const id = draggingIdRef.current;
       if (!id) return;
-      const point = {
-        x: evt.nativeEvent.locationX + dragOffsetRef.current.x,
-        y: evt.nativeEvent.locationY + dragOffsetRef.current.y
-      };
-      finishDraggedBlock(id, point);
+      finishDraggedBlock(id);
     }
   })).current;
 
@@ -981,13 +982,49 @@ export default function App() {
   };
 
   const generate = async () => {
-    if (!userId) return;
-    await fetch(`${API_BASE}/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, instrumental: true })
-    });
-    await refreshSongs(userId, { preferLatest: true });
+    if (!userId || generationLoading) return songs;
+    setGenerationLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, instrumental: true })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || data.detail || "generate failed");
+      }
+
+      const jobId = Number(data.job_id || 0);
+      if (!jobId) {
+        return refreshSongs(userId, { preferLatest: true });
+      }
+
+      const start = Date.now();
+      while (Date.now() - start < 180000) {
+        const jobRes = await fetch(`${API_BASE}/generation-jobs/${jobId}`);
+        const jobData = await jobRes.json().catch(() => ({}));
+        if (!jobRes.ok) {
+          throw new Error(jobData.error || "generation job lookup failed");
+        }
+        const item = jobData.item || {};
+        const status = String(item.status || data.status || "").toLowerCase();
+        if (status === "failed") {
+          throw new Error(item.error || data.error || "generation failed");
+        }
+        if ((status === "done" || status === "reused") && (item.song?.id || data.song_id)) {
+          return refreshSongs(userId, { preferLatest: true });
+        }
+        await wait(3000);
+      }
+
+      throw new Error("generation timed out");
+    } catch (err) {
+      Alert.alert("Generation failed", String(err));
+      return songs;
+    } finally {
+      setGenerationLoading(false);
+    }
   };
 
   const attachStatus = (status) => {
@@ -1268,7 +1305,7 @@ export default function App() {
             <Text style={styles.controlText}>Favorite</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.playBtn} onPress={togglePlay}>
-            <Text style={styles.playText}>{current ? (playback.isPlaying ? "Pause" : "Play") : "Generate"}</Text>
+            <Text style={styles.playText}>{generationLoading ? "Generating..." : current ? (playback.isPlaying ? "Pause" : "Play") : "Generate"}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.controlBtn} onPress={handleNext}>
             <Text style={styles.controlText}>Next</Text>
@@ -1414,7 +1451,7 @@ export default function App() {
       <View style={styles.galaxyScreen} onLayout={(event) => setPortraitStageSize(event.nativeEvent.layout)}>
         <PortraitBackdrop blocks={portraitBlocks} stageSize={effectiveStageSize} />
         <View style={styles.galaxyHeader}>
-          <ScreenTitle eyebrow="Portrait" title="Full-screen blurred blobs" subtitle="Drag tags to repel each other. Top zones: delete / smaller / bigger." light />
+          <ScreenTitle eyebrow="Portrait" title="Full-screen blurred blobs" subtitle="Drag tags to repel each other. Top zones: softer / stronger." light />
         </View>
 
         <View style={styles.zoneRow} pointerEvents="box-none">
@@ -1446,7 +1483,14 @@ export default function App() {
           ))}
         </View>
 
-        <View style={[styles.galaxySheet, isTagSheetCollapsed && styles.galaxySheetCollapsed]}>
+        <View
+          pointerEvents={isPortraitDragging ? "none" : "auto"}
+          style={[
+            styles.galaxySheet,
+            isTagSheetCollapsed && styles.galaxySheetCollapsed,
+            isPortraitDragging && styles.galaxySheetDragging
+          ]}
+        >
           <TouchableOpacity style={styles.sheetHeader} onPress={() => setIsTagSheetCollapsed((prev) => !prev)}>
             <Text style={styles.groupTitle}>Add tag</Text>
             <Text style={styles.sheetToggleText}>{isTagSheetCollapsed ? "Expand" : "Collapse"}</Text>
@@ -1652,6 +1696,7 @@ const styles = StyleSheet.create({
   emptyGalaxyText: { color: "rgba(255,255,255,0.72)", fontSize: 13, lineHeight: 20, marginTop: 6 },
   galaxySheet: { position: "absolute", left: 14, right: 14, bottom: 96, backgroundColor: "rgba(11,17,27,0.68)", borderRadius: 30, padding: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   galaxySheetCollapsed: { paddingBottom: 10 },
+  galaxySheetDragging: { opacity: 0.3 },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   sheetToggleText: { color: "rgba(255,255,255,0.86)", fontSize: 13, fontWeight: "700" },
   categoryPickerCard: { marginTop: 14, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)" },

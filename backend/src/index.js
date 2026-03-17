@@ -795,8 +795,8 @@ async function findReusableSongs(userId, tagIds, limit = 1, threshold = REUSE_SI
   return result;
 }
 
-async function findReusableSong(userId, tagIds) {
-  const rows = await findReusableSongs(userId, tagIds, 1, REUSE_SIMILARITY_MIN);
+async function findReusableSong(userId, tagIds, threshold = REUSE_SIMILARITY_MIN) {
+  const rows = await findReusableSongs(userId, tagIds, 1, threshold);
   return rows[0] || null;
 }
 async function reuseSongForUser(job, librarySong) {
@@ -815,7 +815,7 @@ async function reuseSongForUser(job, librarySong) {
   return librarySong.id;
 }
 app.post("/generate", async (request, reply) => {
-  const { user_id, instrumental = true, model } = request.body || {};
+  const { user_id, instrumental = true, model, prefetch = false } = request.body || {};
   if (!user_id) {
     reply.code(400).send({ error: "user_id required" });
     return;
@@ -858,7 +858,11 @@ app.post("/generate", async (request, reply) => {
   );
   const job = rows[0];
 
-  const reusableSong = await findReusableSong(user_id, tagIds, prefetch ? PREFETCH_REUSE_SIMILARITY_MIN : REUSE_SIMILARITY_MIN);
+  const reusableSong = await findReusableSong(
+    user_id,
+    tagIds,
+    prefetch ? PREFETCH_REUSE_SIMILARITY_MIN : REUSE_SIMILARITY_MIN
+  );
   if (reusableSong) {
     const songId = await reuseSongForUser(job, reusableSong);
     return {
