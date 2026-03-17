@@ -155,7 +155,13 @@ function getFuncZones(stageSize) {
 
 function findZoneAtPoint(point, stageSize) {
   const zones = getFuncZones(stageSize);
-  const match = zones.find((zone) => point.x >= zone.x && point.x <= zone.x + zone.width && point.y >= zone.y && point.y <= zone.y + zone.height);
+  const tolerance = 16;
+  const match = zones.find((zone) => (
+    point.x >= zone.x - tolerance
+    && point.x <= zone.x + zone.width + tolerance
+    && point.y >= zone.y - tolerance
+    && point.y <= zone.y + zone.height + tolerance
+  ));
   return match ? match.id : -1;
 }
 
@@ -540,6 +546,7 @@ export default function App() {
   const [portraitBlocks, setPortraitBlocks] = useState([]);
   const [activeZoneId, setActiveZoneId] = useState(-1);
   const [isPortraitDragging, setIsPortraitDragging] = useState(false);
+  const activeZoneRef = useRef(-1);
   const [progressLayout, setProgressLayout] = useState(null);
   const progressTrackRef = useRef(null);
   const completeSentFor = useRef(null);
@@ -549,10 +556,13 @@ export default function App() {
   const activeTabRef = useRef(activeTab);
   const draggingIdRef = useRef(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
+  const dragStartBlockPosRef = useRef({ x: 0, y: 0 });
   const lastDragPointRef = useRef(null);
   const playbackRef = useRef(playback);
   const soundRef = useRef(sound);
   const progressLayoutRef = useRef(progressLayout);
+  const songsRef = useRef(songs);
+  const prefetchLockRef = useRef(false);
   const userId = session?.userId || null;
   const displayName = session?.name || session?.deviceId || "\u8bbf\u5ba2";
   const effectiveStageSize = portraitStageSize.width > 20 && portraitStageSize.height > 20 ? portraitStageSize : { width, height: Math.max(620, height - 28) };
@@ -601,6 +611,8 @@ export default function App() {
   useEffect(() => { playbackRef.current = playback; }, [playback]);
   useEffect(() => { soundRef.current = sound; }, [sound]);
   useEffect(() => { progressLayoutRef.current = progressLayout; }, [progressLayout]);
+  useEffect(() => { songsRef.current = songs; }, [songs]);
+  useEffect(() => { activeZoneRef.current = activeZoneId; }, [activeZoneId]);
 
   const loadTags = async () => {
     const res = await fetch(`${API_BASE}/tags`);
@@ -629,7 +641,7 @@ export default function App() {
 
   const refreshSongs = async (uid, options = {}) => {
     if (!uid) return [];
-    const res = await fetch(`${API_BASE}/songs?user_id=${uid}`);
+    const res = await fetch(`${API_BASE}/songs?user_id=${uid}&include_history=true`);
     const data = await res.json();
     const seen = new Set();
     const items = (data.items || []).filter((item) => {
@@ -637,7 +649,12 @@ export default function App() {
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
-    }).sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
+    }).sort((a, b) => {
+      const at = new Date(a.created_at || 0).getTime();
+      const bt = new Date(b.created_at || 0).getTime();
+      if (at !== bt) return at - bt;
+      return Number(a.id || 0) - Number(b.id || 0);
+    });
     setSongs(items);
     if (items.length > 0 && (options.preferLatest || !current)) {
       setCurrent(items[items.length - 1]);
@@ -685,35 +702,41 @@ export default function App() {
     const res = await fetch(`${API_BASE}/user-tags/weight`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, tag_id: tagId, weight })
+      body: JSON.stringify({ user_id: Number(userId), tag_id: Number(tagId), weight: Number(weight) })
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || "weight update failed");
     }
+    return res.json().catch(() => ({}));
   };
 
   const computeNextWeight = (currentWeight, zoneId) => {
     const value = clamp(Number(currentWeight || 0), 0, 1);
     if (zoneId === 2) {
-      const lowered = value - 0.22;
-      return lowered <= 0.08 ? 0 : Number(lowered.toFixed(3));
+      const lowered = value * 0.56 - 0.06;
+      return lowered <= 0.04 ? 0 : Number(lowered.toFixed(3));
     }
-    return Number(Math.min(1, value + 0.12).toFixed(3));
+    return Number(Math.min(1, value + 0.18).toFixed(3));
   };
 
-  const applyProfileTagAction = (tag, zoneId) => {
+  const applyProfileTagAction = async (tag, zoneId) => {
     if (!tag || zoneId === -1) return;
-    const currentTag = profileTags.find((item) => item.tag_id === tag.tag_id);
+    const tagId = Number(tag.tag_id ?? tag.id);
+    if (!Number.isFinite(tagId)) return;
+    const currentTag = profileTags.find((item) => Number(item.tag_id) === tagId);
     const nextWeight = computeNextWeight(currentTag?.weight ?? tag.weight ?? 0, zoneId);
+    const nextActive = nextWeight > 0;
 
     setProfileTags((prev) => sortProfileTags(prev.map((item) => (
-      item.tag_id === tag.tag_id ? { ...item, is_active: true, weight: nextWeight } : item
+      Number(item.tag_id) === tagId ? { ...item, is_active: nextActive, weight: nextWeight } : item
     ))));
 
-    persistProfileTagWeight(tag.tag_id, nextWeight)
-      .then(() => loadProfileTags(userId))
-      .catch(() => loadProfileTags(userId));
+    try {
+      await persistProfileTagWeight(tagId, nextWeight);
+    } finally {
+      await loadProfileTags(userId);
+    }
   };
 
   useEffect(() => { loadTags().catch(() => setTags([])); }, []);
@@ -801,6 +824,7 @@ export default function App() {
       const settledPoint = sanitizeDragPoint(target, candidatePoint, stage);
       const zoneId = findZoneForBlock(target, settledPoint, stage);
       lastDragPointRef.current = settledPoint;
+      activeZoneRef.current = zoneId;
       setActiveZoneId(zoneId);
       target.currentPos = settledPoint;
       target.velocity = { x: 0, y: 0 };
@@ -821,7 +845,7 @@ export default function App() {
     const stage = stageSizeRef.current;
     const safePoint = lastDragPointRef.current || { x: stage.width / 2, y: stage.height / 2 };
     let affectedTag = null;
-    let activeZone = -1;
+    let activeZone = activeZoneRef.current;
 
     setPortraitBlocks((prev) => {
       const next = prev.map(cloneBlock);
@@ -829,7 +853,9 @@ export default function App() {
       if (index < 0) return prev;
       const target = next[index];
       const dragPoint = sanitizeDragPoint(target, safePoint, stage);
-      const zoneId = findZoneForBlock(target, dragPoint, stage);
+      const zoneFromDragPoint = findZoneForBlock(target, dragPoint, stage);
+      const zoneFromCurrentPos = findZoneForBlock(target, target.currentPos, stage);
+      const zoneId = zoneFromDragPoint !== -1 ? zoneFromDragPoint : (zoneFromCurrentPos !== -1 ? zoneFromCurrentPos : activeZoneRef.current);
       const settledPoint = zoneId === -1 ? sanitizeBlockPoint(target, safePoint, stage) : dragPoint;
       activeZone = zoneId;
       affectedTag = target.tag;
@@ -856,12 +882,14 @@ export default function App() {
 
     draggingIdRef.current = null;
     dragOffsetRef.current = { x: 0, y: 0 };
+    dragStartBlockPosRef.current = { x: 0, y: 0 };
     lastDragPointRef.current = null;
+    activeZoneRef.current = -1;
     setActiveZoneId(-1);
     setIsPortraitDragging(false);
 
     if (affectedTag && activeZone !== -1) {
-      applyProfileTagAction(affectedTag, activeZone);
+      applyProfileTagAction(affectedTag, activeZone).catch(() => {});
     }
   };
 
@@ -880,6 +908,7 @@ export default function App() {
       setIsPortraitDragging(true);
       lastDragPointRef.current = { ...picked.currentPos };
       dragOffsetRef.current = { x: picked.currentPos.x - point.x, y: picked.currentPos.y - point.y };
+      dragStartBlockPosRef.current = { ...picked.currentPos };
       setPortraitBlocks((prev) => {
         const next = prev.map(cloneBlock);
         const index = next.findIndex((item) => item.id === picked.id);
@@ -894,12 +923,12 @@ export default function App() {
         return next;
       });
     },
-    onPanResponderMove: (evt) => {
+    onPanResponderMove: (_, gesture) => {
       const id = draggingIdRef.current;
       if (!id) return;
       const point = {
-        x: evt.nativeEvent.locationX + dragOffsetRef.current.x,
-        y: evt.nativeEvent.locationY + dragOffsetRef.current.y
+        x: dragStartBlockPosRef.current.x + (gesture?.dx || 0),
+        y: dragStartBlockPosRef.current.y + (gesture?.dy || 0)
       };
       moveDraggedBlock(id, point);
     },
@@ -981,14 +1010,15 @@ export default function App() {
     await submitNamedTag(pendingTagName, selectedCategory);
   };
 
-  const generate = async () => {
+  const generate = async (options = {}) => {
+    const { prefetch = false, silent = false } = options;
     if (!userId || generationLoading) return songs;
     setGenerationLoading(true);
     try {
       const res = await fetch(`${API_BASE}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, instrumental: true })
+        body: JSON.stringify({ user_id: userId, instrumental: true, prefetch })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -1020,10 +1050,31 @@ export default function App() {
 
       throw new Error("generation timed out");
     } catch (err) {
-      Alert.alert("Generation failed", String(err));
+      if (!silent) Alert.alert("Generation failed", String(err));
       return songs;
     } finally {
       setGenerationLoading(false);
+    }
+  };
+
+  const getNextSongFromList = (baseSong, list) => {
+    if (!baseSong || !Array.isArray(list) || list.length === 0) return null;
+    const index = list.findIndex((item) => queueKeyOf(item) === queueKeyOf(baseSong));
+    if (index >= 0 && index < list.length - 1) return list[index + 1];
+    return null;
+  };
+
+  const ensureNextSongReady = async (playingSong) => {
+    if (!userId || !playingSong || generationLoading || prefetchLockRef.current) return;
+    const queueSnapshot = songsRef.current || [];
+    if (getNextSongFromList(playingSong, queueSnapshot)) return;
+    prefetchLockRef.current = true;
+    try {
+      await generate({ prefetch: true, silent: true });
+      await refreshSongs(userId);
+    } catch {}
+    finally {
+      prefetchLockRef.current = false;
     }
   };
 
@@ -1044,6 +1095,7 @@ export default function App() {
     setSound(created.sound);
     setCurrent(song);
     setCurrentSoundId(queueKeyOf(song));
+    ensureNextSongReady(song).catch(() => {});
   };
 
   const togglePlay = async () => {
@@ -1071,9 +1123,10 @@ export default function App() {
       await feedback(action);
       const index = current ? songs.findIndex((item) => queueKeyOf(item) === queueKeyOf(current)) : -1;
       if (index >= 0 && index < songs.length - 1) return play(songs[index + 1]);
-      await generate();
-      const fresh = await refreshSongs(userId, { preferLatest: true });
-      if (fresh.length > 0) await play(fresh[fresh.length - 1]);
+      await ensureNextSongReady(current);
+      const fresh = await refreshSongs(userId, { preferLatest: false });
+      const next = getNextSongFromList(current, fresh) || (fresh.length > 0 ? fresh[fresh.length - 1] : null);
+      if (next) await play(next);
     } finally {
       autoNextLock.current = false;
     }

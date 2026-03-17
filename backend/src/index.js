@@ -414,16 +414,22 @@ app.post("/user-tags/remove", async (request, reply) => {
 
 app.post("/user-tags/weight", async (request, reply) => {
   const { user_id, tag_id, weight } = request.body || {};
-  if (!user_id || !tag_id || typeof weight !== "number") {
+  const parsedWeight = Number(weight);
+  if (!user_id || !tag_id || !Number.isFinite(parsedWeight)) {
     reply.code(400).send({ error: "user_id, tag_id, weight required" });
     return;
   }
-  const clamped = Math.max(0, Math.min(1, weight));
-  await query(
-    "UPDATE user_tags SET weight = $1, last_updated = NOW() WHERE user_id = $2 AND tag_id = $3",
-    [clamped, Number(user_id), Number(tag_id)]
+  const clamped = Math.max(0, Math.min(1, parsedWeight));
+  const isActive = clamped > 0;
+  const { rows } = await query(
+    "UPDATE user_tags SET weight = $1, is_active = $2, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4 RETURNING user_id, tag_id, weight, is_active, last_updated",
+    [clamped, isActive, Number(user_id), Number(tag_id)]
   );
-  return { ok: true };
+  if (!rows[0]) {
+    reply.code(404).send({ error: "user tag relation not found" });
+    return;
+  }
+  return { ok: true, item: rows[0] };
 });
 
 app.get("/favorites", async (request, reply) => {
