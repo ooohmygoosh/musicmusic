@@ -113,7 +113,23 @@ async function loadUserDetail(userId) {
   ]);
   renderTable(userSongs, ["歌曲名称", "来源", "标签"], songRows);
 
-  const detailTagWeights = data.tag_weights || data.tagWeights || [];
+  let detailTagWeights = data.tag_weights || data.tagWeights || [];
+  if (!Array.isArray(detailTagWeights) || detailTagWeights.length === 0) {
+    try {
+      const fallbackRes = await fetch(`/user-tags?user_id=${userId}`);
+      if (fallbackRes.ok) {
+        const fallbackData = await fallbackRes.json();
+        detailTagWeights = (fallbackData.items || []).map((item) => ({
+          name: item.name,
+          type: item.type,
+          weight: item.weight
+        }));
+      }
+    } catch (_) {
+      // ignore fallback errors and keep empty table state
+    }
+  }
+
   const tagRows = detailTagWeights.map((item) => [
     item.name || "-",
     item.type || "-",
