@@ -10,7 +10,8 @@ import {
   useWindowDimensions,
   Alert,
   PanResponder,
-  ActivityIndicator
+  ActivityIndicator,
+  Image
 } from "react-native";
 import { Audio } from "expo-av";
 import { BlurMask, Canvas, Circle, Group } from "@shopify/react-native-skia";
@@ -508,6 +509,26 @@ function PortraitTag({ block, isDragging }) {
   );
 }
 
+function SongArtwork({ uri, size = 56, radius, label = "TPY" }) {
+  const borderRadius = radius ?? Math.round(size * 0.18);
+  const textLabel = String(label || "TPY").slice(0, 3);
+
+  return (
+    <View style={[styles.artworkFrame, { width: size, height: size, borderRadius }]}> 
+      {uri ? (
+        <Image source={{ uri }} style={[styles.artworkImage, { borderRadius }]} resizeMode="cover" />
+      ) : (
+        <View style={[styles.artworkPlaceholder, { borderRadius }]}> 
+          <View style={styles.artworkGlowA} />
+          <View style={styles.artworkGlowB} />
+          <View style={styles.artworkGlowC} />
+          <Text style={[styles.artworkLabel, { fontSize: Math.max(16, Math.round(size * 0.16)) }]}>{textLabel}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 export default function App() {
   const { width, height } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState("player");
@@ -546,6 +567,8 @@ export default function App() {
   const [portraitBlocks, setPortraitBlocks] = useState([]);
   const [activeZoneId, setActiveZoneId] = useState(-1);
   const [isPortraitDragging, setIsPortraitDragging] = useState(false);
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [seekPreviewPosition, setSeekPreviewPosition] = useState(null);
   const activeZoneRef = useRef(-1);
   const [progressLayout, setProgressLayout] = useState(null);
   const progressTrackRef = useRef(null);
@@ -563,6 +586,7 @@ export default function App() {
   const playbackRef = useRef(playback);
   const soundRef = useRef(sound);
   const progressLayoutRef = useRef(progressLayout);
+  const seekingRef = useRef(false);
   const songsRef = useRef(songs);
   const profileTagsRef = useRef(profileTags);
   const prefetchLockRef = useRef(false);
@@ -615,6 +639,7 @@ export default function App() {
   useEffect(() => { playbackRef.current = playback; }, [playback]);
   useEffect(() => { soundRef.current = sound; }, [sound]);
   useEffect(() => { progressLayoutRef.current = progressLayout; }, [progressLayout]);
+  useEffect(() => { seekingRef.current = isSeeking; }, [isSeeking]);
   useEffect(() => { songsRef.current = songs; }, [songs]);
   useEffect(() => { profileTagsRef.current = profileTags; }, [profileTags]);
   useEffect(() => { userIdRef.current = userId; }, [userId]);
@@ -651,7 +676,7 @@ export default function App() {
     const data = await res.json();
     const seen = new Set();
     const items = (data.items || []).filter((item) => {
-      const key = item.id || item.audio_url;
+      const key = item.queue_id || item.id || item.audio_url;
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -1121,7 +1146,12 @@ export default function App() {
 
   const attachStatus = (status) => {
     if (!status?.isLoaded) return;
-    setPlayback({ position: status.positionMillis || 0, duration: status.durationMillis || 1, isPlaying: status.isPlaying });
+    setPlayback((prev) => ({
+      position: seekingRef.current ? prev.position : (status.positionMillis || 0),
+      duration: status.durationMillis || prev.duration || 1,
+      isPlaying: status.isPlaying
+    }));
+    if (!seekingRef.current) setSeekPreviewPosition(null);
     if (status.didJustFinish && current && completeSentFor.current !== current.id) {
       completeSentFor.current = current.id;
       handleAutoNext("complete").catch(() => {});
@@ -1132,7 +1162,10 @@ export default function App() {
     if (!song?.audio_url) return;
     if (soundRef.current) await soundRef.current.unloadAsync().catch(() => {});
     completeSentFor.current = null;
-    const created = await Audio.Sound.createAsync({ uri: song.audio_url }, { shouldPlay: true, progressUpdateIntervalMillis: 1000 }, attachStatus);
+    setIsSeeking(false);
+    seekingRef.current = false;
+    setSeekPreviewPosition(null);
+    const created = await Audio.Sound.createAsync({ uri: song.audio_url }, { shouldPlay: true, progressUpdateIntervalMillis: 250 }, attachStatus);
     setSound(created.sound);
     setCurrent(song);
     setCurrentSoundId(queueKeyOf(song));
@@ -1250,24 +1283,61 @@ export default function App() {
     setPortraitBlocks([]);
   };
 
+  const measureProgressTrack = (callback) => {
+    if (!progressTrackRef.current?.measureInWindow) {
+      if (callback) callback(progressLayoutRef.current);
+      return;
+    }
+    progressTrackRef.current.measureInWindow((pageX, pageY, trackWidth, trackHeight) => {
+      const layout = { width: trackWidth, pageX, pageY, height: trackHeight };
+      progressLayoutRef.current = layout;
+      setProgressLayout(layout);
+      if (callback) callback(layout);
+    });
+  };
+
+  const getSeekPositionFromPageX = (pageX, layout = progressLayoutRef.current) => {
+    if (!layout?.width) return playbackRef.current.position || 0;
+    const localX = Math.min(layout.width, Math.max(0, pageX - layout.pageX));
+    const percent = layout.width > 0 ? localX / layout.width : 0;
+    return Math.floor(percent * (playbackRef.current.duration || 0));
+  };
+
+  const finishSeek = async (pageX, layout = progressLayoutRef.current) => {
+    const currentSound = soundRef.current;
+    const nextPosition = getSeekPositionFromPageX(pageX, layout);
+    setPlayback((prev) => ({ ...prev, position: nextPosition }));
+    setSeekPreviewPosition(null);
+    setIsSeeking(false);
+    seekingRef.current = false;
+    if (!currentSound) return;
+    await currentSound.setPositionAsync(nextPosition);
+  };
+
   const progressResponder = useRef(PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponder: () => Boolean(soundRef.current),
+    onMoveShouldSetPanResponder: () => Boolean(soundRef.current),
+    onPanResponderGrant: (_, gesture) => {
+      if (!soundRef.current) return;
+      setIsSeeking(true);
+      seekingRef.current = true;
+      measureProgressTrack((layout) => {
+        setSeekPreviewPosition(getSeekPositionFromPageX(gesture.x0 || gesture.moveX, layout));
+      });
+    },
     onPanResponderMove: (_, gesture) => {
-      const layout = progressLayoutRef.current;
-      const currentSound = soundRef.current;
-      if (!layout || !currentSound) return;
-      const localX = Math.min(layout.width, Math.max(0, gesture.moveX - layout.pageX));
-      const percent = layout.width > 0 ? localX / layout.width : 0;
-      setPlayback((prev) => ({ ...prev, position: Math.floor(percent * (playbackRef.current.duration || 0)) }));
+      if (!soundRef.current) return;
+      if (!seekingRef.current) {
+        setIsSeeking(true);
+        seekingRef.current = true;
+      }
+      setSeekPreviewPosition(getSeekPositionFromPageX(gesture.moveX));
     },
     onPanResponderRelease: async (_, gesture) => {
-      const layout = progressLayoutRef.current;
-      const currentSound = soundRef.current;
-      if (!layout || !currentSound) return;
-      const localX = Math.min(layout.width, Math.max(0, gesture.moveX - layout.pageX));
-      const percent = layout.width > 0 ? localX / layout.width : 0;
-      await currentSound.setPositionAsync(Math.floor(percent * (playbackRef.current.duration || 0)));
+      await finishSeek(gesture.moveX);
+    },
+    onPanResponderTerminate: async (_, gesture) => {
+      await finishSeek(gesture.moveX || gesture.x0 || 0);
     }
   })).current;
 
@@ -1350,34 +1420,36 @@ export default function App() {
     </SafeAreaView>
   );
 
-  const renderPlayer = () => (
+  const renderPlayer = () => {
+    const displayedPosition = isSeeking ? (seekPreviewPosition ?? playback.position) : playback.position;
+    const progressPercent = Math.min(1, Math.max(0, (displayedPosition || 0) / Math.max(playback.duration || 1, 1)));
+
+    return (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
       <ScreenTitle eyebrow={"Hi, " + displayName} title="Songs" subtitle="Play, favorite and manage your queue." />
       <View style={styles.playerCard}>
         <View style={styles.coverWrap}>
-          <View style={styles.cover}>
-            <View style={styles.coverGlowA} />
-            <View style={styles.coverGlowB} />
-            <View style={styles.coverGlowC} />
-            <Text style={styles.coverText}>TPY</Text>
-          </View>
+          <SongArtwork uri={current?.cover_url} size={228} radius={34} label={current?.title || "TPY"} />
         </View>
         <Text style={styles.playerTitle}>{current?.title || "No song yet"}</Text>
         <Text style={styles.playerSub} numberOfLines={2}>{songTagText(current)}</Text>
         <View style={styles.progressWrap}>
           <View
             ref={progressTrackRef}
-            style={styles.progressTrack}
-            onLayout={() => {
-              if (!progressTrackRef.current) return;
-              progressTrackRef.current.measure((x, y, w, h, pageX, pageY) => setProgressLayout({ width: w, pageX, pageY }));
-            }}
+            style={styles.progressTrackShell}
+            onLayout={() => measureProgressTrack()}
             {...progressResponder.panHandlers}
           >
-            <View style={[styles.progressFill, { width: String(Math.min(1, (playback.position || 0) / (playback.duration || 1)) * 100) + "%" }]} />
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: String(progressPercent * 100) + "%" }]} />
+              <View style={[
+                styles.progressThumb,
+                { left: String(progressPercent * 100) + "%", transform: [{ translateX: -10 }, { scale: isSeeking ? 1.08 : 1 }] }
+              ]} />
+            </View>
           </View>
           <View style={styles.progressTimeRow}>
-            <Text style={styles.progressText}>{formatTime(playback.position)}</Text>
+            <Text style={styles.progressText}>{formatTime(displayedPosition)}</Text>
             <Text style={styles.progressText}>{formatTime(playback.duration)}</Text>
           </View>
         </View>
@@ -1443,9 +1515,12 @@ export default function App() {
         </TouchableOpacity>
         {showQueue ? songs.map((item, index) => (
           <TouchableOpacity key={String(queueKeyOf(item))} style={[styles.listItem, queueKeyOf(current) === queueKeyOf(item) && styles.currentQueueItem]} onPress={() => play(item)}>
-            <View style={styles.flex}>
-              <Text style={styles.listTitle}>{String(index + 1) + ". " + (item.title || "Untitled")}</Text>
-              <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
+            <View style={styles.songListMain}>
+              <SongArtwork uri={item.cover_url} size={56} radius={18} label={item.title || "TPY"} />
+              <View style={styles.songListText}>
+                <Text style={styles.listTitle}>{String(index + 1) + ". " + (item.title || "Untitled")}</Text>
+                <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
+              </View>
             </View>
             <Text style={styles.chevron}>></Text>
           </TouchableOpacity>
@@ -1453,6 +1528,7 @@ export default function App() {
       </View>
     </ScrollView>
   );
+  };
 
   const renderFavorites = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
@@ -1507,9 +1583,12 @@ export default function App() {
                     <Text style={styles.placeholder}>This playlist is empty.</Text>
                   ) : songsInPlaylist.map((song) => (
                     <TouchableOpacity key={String(playlist.id) + "-" + String(song.id)} style={styles.listItem} onPress={() => enqueueSongToTail(song, "playlist-song-" + String(playlist.id))}>
-                      <View style={styles.flex}>
-                        <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
-                        <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
+                      <View style={styles.songListMain}>
+                        <SongArtwork uri={song.cover_url} size={56} radius={18} label={song.title || "TPY"} />
+                        <View style={styles.songListText}>
+                          <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
+                          <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
+                        </View>
                       </View>
                       <Text style={styles.chevron}>></Text>
                     </TouchableOpacity>
@@ -1527,9 +1606,12 @@ export default function App() {
           <Text style={styles.placeholder}>No favorite songs yet.</Text>
         ) : favorites.map((song) => (
           <TouchableOpacity key={String(song.id) + "-" + String(song.created_at || "fav")} style={styles.listItem} onPress={() => enqueueSongToTail(song, "favorite")}>
-            <View style={styles.flex}>
-              <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
-              <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
+            <View style={styles.songListMain}>
+              <SongArtwork uri={song.cover_url} size={56} radius={18} label={song.title || "TPY"} />
+              <View style={styles.songListText}>
+                <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
+                <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
+              </View>
             </View>
             <Text style={styles.chevron}>></Text>
           </TouchableOpacity>
@@ -1736,16 +1818,20 @@ const styles = StyleSheet.create({
   seedNameSelected: { color: "#111217" },
   playerCard: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 32, padding: 22, marginBottom: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   coverWrap: { alignItems: "center", marginBottom: 18 },
-  cover: { width: 228, height: 228, borderRadius: 34, alignItems: "center", justifyContent: "center", backgroundColor: "#18181C", overflow: "hidden" },
-  coverGlowA: { position: "absolute", width: 180, height: 180, borderRadius: 999, backgroundColor: "#4E67C8", top: -34, right: -20 },
-  coverGlowB: { position: "absolute", width: 140, height: 140, borderRadius: 999, backgroundColor: "#F19472", bottom: -18, left: -16 },
-  coverGlowC: { position: "absolute", width: 76, height: 76, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", top: 40, left: 42 },
-  coverText: { color: "#FFFFFF", fontSize: 34, fontWeight: "800", letterSpacing: 1.2 },
+  artworkFrame: { overflow: "hidden", backgroundColor: "#18181C", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  artworkImage: { width: "100%", height: "100%" },
+  artworkPlaceholder: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#18181C", overflow: "hidden" },
+  artworkGlowA: { position: "absolute", width: "76%", height: "76%", borderRadius: 999, backgroundColor: "#4E67C8", top: -18, right: -10 },
+  artworkGlowB: { position: "absolute", width: "58%", height: "58%", borderRadius: 999, backgroundColor: "#F19472", bottom: -14, left: -10 },
+  artworkGlowC: { position: "absolute", width: "34%", height: "34%", borderRadius: 999, backgroundColor: "rgba(255,255,255,0.12)", top: "30%", left: "24%" },
+  artworkLabel: { color: "#FFFFFF", fontWeight: "800", letterSpacing: 0.8 },
   playerTitle: { color: "#FFFFFF", fontSize: 30, fontWeight: "800", textAlign: "center", letterSpacing: -0.8 },
   playerSub: { color: "rgba(236,240,246,0.7)", fontSize: 15, lineHeight: 22, textAlign: "center", marginTop: 8 },
   progressWrap: { marginTop: 22 },
-  progressTrack: { height: 10, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.12)", overflow: "hidden" },
-  progressFill: { height: 10, borderRadius: 999, backgroundColor: "#FFFFFF" },
+  progressTrackShell: { marginHorizontal: -4, paddingVertical: 10 },
+  progressTrack: { height: 8, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.12)", overflow: "visible", position: "relative" },
+  progressFill: { position: "absolute", left: 0, top: 0, bottom: 0, borderRadius: 999, backgroundColor: "#FFFFFF" },
+  progressThumb: { position: "absolute", top: -6, width: 20, height: 20, borderRadius: 999, backgroundColor: "#FFFFFF", shadowColor: "#000000", shadowOpacity: 0.24, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 5 },
   progressTimeRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 },
   progressText: { color: "rgba(255,255,255,0.62)", fontSize: 12, fontVariant: ["tabular-nums"] },
   controlsRow: { flexDirection: "row", gap: 10, marginTop: 22 },
@@ -1760,6 +1846,8 @@ const styles = StyleSheet.create({
   queueAction: { color: "rgba(255,255,255,0.82)", fontSize: 14, fontWeight: "700" },
   listItem: { backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   currentQueueItem: { borderColor: "rgba(255,255,255,0.28)" },
+  songListMain: { flexDirection: "row", alignItems: "center", flex: 1 },
+  songListText: { flex: 1, marginLeft: 12 },
   playlistBox: { borderRadius: 20, backgroundColor: "rgba(255,255,255,0.08)", padding: 12, marginBottom: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   playlistRow: { flexDirection: "row", alignItems: "center" },
   playlistPlus: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF", marginLeft: 12 },

@@ -11,6 +11,11 @@ const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "DeepSeek-V3.2-Exp";
 const DEEPSEEK_ENABLED = process.env.DEEPSEEK_ENABLED === "true";
+const COVER_IMAGE_API_KEY = process.env.COVER_IMAGE_API_KEY || "";
+const COVER_IMAGE_BASE_URL = (process.env.COVER_IMAGE_BASE_URL || "https://operator.las.cn-beijing.volces.com/api/v1").replace(/\/$/, "");
+const COVER_IMAGE_MODEL = process.env.COVER_IMAGE_MODEL || "seedream-4-0-250828";
+const COVER_IMAGE_SIZE = process.env.COVER_IMAGE_SIZE || "1024x1024";
+const COVER_IMAGE_ENABLED = process.env.COVER_IMAGE_ENABLED === "true";
 
 const DEFAULT_TAG_WEIGHT = 0.3;
 const SELECTED_TAG_WEIGHT = 0.7;
@@ -173,15 +178,15 @@ app.get("/admin/user-detail", async (request, reply) => {
   }
   const userId = Number(user_id);
 
-  const user = await query("SELECT id, device_id, created_at FROM users WHERE id = $1", [userId]);
+  const user = await query("SELECT id, device_id, display_name, created_at, last_seen_at, is_active FROM users WHERE id = $1", [userId]);
 
   const favorites = await query(
-    "SELECT f.created_at, s.id AS song_id, s.title, s.cover_url, s.prompt, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, COALESCE(array_remove(array_agg(DISTINCT p.name), NULL), '{}') AS playlists FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN playlist_songs ps ON ps.song_id = s.id LEFT JOIN playlists p ON p.id = ps.playlist_id AND p.user_id = f.user_id WHERE f.user_id = $1 AND f.action = 'like' GROUP BY f.id, s.id ORDER BY f.created_at DESC LIMIT 100",
+    "SELECT f.created_at, s.id AS song_id, COALESCE(qm.display_title, s.title) AS title, COALESCE(qm.display_cover_url, s.cover_url) AS cover_url, s.prompt, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, COALESCE(array_remove(array_agg(DISTINCT p.name), NULL), '{}') AS playlists FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN LATERAL (SELECT display_title, display_cover_url FROM user_song_queue q WHERE q.user_id = f.user_id AND q.song_id = s.id AND (q.display_title IS NOT NULL OR q.display_cover_url IS NOT NULL) ORDER BY q.created_at DESC, q.id DESC LIMIT 1) qm ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN playlist_songs ps ON ps.song_id = s.id LEFT JOIN playlists p ON p.id = ps.playlist_id AND p.user_id = f.user_id WHERE f.user_id = $1 AND f.action = 'like' GROUP BY f.id, s.id, qm.display_title, qm.display_cover_url ORDER BY f.created_at DESC LIMIT 100",
     [userId]
   );
 
   const songs = await query(
-    "SELECT x.song_id, x.title, x.cover_url, x.prompt, x.created_at, x.source, x.tags FROM (SELECT DISTINCT ON (q.song_id) s.id AS song_id, s.title, s.cover_url, s.prompt, q.created_at, q.source, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 GROUP BY q.song_id, s.id, q.created_at, q.source ORDER BY q.song_id, q.created_at DESC) x ORDER BY x.created_at DESC LIMIT 100",
+    "SELECT x.song_id, x.title, x.cover_url, x.prompt, x.created_at, x.source, x.tags FROM (SELECT DISTINCT ON (q.id) s.id AS song_id, COALESCE(q.display_title, s.title) AS title, COALESCE(q.display_cover_url, s.cover_url) AS cover_url, s.prompt, q.created_at, q.source, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 GROUP BY q.id, s.id, q.display_title, q.display_cover_url, q.created_at, q.source ORDER BY q.id, q.created_at DESC) x ORDER BY x.created_at DESC LIMIT 100",
     [userId]
   );
 
@@ -439,7 +444,7 @@ app.get("/favorites", async (request, reply) => {
     return;
   }
   const { rows } = await query(
-    "SELECT s.id, s.title, s.cover_url, s.prompt, sa.audio_url, f.created_at, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE f.user_id = $1 AND f.action = 'like' GROUP BY s.id, sa.audio_url, f.created_at ORDER BY f.created_at DESC LIMIT 100",
+    "SELECT s.id, COALESCE(qm.display_title, s.title) AS title, COALESCE(qm.display_cover_url, s.cover_url) AS cover_url, s.prompt, sa.audio_url, f.created_at, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN LATERAL (SELECT display_title, display_cover_url FROM user_song_queue q WHERE q.user_id = f.user_id AND q.song_id = s.id AND (q.display_title IS NOT NULL OR q.display_cover_url IS NOT NULL) ORDER BY q.created_at DESC, q.id DESC LIMIT 1) qm ON true LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE f.user_id = $1 AND f.action = 'like' GROUP BY s.id, qm.display_title, qm.display_cover_url, sa.audio_url, f.created_at ORDER BY f.created_at DESC LIMIT 100",
     [Number(user_id)]
   );
   return { items: rows };
@@ -474,7 +479,7 @@ app.post("/playlists", async (request, reply) => {
 app.get("/playlists/:id/songs", async (request, reply) => {
   const { id } = request.params;
   const { rows } = await query(
-    "SELECT s.id, s.title, s.cover_url, s.prompt, sa.audio_url, ps.created_at, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM playlist_songs ps JOIN songs s ON s.id = ps.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE ps.playlist_id = $1 GROUP BY s.id, sa.audio_url, ps.created_at ORDER BY ps.created_at DESC",
+    "SELECT s.id, COALESCE(qm.display_title, s.title) AS title, COALESCE(qm.display_cover_url, s.cover_url) AS cover_url, s.prompt, sa.audio_url, ps.created_at, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM playlist_songs ps JOIN playlists p ON p.id = ps.playlist_id JOIN songs s ON s.id = ps.song_id LEFT JOIN LATERAL (SELECT display_title, display_cover_url FROM user_song_queue q WHERE q.user_id = p.user_id AND q.song_id = s.id AND (q.display_title IS NOT NULL OR q.display_cover_url IS NOT NULL) ORDER BY q.created_at DESC, q.id DESC LIMIT 1) qm ON true LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE ps.playlist_id = $1 GROUP BY s.id, qm.display_title, qm.display_cover_url, sa.audio_url, ps.created_at ORDER BY ps.created_at DESC",
     [Number(id)]
   );
   return { items: rows };
@@ -751,9 +756,73 @@ async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
   }
 }
 
+function normalizeTitle(title, fallback = null) {
+  const value = String(title || "").trim();
+  if (!value) return fallback;
+  return value.slice(0, 40);
+}
+
+function buildCoverPrompt({ title, coverHint, prompt }) {
+  const parts = [
+    String(coverHint || "").trim(),
+    title ? "单曲名：《" + title + "》。" : "",
+    "请生成一张正方形音乐封面插图，不要任何文字、logo、水印或排版。",
+    "只保留一个明确主体与氛围背景，突出色彩、光感、层次和情绪，适合音乐流媒体封面。",
+    prompt ? "音乐气质参考：" + String(prompt).trim() : ""
+  ];
+  return parts.filter(Boolean).join(" ");
+}
+
+async function generateCoverImage({ title, coverHint, prompt }) {
+  if (!COVER_IMAGE_ENABLED || !COVER_IMAGE_API_KEY || !String(coverHint || "").trim()) return null;
+
+  try {
+    const response = await fetch(COVER_IMAGE_BASE_URL + "/images/generations", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + COVER_IMAGE_API_KEY
+      },
+      body: JSON.stringify({
+        model: COVER_IMAGE_MODEL,
+        prompt: buildCoverPrompt({ title, coverHint, prompt }),
+        size: COVER_IMAGE_SIZE,
+        response_format: "url",
+        watermark: false
+      })
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      app.log.warn({ status: response.status, data }, "cover generation failed");
+      return null;
+    }
+
+    const asset = data?.data?.[0] || data?.images?.[0] || data?.output?.[0] || data?.result || null;
+    const url = typeof asset?.url === "string" && asset.url.trim() ? asset.url.trim() : null;
+    const b64 = typeof asset?.b64_json === "string" && asset.b64_json.trim()
+      ? "data:image/png;base64," + asset.b64_json.trim()
+      : null;
+    const coverUrl = url || b64;
+
+    if (!coverUrl) {
+      app.log.warn({ data }, "cover generation returned no image asset");
+      return null;
+    }
+
+    return {
+      cover_url: coverUrl,
+      provider_model: data?.model || COVER_IMAGE_MODEL
+    };
+  } catch (error) {
+    app.log.warn({ err: String(error) }, "cover generation error");
+    return null;
+  }
+}
+
 async function getGenerationJobDetail(jobId) {
   const { rows } = await query(
-    "SELECT g.id, g.user_id, g.prompt, g.base_prompt, g.title_hint, g.cover_hint, g.status, g.error, g.item_ids, g.created_at, s.id AS song_id, s.title, s.cover_url, sa.audio_url, q.source, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM generation_jobs g LEFT JOIN user_song_queue q ON q.generation_job_id = g.id LEFT JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE g.id = $1 GROUP BY g.id, s.id, sa.audio_url, q.source ORDER BY s.id DESC NULLS LAST LIMIT 1",
+    "SELECT g.id, g.user_id, g.prompt, g.base_prompt, g.title_hint, g.cover_hint, g.status, g.error, g.item_ids, g.created_at, s.id AS song_id, COALESCE(q.display_title, s.title) AS title, COALESCE(q.display_cover_url, s.cover_url) AS cover_url, sa.audio_url, q.source, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM generation_jobs g LEFT JOIN LATERAL (SELECT id, song_id, source, display_title, display_cover_url FROM user_song_queue WHERE generation_job_id = g.id ORDER BY created_at DESC, id DESC LIMIT 1) q ON true LEFT JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE g.id = $1 GROUP BY g.id, s.id, q.display_title, q.display_cover_url, sa.audio_url, q.source ORDER BY s.id DESC NULLS LAST LIMIT 1",
     [Number(jobId)]
   );
   return rows[0] || null;
@@ -776,18 +845,27 @@ async function getUserExcludedSongIds(userId) {
   return rows.map((row) => Number(row.song_id)).filter(Boolean);
 }
 
-async function queueSongForUser(userId, songId, jobId, source) {
-  await query(
-    "INSERT INTO user_song_queue (user_id, song_id, generation_job_id, source) VALUES ($1, $2, $3, $4)",
-    [Number(userId), Number(songId), jobId ? Number(jobId) : null, source]
+async function queueSongForUser(userId, songId, jobId, source, options = {}) {
+  const { displayTitle = null, displayCoverUrl = null } = options;
+  const { rows } = await query(
+    "INSERT INTO user_song_queue (user_id, song_id, generation_job_id, source, display_title, display_cover_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+    [
+      Number(userId),
+      Number(songId),
+      jobId ? Number(jobId) : null,
+      source,
+      displayTitle || null,
+      displayCoverUrl || null
+    ]
   );
+  return rows[0] || null;
 }
 
 async function findReusableSongs(userId, tagIds, limit = 1, threshold = REUSE_SIMILARITY_MIN) {
   if (!Array.isArray(tagIds) || tagIds.length === 0) return [];
   const excludedSongIds = await getUserExcludedSongIds(userId);
   const { rows } = await query(
-    "SELECT s.id, s.title, s.cover_url, s.prompt, s.model, s.duration, s.style, s.reuse_count, COUNT(DISTINCT st.tag_id)::int AS song_tag_count, COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::int AS matched_tag_count, (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) AS similarity FROM songs s JOIN song_assets sa ON sa.song_id = s.id AND sa.audio_url IS NOT NULL LEFT JOIN song_tags st ON st.song_id = s.id WHERE s.source_song_id IS NULL AND COALESCE(s.is_available, true) = true AND ($4::int[] = '{}'::int[] OR NOT (s.id = ANY($4::int[]))) GROUP BY s.id HAVING COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END) > 0 AND (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) >= $3 ORDER BY similarity DESC, matched_tag_count DESC, s.reuse_count DESC, s.created_at DESC LIMIT $5",
+    "SELECT s.id, s.title, s.cover_url, s.cover_hint, s.prompt, s.model, s.duration, s.style, s.reuse_count, COUNT(DISTINCT st.tag_id)::int AS song_tag_count, COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::int AS matched_tag_count, (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) AS similarity FROM songs s JOIN song_assets sa ON sa.song_id = s.id AND sa.audio_url IS NOT NULL LEFT JOIN song_tags st ON st.song_id = s.id WHERE s.source_song_id IS NULL AND COALESCE(s.is_available, true) = true AND ($4::int[] = '{}'::int[] OR NOT (s.id = ANY($4::int[]))) GROUP BY s.id HAVING COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END) > 0 AND (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) >= $3 ORDER BY similarity DESC, matched_tag_count DESC, s.reuse_count DESC, s.created_at DESC LIMIT $5",
     [tagIds, tagIds.length, threshold, excludedSongIds, Number(limit)]
   );
   const result = [];
@@ -806,7 +884,18 @@ async function findReusableSong(userId, tagIds, threshold = REUSE_SIMILARITY_MIN
   return rows[0] || null;
 }
 async function reuseSongForUser(job, librarySong) {
-  await queueSongForUser(job.user_id, librarySong.id, job.id, 'reused');
+  const displayTitle = normalizeTitle(job.title_hint || librarySong.title || null, librarySong.title || null);
+  const generatedCover = await generateCoverImage({
+    title: displayTitle || librarySong.title || null,
+    coverHint: job.cover_hint || librarySong.cover_hint || librarySong.prompt || job.prompt,
+    prompt: job.prompt || librarySong.prompt || null
+  });
+  const displayCoverUrl = generatedCover?.cover_url || librarySong.cover_url || null;
+
+  await queueSongForUser(job.user_id, librarySong.id, job.id, 'reused', {
+    displayTitle,
+    displayCoverUrl
+  });
 
   await query(
     "UPDATE songs SET reuse_count = reuse_count + 1 WHERE id = $1",
@@ -1024,17 +1113,23 @@ app.post("/callback/tpy", async (request, reply) => {
       );
       if (rows.length > 0) {
         const job = rows[0];
-        const coverUrl = s?.cover_url || s?.image_url || s?.cover || null;
+        const displayTitle = normalizeTitle(job.title_hint || s?.title || null, s?.title || null);
+        const generatedCover = await generateCoverImage({
+          title: displayTitle,
+          coverHint: job.cover_hint || job.prompt,
+          prompt: job.prompt
+        });
+        const coverUrl = generatedCover?.cover_url || s?.cover_url || s?.image_url || s?.cover || null;
         const song = await query(
           "INSERT INTO songs (user_id, prompt, base_prompt, title, cover_url, cover_hint, model, duration, style, generation_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'generated') RETURNING id",
           [
             job.user_id,
             job.prompt,
             job.base_prompt || job.prompt,
-            s?.title || job.title_hint || null,
+            displayTitle,
             coverUrl,
             job.cover_hint || null,
-            s?.model || null,
+            generatedCover?.provider_model || s?.model || null,
             Number.isFinite(Number(s?.duration)) ? Number(s?.duration) : null,
             s?.style || null
           ]
@@ -1052,7 +1147,10 @@ app.post("/callback/tpy", async (request, reply) => {
           "INSERT INTO song_assets (song_id, item_id, audio_url) VALUES ($1, $2, $3)",
           [songId, itemId, audioUrl]
         );
-        await queueSongForUser(job.user_id, songId, job.id, 'generated');
+        await queueSongForUser(job.user_id, songId, job.id, 'generated', {
+          displayTitle,
+          displayCoverUrl: coverUrl
+        });
       }
     }
   }
@@ -1139,10 +1237,9 @@ app.get("/songs", async (request, reply) => {
   }
   const includeHistory = String(include_history || "").toLowerCase() === "true";
   const { rows } = await query(
-    "SELECT DISTINCT ON (q.song_id) s.id, s.title, s.cover_url, s.prompt, sa.audio_url, q.created_at, q.source, COALESCE(q.is_hidden, false) AS is_hidden, q.acted_at, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 AND ($2::boolean = true OR COALESCE(q.is_hidden, false) = false) GROUP BY q.song_id, s.id, s.title, s.cover_url, s.prompt, sa.audio_url, q.created_at, q.source, q.is_hidden, q.acted_at ORDER BY q.song_id, q.created_at DESC",
+    "SELECT q.id AS queue_id, s.id, COALESCE(q.display_title, s.title) AS title, COALESCE(q.display_cover_url, s.cover_url) AS cover_url, s.prompt, sa.audio_url, q.created_at, q.source, COALESCE(q.is_hidden, false) AS is_hidden, q.acted_at, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 AND ($2::boolean = true OR COALESCE(q.is_hidden, false) = false) GROUP BY q.id, s.id, q.display_title, q.display_cover_url, s.prompt, sa.audio_url, q.created_at, q.source, q.is_hidden, q.acted_at ORDER BY q.created_at ASC, q.id ASC",
     [Number(user_id), includeHistory]
   );
-  rows.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   return { items: rows.slice(-50) };
 });
 
