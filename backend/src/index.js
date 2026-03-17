@@ -1,4 +1,5 @@
 ﻿import "dotenv/config";
+import crypto from "crypto";
 import Fastify from "fastify";
 import { query } from "./db.js";
 
@@ -48,6 +49,45 @@ const DEEPSEEK_PRODUCT_REQUIREMENTS = [
   "\u6807\u9898\u8981\u81ea\u7136\u3001\u7b80\u6d01\u3001\u50cf\u771f\u5b9e\u6b4c\u66f2\u540d\u3002",
   "\u5c01\u9762\u63cf\u8ff0\u8981\u9002\u5408\u540e\u7eed\u505a\u97f3\u4e50\u5c01\u9762\u56fe\uff0c\u7a81\u51fa\u6c1b\u56f4\u548c\u4e3b\u4f53\u610f\u8c61\u3002"
 ].join(" ");
+
+function normalizeAccountId(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(String(password), salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  const raw = String(stored || "");
+  const [salt, originalHash] = raw.split(":");
+  if (!salt || !originalHash) return false;
+  const candidate = crypto.scryptSync(String(password), salt, 64).toString("hex");
+  const a = Buffer.from(candidate, "hex");
+  const b = Buffer.from(originalHash, "hex");
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+async function ensureRuntimeSchema() {
+  await query(`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS display_name TEXT,
+      ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS account_id TEXT,
+      ADD COLUMN IF NOT EXISTS password_hash TEXT,
+      ADD COLUMN IF NOT EXISTS avatar TEXT
+  `);
+  await query(`
+    UPDATE users
+    SET account_id = LOWER(device_id)
+    WHERE account_id IS NULL AND device_id IS NOT NULL
+  `);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_account_id_unique ON users(account_id) WHERE account_id IS NOT NULL`);
+}
 
 function requireAdmin(request, reply) {
   const token = request.headers["x-admin-token"];
@@ -132,7 +172,7 @@ app.delete("/admin/tag-blacklist/:id", async (request, reply) => {
 });
 app.get("/admin/users", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
-  const { rows } = await query("SELECT * FROM users ORDER BY created_at DESC");
+  const { rows } = await query("SELECT id, device_id, account_id, display_name, avatar, created_at, last_seen_at, is_active FROM users ORDER BY created_at DESC");
   return { items: rows };
 });
 
@@ -141,7 +181,7 @@ app.patch("/admin/users/:id", async (request, reply) => {
   const { id } = request.params;
   const { display_name, is_active } = request.body || {};
   const { rows } = await query(
-    "UPDATE users SET display_name = COALESCE(NULLIF($1, ''), display_name), is_active = COALESCE($2, is_active), last_seen_at = COALESCE(last_seen_at, NOW()) WHERE id = $3 RETURNING *",
+    "UPDATE users SET display_name = COALESCE(NULLIF($1, ''), display_name), is_active = COALESCE($2, is_active), last_seen_at = COALESCE(last_seen_at, NOW()) WHERE id = $3 RETURNING id, device_id, account_id, display_name, avatar, created_at, last_seen_at, is_active",
     [display_name, is_active, Number(id)]
   );
   return { item: rows[0] || null };
@@ -150,7 +190,7 @@ app.patch("/admin/users/:id", async (request, reply) => {
 app.get("/admin/user-summary", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
   const { rows } = await query(
-    "SELECT u.id, u.device_id, COALESCE(u.display_name, u.device_id) AS display_name, u.created_at, u.last_seen_at, u.is_active, COUNT(DISTINCT f.id)::int AS feedback_count, COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS like_count, COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skip_count, COUNT(DISTINCT q.song_id)::int AS queued_songs, COUNT(DISTINCT p.id)::int AS playlist_count, COUNT(DISTINCT ut.tag_id) FILTER (WHERE COALESCE(ut.is_active, true) = true)::int AS active_tag_count FROM users u LEFT JOIN feedback f ON f.user_id = u.id LEFT JOIN user_song_queue q ON q.user_id = u.id LEFT JOIN playlists p ON p.user_id = u.id LEFT JOIN user_tags ut ON ut.user_id = u.id GROUP BY u.id ORDER BY COALESCE(u.last_seen_at, u.created_at) DESC, u.created_at DESC"
+    "SELECT u.id, u.device_id, u.account_id, u.avatar, COALESCE(u.display_name, u.account_id, u.device_id) AS display_name, u.created_at, u.last_seen_at, u.is_active, COUNT(DISTINCT f.id)::int AS feedback_count, COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS like_count, COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skip_count, COUNT(DISTINCT q.song_id)::int AS queued_songs, COUNT(DISTINCT p.id)::int AS playlist_count, COUNT(DISTINCT ut.tag_id) FILTER (WHERE COALESCE(ut.is_active, true) = true)::int AS active_tag_count FROM users u LEFT JOIN feedback f ON f.user_id = u.id LEFT JOIN user_song_queue q ON q.user_id = u.id LEFT JOIN playlists p ON p.user_id = u.id LEFT JOIN user_tags ut ON ut.user_id = u.id GROUP BY u.id ORDER BY COALESCE(u.last_seen_at, u.created_at) DESC, u.created_at DESC"
   );
   return { items: rows };
 });
@@ -178,7 +218,7 @@ app.get("/admin/user-detail", async (request, reply) => {
   }
   const userId = Number(user_id);
 
-  const user = await query("SELECT id, device_id, display_name, created_at, last_seen_at, is_active FROM users WHERE id = $1", [userId]);
+  const user = await query("SELECT id, device_id, account_id, display_name, avatar, created_at, last_seen_at, is_active FROM users WHERE id = $1", [userId]);
 
   const favorites = await query(
     "SELECT f.created_at, s.id AS song_id, COALESCE(qm.display_title, s.title) AS title, COALESCE(qm.display_cover_url, s.cover_url) AS cover_url, s.prompt, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, COALESCE(array_remove(array_agg(DISTINCT p.name), NULL), '{}') AS playlists FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN LATERAL (SELECT display_title, display_cover_url FROM user_song_queue q WHERE q.user_id = f.user_id AND q.song_id = s.id AND (q.display_title IS NOT NULL OR q.display_cover_url IS NOT NULL) ORDER BY q.created_at DESC, q.id DESC LIMIT 1) qm ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN playlist_songs ps ON ps.song_id = s.id LEFT JOIN playlists p ON p.id = ps.playlist_id AND p.user_id = f.user_id WHERE f.user_id = $1 AND f.action = 'like' GROUP BY f.id, s.id, qm.display_title, qm.display_cover_url ORDER BY f.created_at DESC LIMIT 100",
@@ -288,6 +328,65 @@ app.patch("/admin/library-songs/:id", async (request, reply) => {
   );
   return { item: rows[0] || null };
 });
+app.post("/auth/register", async (request, reply) => {
+  const { account_id, password, display_name, avatar } = request.body || {};
+  const accountId = normalizeAccountId(account_id);
+  const cleanName = String(display_name || "").trim();
+  const cleanAvatar = String(avatar || "").trim();
+  const rawPassword = String(password || "");
+
+  if (!accountId || !cleanName || !cleanAvatar || !rawPassword) {
+    reply.code(400).send({ error: "account_id, password, display_name, avatar required" });
+    return;
+  }
+  if (!/^[a-z0-9._-]{3,32}$/.test(accountId)) {
+    reply.code(400).send({ error: "account_id must be 3-32 chars: letters, numbers, dot, underscore, hyphen" });
+    return;
+  }
+  if (rawPassword.length < 6) {
+    reply.code(400).send({ error: "password must be at least 6 characters" });
+    return;
+  }
+
+  const existing = await query("SELECT id FROM users WHERE account_id = $1 LIMIT 1", [accountId]);
+  if (existing.rows.length > 0) {
+    reply.code(409).send({ error: "account already exists" });
+    return;
+  }
+
+  const { rows } = await query(
+    "INSERT INTO users (device_id, account_id, password_hash, display_name, avatar, last_seen_at, is_active) VALUES ($1, $2, $3, $4, $5, NOW(), true) RETURNING id, device_id, account_id, display_name, avatar, created_at, last_seen_at, is_active",
+    [accountId, accountId, hashPassword(rawPassword), cleanName, cleanAvatar]
+  );
+  return { user: rows[0] };
+});
+
+app.post("/auth/login", async (request, reply) => {
+  const { account_id, password } = request.body || {};
+  const accountId = normalizeAccountId(account_id);
+  const rawPassword = String(password || "");
+  if (!accountId || !rawPassword) {
+    reply.code(400).send({ error: "account_id and password required" });
+    return;
+  }
+
+  const { rows } = await query(
+    "SELECT id, device_id, account_id, display_name, avatar, password_hash, created_at, last_seen_at, is_active FROM users WHERE account_id = $1 LIMIT 1",
+    [accountId]
+  );
+  const user = rows[0];
+  if (!user || !user.password_hash || !verifyPassword(rawPassword, user.password_hash) || user.is_active === false) {
+    reply.code(401).send({ error: "invalid account or password" });
+    return;
+  }
+
+  const touched = await query(
+    "UPDATE users SET last_seen_at = NOW(), is_active = true WHERE id = $1 RETURNING id, device_id, account_id, display_name, avatar, created_at, last_seen_at, is_active",
+    [Number(user.id)]
+  );
+  return { user: touched.rows[0] };
+});
+
 app.post("/users", async (request, reply) => {
   const { device_id, display_name } = request.body || {};
   if (!device_id) {
@@ -1244,6 +1343,8 @@ app.get("/songs", async (request, reply) => {
 });
 
 const port = Number(process.env.PORT || 8080);
+
+await ensureRuntimeSchema();
 app.listen({ port, host: "0.0.0.0" });
 
 

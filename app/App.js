@@ -48,6 +48,8 @@ const BOUNCE_SPRING = 0.085;
 const BOUNCE_DAMPING = 0.76;
 const VELOCITY_EPSILON = 0.09;
 
+const AUTH_AVATARS = ["\uD83C\uDFA7", "\uD83C\uDFB9", "\uD83C\uDF19", "\u2728", "\uD83D\uDD25", "\uD83C\uDF0A", "\uD83C\uDF08", "\uD83E\uDE90", "\uD83E\uDD8B", "\uD83C\uDFBC"];
+
 const FALLBACK_BLOBS = [
   { x: 0.22, y: 0.18, r: 0.33, color: "rgba(255,138,122,0.48)" },
   { x: 0.82, y: 0.28, r: 0.24, color: "rgba(52,132,255,0.42)" },
@@ -533,8 +535,11 @@ export default function App() {
   const { width, height } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState("player");
   const [authMode, setAuthMode] = useState("login");
-  const [accountId, setAccountId] = useState("demo-device");
+  const [accountId, setAccountId] = useState("");
   const [accountName, setAccountName] = useState("");
+  const [accountPassword, setAccountPassword] = useState("");
+  const [accountPasswordConfirm, setAccountPasswordConfirm] = useState("");
+  const [selectedAvatar, setSelectedAvatar] = useState(AUTH_AVATARS[0]);
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
@@ -592,7 +597,7 @@ export default function App() {
   const prefetchLockRef = useRef(false);
   const userId = session?.userId || null;
   const userIdRef = useRef(userId);
-  const displayName = session?.name || session?.deviceId || "\u8bbf\u5ba2";
+  const displayName = session?.name || session?.accountId || session?.deviceId || "\u8bbf\u5ba2";
   const effectiveStageSize = portraitStageSize.width > 20 && portraitStageSize.height > 20 ? portraitStageSize : { width, height: Math.max(620, height - 28) };
 
   const groupedTags = useMemo(() => {
@@ -651,13 +656,33 @@ export default function App() {
     setTags(data.items || []);
   };
 
-  const ensureUser = async (device = accountId.trim(), displayNameValue = accountName.trim()) => {
-    const res = await fetch(`${API_BASE}/users`, {
+  const registerUser = async () => {
+    const res = await fetch(`${API_BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_id: device, display_name: displayNameValue || undefined })
+      body: JSON.stringify({
+        account_id: accountId.trim(),
+        display_name: accountName.trim(),
+        password: accountPassword,
+        avatar: selectedAvatar
+      })
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "register failed");
+    return data.user;
+  };
+
+  const loginUser = async () => {
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        account_id: accountId.trim(),
+        password: accountPassword
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "login failed");
     return data.user;
   };
 
@@ -720,7 +745,7 @@ export default function App() {
   };
 
   const bootstrapUser = async (user, nameOverride) => {
-    setSession({ userId: user.id, deviceId: user.device_id, name: nameOverride || accountName.trim() || user.device_id });
+    setSession({ userId: user.id, deviceId: user.device_id, accountId: user.account_id || user.device_id, name: nameOverride || user.display_name || accountName.trim() || user.account_id || user.device_id, avatar: user.avatar || selectedAvatar });
     const profile = await loadProfileTags(user.id);
     await Promise.all([refreshSongs(user.id, { preferLatest: true }), refreshFavorites(user.id), loadPlaylists(user.id)]);
     const active = (profile || []).filter((item) => item.is_active !== false);
@@ -746,10 +771,10 @@ export default function App() {
   const computeNextWeight = (currentWeight, zoneId) => {
     const value = clamp(Number(currentWeight || 0), 0, 1);
     if (zoneId === 2) {
-      const lowered = value * 0.56 - 0.06;
+      const lowered = value * 0.4 - 0.08;
       return lowered <= 0.04 ? 0 : Number(lowered.toFixed(3));
     }
-    return Number(Math.min(1, value + 0.18).toFixed(3));
+    return Number(Math.min(1, value + 0.26).toFixed(3));
   };
 
   const applyProfileTagActionById = async (tagIdInput, zoneId, fallbackWeight = 0, options = {}) => {
@@ -847,6 +872,7 @@ export default function App() {
   const moveDraggedBlock = (id, point) => {
     const stage = stageSizeRef.current;
     const liveBlock = (blocksRef.current || []).find((item) => item.id === id);
+    let shouldAutoFinish = false;
     if (liveBlock) {
       const fallbackPoint = lastDragPointRef.current || liveBlock.currentPos;
       const isValidPoint = point
@@ -861,6 +887,7 @@ export default function App() {
       const zoneId = findZoneForBlock(liveBlock, settledPoint, stage);
       if (!dragActionCommittedRef.current && zoneId !== -1) {
         dragActionCommittedRef.current = true;
+        shouldAutoFinish = true;
         applyProfileTagActionById(Number(liveBlock.id), zoneId, Number(liveBlock.tag?.weight || 0), { refreshAfter: false }).catch(() => {
           dragActionCommittedRef.current = false;
         });
@@ -897,6 +924,10 @@ export default function App() {
       blocksRef.current = next;
       return next;
     });
+
+    if (shouldAutoFinish && draggingIdRef.current === id) {
+      finishDraggedBlock(id);
+    }
   };
 
   const finishDraggedBlock = (id) => {
@@ -1011,16 +1042,24 @@ export default function App() {
   })).current;
 
   const submitAuth = async () => {
-    const cleanId = accountId.trim();
+    const cleanId = accountId.trim().toLowerCase();
     const cleanName = accountName.trim();
-    if (!cleanId) return Alert.alert("\u8fd8\u5dee\u4e00\u6b65", "\u8bf7\u8f93\u5165\u8d26\u6237 ID");
-    if (authMode === "register" && !cleanName) return Alert.alert("\u8fd8\u5dee\u4e00\u6b65", "\u6ce8\u518c\u65f6\u8bf7\u586b\u5199\u6635\u79f0");
+    if (!cleanId) return Alert.alert("Missing account", "Please enter your account ID.");
+    if (!accountPassword) return Alert.alert("Missing password", "Please enter your password.");
+    if (authMode === "register") {
+      if (!cleanName) return Alert.alert("Missing username", "Please enter a username for registration.");
+      if (!selectedAvatar) return Alert.alert("Missing avatar", "Please choose an avatar.");
+      if (accountPassword.length < 6) return Alert.alert("Weak password", "Password must be at least 6 characters.");
+      if (accountPassword !== accountPasswordConfirm) return Alert.alert("Password mismatch", "The two passwords do not match.");
+    }
     setAuthLoading(true);
     try {
-      const user = await ensureUser(cleanId, cleanName);
-      await bootstrapUser(user, cleanName || cleanId);
+      const user = authMode === "login" ? await loginUser() : await registerUser();
+      await bootstrapUser(user, user.display_name || cleanName || cleanId);
+      setAccountPassword("");
+      setAccountPasswordConfirm("");
     } catch (err) {
-      Alert.alert("\u8fde\u63a5\u5931\u8d25", String(err));
+      Alert.alert(authMode === "login" ? "Login failed" : "Register failed", String(err.message || err));
     } finally {
       setAuthLoading(false);
     }
@@ -1281,6 +1320,8 @@ export default function App() {
     setActiveTab("player");
     setShowPlaylistPicker(false);
     setPortraitBlocks([]);
+    setAccountPassword("");
+    setAccountPasswordConfirm("");
   };
 
   const measureProgressTrack = (callback) => {
@@ -1348,7 +1389,7 @@ export default function App() {
         <View style={styles.authCard}>
           <Text style={styles.authEyebrow}>TPY MUSIC</Text>
           <Text style={styles.authTitle}>Sign in to restore your music space</Text>
-          <Text style={styles.authSubtitle}>After login, we restore tags, queue, playlists and favorites.</Text>
+          <Text style={styles.authSubtitle}>Register with username, account, password and avatar. Login uses account and password.</Text>
           <View style={styles.authModeRow}>
             <TouchableOpacity style={[styles.authMode, authMode === "login" && styles.authModeActive]} onPress={() => setAuthMode("login")}>
               <Text style={[styles.authModeText, authMode === "login" && styles.authModeTextActive]}>Login</Text>
@@ -1358,9 +1399,23 @@ export default function App() {
             </TouchableOpacity>
           </View>
           {authMode === "register" ? (
-            <TextInput value={accountName} onChangeText={setAccountName} placeholder="Nickname" placeholderTextColor="#B9C2CE" style={styles.input} />
+            <>
+              <TextInput value={accountName} onChangeText={setAccountName} placeholder="Username" placeholderTextColor="#B9C2CE" style={styles.input} />
+              <Text style={styles.avatarPickerLabel}>Choose avatar</Text>
+              <View style={styles.avatarPickerRow}>
+                {AUTH_AVATARS.map((avatar) => (
+                  <TouchableOpacity key={avatar} style={[styles.avatarChip, selectedAvatar === avatar && styles.avatarChipActive]} onPress={() => setSelectedAvatar(avatar)}>
+                    <Text style={styles.avatarChipText}>{avatar}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
           ) : null}
-          <TextInput value={accountId} onChangeText={setAccountId} placeholder="Account ID, e.g. demo-device" placeholderTextColor="#B9C2CE" autoCapitalize="none" style={styles.input} />
+          <TextInput value={accountId} onChangeText={(value) => setAccountId(value.replace(/\s+/g, "").toLowerCase())} placeholder="Account ID" placeholderTextColor="#B9C2CE" autoCapitalize="none" style={styles.input} />
+          <TextInput value={accountPassword} onChangeText={setAccountPassword} placeholder="Password" placeholderTextColor="#B9C2CE" secureTextEntry style={styles.input} />
+          {authMode === "register" ? (
+            <TextInput value={accountPasswordConfirm} onChangeText={setAccountPasswordConfirm} placeholder="Confirm password" placeholderTextColor="#B9C2CE" secureTextEntry style={styles.input} />
+          ) : null}
           <TouchableOpacity style={styles.primary} onPress={submitAuth} disabled={authLoading}>
             {authLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>{authMode === "login" ? "Login & restore" : "Register & continue"}</Text>}
           </TouchableOpacity>
@@ -1724,8 +1779,9 @@ export default function App() {
       <View style={styles.groupCard}>
         <Text style={styles.groupTitle}>Current account</Text>
         <View style={styles.accountCard}>
+          <View style={styles.accountAvatar}><Text style={styles.accountAvatarText}>{session?.avatar || "\uD83C\uDFA7"}</Text></View>
           <Text style={styles.accountName}>{displayName}</Text>
-          <Text style={styles.accountMeta}>{"Account ID: " + String(session?.deviceId || "")}</Text>
+          <Text style={styles.accountMeta}>{"Account ID: " + String(session?.accountId || session?.deviceId || "")}</Text>
           <Text style={styles.accountMeta}>{"User ID: " + String(session?.userId || "")}</Text>
         </View>
       </View>
@@ -1802,6 +1858,11 @@ const styles = StyleSheet.create({
   authModeActive: { backgroundColor: "rgba(255,255,255,0.14)" },
   authModeText: { color: "rgba(255,255,255,0.56)", fontWeight: "700" },
   authModeTextActive: { color: "#FFFFFF" },
+  avatarPickerLabel: { color: "rgba(255,255,255,0.76)", fontSize: 13, fontWeight: "700", marginBottom: 10, marginTop: 2 },
+  avatarPickerRow: { flexDirection: "row", flexWrap: "wrap", marginBottom: 12 },
+  avatarChip: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center", marginRight: 10, marginBottom: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  avatarChipActive: { backgroundColor: "rgba(255,255,255,0.18)", borderColor: "rgba(255,255,255,0.3)" },
+  avatarChipText: { fontSize: 22 },
   input: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", paddingHorizontal: 16, paddingVertical: 15, marginBottom: 10, color: "#FFFFFF" },
   primary: { backgroundColor: "rgba(255,255,255,0.94)", borderRadius: 20, paddingVertical: 16, alignItems: "center", marginTop: 6, shadowColor: "#000", shadowOpacity: 0.16, shadowOffset: { width: 0, height: 12 }, shadowRadius: 20, elevation: 8 },
   primaryText: { color: "#111217", fontSize: 15, fontWeight: "800" },
@@ -1892,6 +1953,8 @@ const styles = StyleSheet.create({
   onboardingProgressTrack: { height: 10, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.1)", overflow: "hidden", marginBottom: 16 },
   onboardingProgressFill: { height: 10, borderRadius: 999, backgroundColor: "#FFFFFF" },
   accountCard: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 22, padding: 16, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  accountAvatar: { width: 72, height: 72, borderRadius: 36, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center", marginBottom: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.1)" },
+  accountAvatarText: { fontSize: 34 },
   accountName: { color: "#FFFFFF", fontSize: 22, fontWeight: "800", marginBottom: 8 },
   accountMeta: { color: "rgba(255,255,255,0.68)", fontSize: 14, marginTop: 3 },
   dangerButton: { backgroundColor: "rgba(145,38,38,0.88)", borderRadius: 18, paddingVertical: 15, alignItems: "center" },
