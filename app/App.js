@@ -562,8 +562,10 @@ export default function App() {
   const soundRef = useRef(sound);
   const progressLayoutRef = useRef(progressLayout);
   const songsRef = useRef(songs);
+  const profileTagsRef = useRef(profileTags);
   const prefetchLockRef = useRef(false);
   const userId = session?.userId || null;
+  const userIdRef = useRef(userId);
   const displayName = session?.name || session?.deviceId || "\u8bbf\u5ba2";
   const effectiveStageSize = portraitStageSize.width > 20 && portraitStageSize.height > 20 ? portraitStageSize : { width, height: Math.max(620, height - 28) };
 
@@ -612,6 +614,8 @@ export default function App() {
   useEffect(() => { soundRef.current = sound; }, [sound]);
   useEffect(() => { progressLayoutRef.current = progressLayout; }, [progressLayout]);
   useEffect(() => { songsRef.current = songs; }, [songs]);
+  useEffect(() => { profileTagsRef.current = profileTags; }, [profileTags]);
+  useEffect(() => { userIdRef.current = userId; }, [userId]);
   useEffect(() => { activeZoneRef.current = activeZoneId; }, [activeZoneId]);
 
   const loadTags = async () => {
@@ -698,11 +702,12 @@ export default function App() {
   };
 
   const persistProfileTagWeight = async (tagId, weight) => {
-    if (!userId) return;
+    const uid = Number(userIdRef.current);
+    if (!Number.isFinite(uid) || uid <= 0) return;
     const res = await fetch(`${API_BASE}/user-tags/weight`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: Number(userId), tag_id: Number(tagId), weight: Number(weight) })
+      body: JSON.stringify({ user_id: uid, tag_id: Number(tagId), weight: Number(weight) })
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -723,7 +728,8 @@ export default function App() {
   const applyProfileTagActionById = async (tagIdInput, zoneId, fallbackWeight = 0) => {
     const tagId = Number(tagIdInput);
     if (!Number.isFinite(tagId) || zoneId === -1) return;
-    const currentTag = profileTags.find((item) => Number(item.tag_id) === tagId);
+    const latestTags = profileTagsRef.current || [];
+    const currentTag = latestTags.find((item) => Number(item.tag_id) === tagId);
     const baseWeight = currentTag?.weight ?? fallbackWeight;
     const nextWeight = computeNextWeight(baseWeight, zoneId);
     const nextActive = nextWeight > 0;
@@ -735,7 +741,7 @@ export default function App() {
     try {
       await persistProfileTagWeight(tagId, nextWeight);
     } finally {
-      await loadProfileTags(userId);
+      await loadProfileTags(userIdRef.current);
     }
   };
 
