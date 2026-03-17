@@ -557,6 +557,7 @@ export default function App() {
   const draggingIdRef = useRef(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const dragStartBlockPosRef = useRef({ x: 0, y: 0 });
+  const dragActionCommittedRef = useRef(false);
   const lastDragPointRef = useRef(null);
   const playbackRef = useRef(playback);
   const soundRef = useRef(sound);
@@ -814,6 +815,26 @@ export default function App() {
 
   const moveDraggedBlock = (id, point) => {
     const stage = stageSizeRef.current;
+    const liveBlock = (blocksRef.current || []).find((item) => item.id === id);
+    if (liveBlock) {
+      const fallbackPoint = lastDragPointRef.current || liveBlock.currentPos;
+      const isValidPoint = point
+        && Number.isFinite(point.x)
+        && Number.isFinite(point.y)
+        && point.x >= -48
+        && point.x <= stage.width + 48
+        && point.y >= -48
+        && point.y <= stage.height + 48;
+      const candidatePoint = isValidPoint ? point : fallbackPoint;
+      const settledPoint = sanitizeDragPoint(liveBlock, candidatePoint, stage);
+      const zoneId = findZoneForBlock(liveBlock, settledPoint, stage);
+      if (!dragActionCommittedRef.current && zoneId !== -1) {
+        dragActionCommittedRef.current = true;
+        applyProfileTagActionById(Number(liveBlock.id), zoneId, Number(liveBlock.tag?.weight || 0)).catch(() => {
+          dragActionCommittedRef.current = false;
+        });
+      }
+    }
     setPortraitBlocks((prev) => {
       const next = prev.map(cloneBlock);
       const target = next.find((item) => item.id === id);
@@ -888,6 +909,7 @@ export default function App() {
       return next;
     });
 
+    const actionWasCommitted = dragActionCommittedRef.current;
     draggingIdRef.current = null;
     dragOffsetRef.current = { x: 0, y: 0 };
     dragStartBlockPosRef.current = { x: 0, y: 0 };
@@ -896,9 +918,10 @@ export default function App() {
     setActiveZoneId(-1);
     setIsPortraitDragging(false);
 
-    if (Number.isFinite(affectedTagId) && activeZone !== -1) {
+    if (!actionWasCommitted && Number.isFinite(affectedTagId) && activeZone !== -1) {
       applyProfileTagActionById(affectedTagId, activeZone, affectedWeight).catch(() => {});
     }
+    dragActionCommittedRef.current = false;
   };
 
   const portraitResponder = useRef(PanResponder.create({
@@ -913,6 +936,7 @@ export default function App() {
       const picked = pickBlockAtPoint(blocksRef.current, point);
       if (!picked) return;
       draggingIdRef.current = picked.id;
+      dragActionCommittedRef.current = false;
       setIsPortraitDragging(true);
       lastDragPointRef.current = { ...picked.currentPos };
       dragOffsetRef.current = { x: picked.currentPos.x - point.x, y: picked.currentPos.y - point.y };
