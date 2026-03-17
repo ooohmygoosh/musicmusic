@@ -1077,9 +1077,9 @@ export default function App() {
   };
 
   const generate = async (options = {}) => {
-    const { prefetch = false, silent = false } = options;
+    const { prefetch = false, silent = false, preferLatest = !prefetch } = options;
     if (!userId || generationLoading) return songs;
-    setGenerationLoading(true);
+    if (!prefetch) setGenerationLoading(true);
     try {
       const res = await fetch(`${API_BASE}/generate`, {
         method: "POST",
@@ -1093,7 +1093,7 @@ export default function App() {
 
       const jobId = Number(data.job_id || 0);
       if (!jobId) {
-        return refreshSongs(userId, { preferLatest: true });
+        return refreshSongs(userId, { preferLatest });
       }
 
       const start = Date.now();
@@ -1109,7 +1109,7 @@ export default function App() {
           throw new Error(item.error || data.error || "generation failed");
         }
         if ((status === "done" || status === "reused") && (item.song?.id || data.song_id)) {
-          return refreshSongs(userId, { preferLatest: true });
+          return refreshSongs(userId, { preferLatest });
         }
         await wait(3000);
       }
@@ -1119,7 +1119,7 @@ export default function App() {
       if (!silent) Alert.alert("Generation failed", String(err));
       return songs;
     } finally {
-      setGenerationLoading(false);
+      if (!prefetch) setGenerationLoading(false);
     }
   };
 
@@ -1136,8 +1136,8 @@ export default function App() {
     if (getNextSongFromList(playingSong, queueSnapshot)) return;
     prefetchLockRef.current = true;
     try {
-      await generate({ prefetch: true, silent: true });
-      await refreshSongs(userId);
+      await generate({ prefetch: true, silent: true, preferLatest: false });
+      await refreshSongs(userId, { preferLatest: false });
     } catch {}
     finally {
       prefetchLockRef.current = false;
@@ -1471,7 +1471,7 @@ export default function App() {
             <Text style={styles.controlText}>Favorite</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.playBtn} onPress={togglePlay}>
-            <Text style={styles.playText}>{generationLoading ? "Generating..." : current ? (playback.isPlaying ? "Pause" : "Play") : "Generate"}</Text>
+            <Text style={styles.playText}>{!current && generationLoading ? "Generating..." : current ? (playback.isPlaying ? "Pause" : "Play") : "Generate"}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.controlBtn} onPress={handleNext}>
             <Text style={styles.controlText}>Next</Text>
