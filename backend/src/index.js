@@ -181,7 +181,7 @@ app.get("/admin/user-detail", async (request, reply) => {
   );
 
   const songs = await query(
-    "SELECT s.id AS song_id, s.title, s.cover_url, s.prompt, s.created_at, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM songs s LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE s.user_id = $1 GROUP BY s.id ORDER BY s.created_at DESC LIMIT 100",
+    "SELECT x.song_id, x.title, x.cover_url, x.prompt, x.created_at, x.source, x.tags FROM (SELECT DISTINCT ON (q.song_id) s.id AS song_id, s.title, s.cover_url, s.prompt, q.created_at, q.source, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 GROUP BY q.song_id, s.id, q.created_at, q.source ORDER BY q.song_id, q.created_at DESC) x ORDER BY x.created_at DESC LIMIT 100",
     [userId]
   );
 
