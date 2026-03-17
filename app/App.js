@@ -33,10 +33,10 @@ const TYPE_COLORS = {
 
 const CATEGORY_ORDER = ["\u60c5\u7eea", "\u98ce\u683c", "\u4e50\u5668", "\u573a\u666f", "\u8282\u594f"];
 const MAX_PORTRAIT_TAGS = 15;
-const PORTRAIT_MIN_SIZE = 20;
-const PORTRAIT_MAX_SIZE = 80;
+const PORTRAIT_MIN_SIZE = 14;
+const PORTRAIT_MAX_SIZE = 108;
 const PORTRAIT_ORIGIN_SIZE = 40;
-const PORTRAIT_STEP_SIZE = 15;
+const PORTRAIT_STEP_SIZE = 24;
 const PORTRAIT_TOP_INSET = 94;
 const PORTRAIT_SIDE_INSET = 10;
 const PORTRAIT_BOTTOM_INSET = 124;
@@ -310,7 +310,7 @@ function buildPortraitBlocks(tags, stageSize, prevBlocks = []) {
   const prevMap = new Map(prevBlocks.map((block) => [block.id, block]));
   const activeIds = new Set(limited.map((tag) => tag.tag_id));
   const centerX = width / 2;
-  const centerY = height * 0.6;
+  const centerY = height * 0.53;
 
   const keepBlocks = limited.map((tag, index) => {
     const palette = typePalette(tag.type);
@@ -558,6 +558,7 @@ export default function App() {
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const dragStartBlockPosRef = useRef({ x: 0, y: 0 });
   const dragActionCommittedRef = useRef(false);
+  const pendingProfileRefreshRef = useRef(false);
   const lastDragPointRef = useRef(null);
   const playbackRef = useRef(playback);
   const soundRef = useRef(sound);
@@ -726,7 +727,8 @@ export default function App() {
     return Number(Math.min(1, value + 0.18).toFixed(3));
   };
 
-  const applyProfileTagActionById = async (tagIdInput, zoneId, fallbackWeight = 0) => {
+  const applyProfileTagActionById = async (tagIdInput, zoneId, fallbackWeight = 0, options = {}) => {
+    const { refreshAfter = true } = options;
     const tagId = Number(tagIdInput);
     if (!Number.isFinite(tagId) || zoneId === -1) return;
     const latestTags = profileTagsRef.current || [];
@@ -742,7 +744,11 @@ export default function App() {
     try {
       await persistProfileTagWeight(tagId, nextWeight);
     } finally {
-      await loadProfileTags(userIdRef.current);
+      if (refreshAfter) {
+        await loadProfileTags(userIdRef.current);
+      } else {
+        pendingProfileRefreshRef.current = true;
+      }
     }
   };
 
@@ -830,7 +836,7 @@ export default function App() {
       const zoneId = findZoneForBlock(liveBlock, settledPoint, stage);
       if (!dragActionCommittedRef.current && zoneId !== -1) {
         dragActionCommittedRef.current = true;
-        applyProfileTagActionById(Number(liveBlock.id), zoneId, Number(liveBlock.tag?.weight || 0)).catch(() => {
+        applyProfileTagActionById(Number(liveBlock.id), zoneId, Number(liveBlock.tag?.weight || 0), { refreshAfter: false }).catch(() => {
           dragActionCommittedRef.current = false;
         });
       }
@@ -920,6 +926,9 @@ export default function App() {
 
     if (!actionWasCommitted && Number.isFinite(affectedTagId) && activeZone !== -1) {
       applyProfileTagActionById(affectedTagId, activeZone, affectedWeight).catch(() => {});
+    } else if (actionWasCommitted && pendingProfileRefreshRef.current) {
+      pendingProfileRefreshRef.current = false;
+      loadProfileTags(userIdRef.current).catch(() => {});
     }
     dragActionCommittedRef.current = false;
   };
