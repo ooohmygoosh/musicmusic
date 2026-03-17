@@ -720,12 +720,12 @@ export default function App() {
     return Number(Math.min(1, value + 0.18).toFixed(3));
   };
 
-  const applyProfileTagAction = async (tag, zoneId) => {
-    if (!tag || zoneId === -1) return;
-    const tagId = Number(tag.tag_id ?? tag.id);
-    if (!Number.isFinite(tagId)) return;
+  const applyProfileTagActionById = async (tagIdInput, zoneId, fallbackWeight = 0) => {
+    const tagId = Number(tagIdInput);
+    if (!Number.isFinite(tagId) || zoneId === -1) return;
     const currentTag = profileTags.find((item) => Number(item.tag_id) === tagId);
-    const nextWeight = computeNextWeight(currentTag?.weight ?? tag.weight ?? 0, zoneId);
+    const baseWeight = currentTag?.weight ?? fallbackWeight;
+    const nextWeight = computeNextWeight(baseWeight, zoneId);
     const nextActive = nextWeight > 0;
 
     setProfileTags((prev) => sortProfileTags(prev.map((item) => (
@@ -844,7 +844,8 @@ export default function App() {
   const finishDraggedBlock = (id) => {
     const stage = stageSizeRef.current;
     const safePoint = lastDragPointRef.current || { x: stage.width / 2, y: stage.height / 2 };
-    let affectedTag = null;
+    let affectedTagId = null;
+    let affectedWeight = 0;
     let activeZone = activeZoneRef.current;
 
     setPortraitBlocks((prev) => {
@@ -858,7 +859,8 @@ export default function App() {
       const zoneId = zoneFromDragPoint !== -1 ? zoneFromDragPoint : (zoneFromCurrentPos !== -1 ? zoneFromCurrentPos : activeZoneRef.current);
       const settledPoint = zoneId === -1 ? sanitizeBlockPoint(target, safePoint, stage) : dragPoint;
       activeZone = zoneId;
-      affectedTag = target.tag;
+      affectedTagId = Number(target.id);
+      affectedWeight = Number(target.tag?.weight || 0);
       target.isDragging = false;
       target.isEntering = false;
       target.currentPos = settledPoint;
@@ -888,8 +890,8 @@ export default function App() {
     setActiveZoneId(-1);
     setIsPortraitDragging(false);
 
-    if (affectedTag && activeZone !== -1) {
-      applyProfileTagAction(affectedTag, activeZone).catch(() => {});
+    if (Number.isFinite(affectedTagId) && activeZone !== -1) {
+      applyProfileTagActionById(affectedTagId, activeZone, affectedWeight).catch(() => {});
     }
   };
 
