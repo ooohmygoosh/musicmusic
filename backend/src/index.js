@@ -12,8 +12,8 @@ const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "DeepSeek-V3.2-Exp";
 const DEEPSEEK_ENABLED = process.env.DEEPSEEK_ENABLED === "true";
 const COVER_IMAGE_API_KEY = process.env.COVER_IMAGE_API_KEY || "";
-const COVER_IMAGE_BASE_URL = (process.env.COVER_IMAGE_BASE_URL || "https://operator.las.cn-beijing.volces.com/api/v1").replace(/\/$/, "");
-const COVER_IMAGE_MODEL = process.env.COVER_IMAGE_MODEL || "seedream-4-0-250828";
+const COVER_IMAGE_BASE_URL = (process.env.COVER_IMAGE_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3").replace(/\/$/, "");
+const COVER_IMAGE_MODEL = process.env.COVER_IMAGE_MODEL || "doubao-seedream-4-0-250828";
 const COVER_IMAGE_SIZE = process.env.COVER_IMAGE_SIZE || "1024x1024";
 const COVER_IMAGE_ENABLED = process.env.COVER_IMAGE_ENABLED === "true";
 
