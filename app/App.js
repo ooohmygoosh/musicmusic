@@ -1,24 +1,59 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { SafeAreaView, View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, useWindowDimensions, Alert, PanResponder, ActivityIndicator } from "react-native";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  SafeAreaView,
+  View,
+  Text,
+  TouchableOpacity,
+  TextInput,
+  StyleSheet,
+  ScrollView,
+  useWindowDimensions,
+  Alert,
+  PanResponder,
+  ActivityIndicator
+} from "react-native";
 import { Audio } from "expo-av";
+import { BlurMask, Canvas, Circle, Group } from "@shopify/react-native-skia";
 import { API_BASE } from "./config";
 
 const TABS = [
-  { key: "player", label: "播放", icon: "◉" },
-  { key: "favorites", label: "收藏", icon: "♡" },
-  { key: "galaxy", label: "画像", icon: "✦" },
-  { key: "settings", label: "设置", icon: "⌘" }
+  { key: "player", label: "\u6b4c\u66f2", icon: "\u25c9" },
+  { key: "favorites", label: "\u6536\u85cf", icon: "\u2661" },
+  { key: "galaxy", label: "\u753b\u50cf", icon: "\u2726" },
+  { key: "settings", label: "\u8bbe\u7f6e", icon: "\u2318" }
 ];
 
 const TYPE_COLORS = {
-  情绪: ["#F58F73", "#FFF1EB", "#5B281E"],
-  风格: ["#6C87E8", "#EAF0FF", "#243563"],
-  乐器: ["#69B884", "#E7FFF0", "#1D5230"],
-  场景: ["#D4A24D", "#FFF4DB", "#634410"],
-  节奏: ["#9A78E6", "#F2EBFF", "#473171"]
+  "\u60c5\u7eea": ["#FF8B7A", "#FFD98C", "#FFF3EE"],
+  "\u98ce\u683c": ["#3E89FF", "#6CC8FF", "#EEF5FF"],
+  "\u4e50\u5668": ["#65C58E", "#B8F2C8", "#EFFFF5"],
+  "\u573a\u666f": ["#FFC36A", "#FFD6A8", "#FFF8EA"],
+  "\u8282\u594f": ["#9C7BFF", "#C9B7FF", "#F5F0FF"]
 };
 
-const CATEGORY_ORDER = ["情绪", "风格", "乐器", "场景", "节奏"];
+const CATEGORY_ORDER = ["\u60c5\u7eea", "\u98ce\u683c", "\u4e50\u5668", "\u573a\u666f", "\u8282\u594f"];
+const MAX_PORTRAIT_TAGS = 15;
+const PORTRAIT_MIN_SIZE = 20;
+const PORTRAIT_MAX_SIZE = 80;
+const PORTRAIT_ORIGIN_SIZE = 40;
+const PORTRAIT_STEP_SIZE = 15;
+const PORTRAIT_TOP_INSET = 104;
+const PORTRAIT_SIDE_INSET = 12;
+const PORTRAIT_BOTTOM_INSET = 156;
+const REPULSION_GAP = 18;
+const STABLE_SPRING = 0.028;
+const STABLE_DAMPING = 0.72;
+const BOUNCE_SPRING = 0.085;
+const BOUNCE_DAMPING = 0.76;
+const VELOCITY_EPSILON = 0.09;
+
+const FALLBACK_BLOBS = [
+  { x: 0.22, y: 0.18, r: 0.33, color: "rgba(255,138,122,0.48)" },
+  { x: 0.82, y: 0.28, r: 0.24, color: "rgba(52,132,255,0.42)" },
+  { x: 0.64, y: 0.72, r: 0.22, color: "rgba(155,123,255,0.34)" },
+  { x: 0.18, y: 0.92, r: 0.2, color: "rgba(120,170,220,0.3)" },
+  { x: 0.9, y: 0.76, r: 0.16, color: "rgba(255,196,107,0.28)" }
+];
 
 function formatTime(ms) {
   if (!ms || Number.isNaN(ms)) return "0:00";
@@ -27,131 +62,301 @@ function formatTime(ms) {
 }
 
 function typePalette(type) {
-  return TYPE_COLORS[type] || ["#82B9FF", "#EAF5FF", "#26496F"];
+  return TYPE_COLORS[type] || ["#82B9FF", "#CCE3FF", "#EAF5FF"];
 }
 
 function uniqueTagNames(tags) {
   return Array.from(new Set((tags || []).filter(Boolean)));
 }
 
-function fallbackTagText(prompt) {
-  if (!prompt) return "";
-  return String(prompt)
-    .replace(/([\u4e00-\u9fa5A-Za-z]+)\s*:\s*/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function songTagText(song) {
   const names = uniqueTagNames(song?.tags);
-  if (names.length > 0) return names.join(" 路 ");
-  return "标签整理中";
+  if (names.length > 0) return names.join(" \u00b7 ");
+  return "\u6807\u7b7e\u6574\u7406\u4e2d";
+}
+
+function hexToRgba(hex, alpha) {
+  const clean = String(hex || "#000000").replace("#", "");
+  const full = clean.length === 3 ? clean.split("").map((ch) => ch + ch).join("") : clean;
+  const num = Number.parseInt(full, 16);
+  if (Number.isNaN(num)) return `rgba(0,0,0,${alpha})`;
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function queueKeyOf(song) {
+  return song?.queue_id || song?.id;
+}
+
+function cloneQueueSong(song, source = "manual") {
+  if (!song) return null;
+  return { ...song, queue_id: `${source}-${song.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
 }
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function hexToRgba(hex, alpha) {
-  const clean = String(hex || "#000000").replace("#", "");
-  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
-  const int = Number.parseInt(full, 16);
-  if (Number.isNaN(int)) return `rgba(0,0,0,${alpha})`;
-  const r = (int >> 16) & 255;
-  const g = (int >> 8) & 255;
-  const b = int & 255;
-  return `rgba(${r},${g},${b},${alpha})`;
+function hashString(input) {
+  const text = String(input || "");
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash << 5) - hash + text.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
 }
 
-function relaxBlobLayout(nodes, stageSize, draggingId = null) {
-  const width = Math.max(320, stageSize.width || 0);
-  const height = Math.max(620, stageSize.height || 0);
-  const next = nodes.map((node) => ({ ...node }));
+function deriveBlockSize(tag, index) {
+  const scale = [78, 64, 46, 70, 34, 58, 74, 40, 52];
+  const seed = hashString(`${tag.tag_id}-${tag.name}-${tag.type}-${index}`);
+  return scale[seed % scale.length];
+}
 
-  for (let step = 0; step < BLOB_RELAX_STEPS; step += 1) {
-    for (let i = 0; i < next.length; i += 1) {
-      for (let j = i + 1; j < next.length; j += 1) {
-        const a = next[i];
-        const b = next[j];
-        const ax = a.x + a.width / 2;
-        const ay = a.y + a.height / 2;
-        const bx = b.x + b.width / 2;
-        const by = b.y + b.height / 2;
-        const dx = bx - ax;
-        const dy = by - ay;
-        const dist = Math.max(1, Math.hypot(dx, dy));
-        const minDist = a.collisionRadius + b.collisionRadius + 10;
+function getBlockMetrics(block) {
+  const label = String(block?.tag?.name || "");
+  const visualHeight = clamp(block.currentSize * 1.3 + 18, 52, 126);
+  const visualWidth = clamp(Math.max(96, visualHeight * 1.32, 58 + label.length * 16, block.currentSize * 2.15), 96, 260);
+  return {
+    width: visualWidth,
+    height: visualHeight,
+    radius: Math.max(visualWidth, visualHeight) * 0.42
+  };
+}
+
+function getFuncZones(stageSize) {
+  const width = Math.max(320, stageSize.width || 0);
+  const zoneTop = 26;
+  const zoneHeight = 64;
+  const gap = 10;
+  const zoneWidth = (width - PORTRAIT_SIDE_INSET * 2 - gap * 2) / 3;
+  return [
+    { id: 1, key: "delete", label: "Delete", hint: "Remove tag", x: PORTRAIT_SIDE_INSET, y: zoneTop, width: zoneWidth, height: zoneHeight },
+    { id: 2, key: "smaller", label: "Smaller", hint: "Current tag", x: PORTRAIT_SIDE_INSET + zoneWidth + gap, y: zoneTop, width: zoneWidth, height: zoneHeight },
+    { id: 3, key: "bigger", label: "Bigger", hint: "Current tag", x: PORTRAIT_SIDE_INSET + (zoneWidth + gap) * 2, y: zoneTop, width: zoneWidth, height: zoneHeight }
+  ];
+}
+
+function findZoneAtPoint(point, stageSize) {
+  const zones = getFuncZones(stageSize);
+  const match = zones.find((zone) => point.x >= zone.x && point.x <= zone.x + zone.width && point.y >= zone.y && point.y <= zone.y + zone.height);
+  return match ? match.id : -1;
+}
+
+function sanitizeBlockPoint(block, point, stageSize) {
+  const { width: blockWidth, height: blockHeight } = getBlockMetrics(block);
+  const minX = PORTRAIT_SIDE_INSET + blockWidth / 2;
+  const maxX = Math.max(minX, (stageSize.width || 0) - PORTRAIT_SIDE_INSET - blockWidth / 2);
+  const minY = PORTRAIT_TOP_INSET + blockHeight / 2;
+  const maxY = Math.max(minY, (stageSize.height || 0) - PORTRAIT_BOTTOM_INSET - blockHeight / 2);
+  return {
+    x: clamp(point.x, minX, maxX),
+    y: clamp(point.y, minY, maxY)
+  };
+}
+
+function keepBlockInBounds(block, stageSize) {
+  if (block.isExiting) {
+    const metrics = getBlockMetrics(block);
+    const minX = PORTRAIT_SIDE_INSET + metrics.width / 2;
+    const maxX = Math.max(minX, (stageSize.width || 0) - PORTRAIT_SIDE_INSET - metrics.width / 2);
+    block.currentPos = {
+      x: clamp(block.currentPos.x, minX, maxX),
+      y: clamp(block.currentPos.y, -280, (stageSize.height || 0) + 280)
+    };
+    block.anchorPos = {
+      x: clamp(block.anchorPos.x, minX, maxX),
+      y: clamp(block.anchorPos.y, -280, (stageSize.height || 0) + 280)
+    };
+    return;
+  }
+
+  if (block.isEntering) {
+    const inside = sanitizeBlockPoint(block, block.currentPos, stageSize);
+    block.currentPos = {
+      x: inside.x,
+      y: clamp(block.currentPos.y, PORTRAIT_TOP_INSET - 30, (stageSize.height || 0) + 280)
+    };
+    block.anchorPos = sanitizeBlockPoint(block, block.anchorPos, stageSize);
+    return;
+  }
+
+  block.currentPos = sanitizeBlockPoint(block, block.currentPos, stageSize);
+  block.anchorPos = sanitizeBlockPoint(block, block.anchorPos, stageSize);
+}
+
+function cloneBlock(block) {
+  return {
+    ...block,
+    anchorPos: { ...block.anchorPos },
+    currentPos: { ...block.currentPos },
+    velocity: { ...block.velocity }
+  };
+}
+
+function applyRepulsion(blocks, stageSize, strength = 0.16, passes = 2) {
+  for (let pass = 0; pass < passes; pass += 1) {
+    for (let i = 0; i < blocks.length; i += 1) {
+      for (let j = i + 1; j < blocks.length; j += 1) {
+        const a = blocks[i];
+        const b = blocks[j];
+        const aMetrics = getBlockMetrics(a);
+        const bMetrics = getBlockMetrics(b);
+        const dx = b.currentPos.x - a.currentPos.x;
+        const dy = b.currentPos.y - a.currentPos.y;
+        const dist = Math.max(0.001, Math.hypot(dx, dy));
+        const minDist = aMetrics.radius + bMetrics.radius + REPULSION_GAP;
         if (dist >= minDist) continue;
-        const overlap = (minDist - dist) * 0.52;
+
         const ux = dx / dist;
         const uy = dy / dist;
-        if (a.id !== draggingId) {
-          a.x -= ux * overlap;
-          a.y -= uy * overlap;
-        }
-        if (b.id !== draggingId) {
-          b.x += ux * overlap;
-          b.y += uy * overlap;
+        const overlap = minDist - dist;
+        const push = overlap * strength;
+        const aCanMove = !a.isDragging;
+        const bCanMove = !b.isDragging;
+
+        if (aCanMove && bCanMove) {
+          a.currentPos.x -= ux * push * 0.5;
+          a.currentPos.y -= uy * push * 0.5;
+          b.currentPos.x += ux * push * 0.5;
+          b.currentPos.y += uy * push * 0.5;
+          a.velocity.x -= ux * push * 0.06;
+          a.velocity.y -= uy * push * 0.06;
+          b.velocity.x += ux * push * 0.06;
+          b.velocity.y += uy * push * 0.06;
+        } else if (!aCanMove && bCanMove) {
+          b.currentPos.x += ux * push;
+          b.currentPos.y += uy * push;
+          b.velocity.x += ux * push * 0.08;
+          b.velocity.y += uy * push * 0.08;
+        } else if (aCanMove && !bCanMove) {
+          a.currentPos.x -= ux * push;
+          a.currentPos.y -= uy * push;
+          a.velocity.x -= ux * push * 0.08;
+          a.velocity.y -= uy * push * 0.08;
         }
       }
     }
 
-    for (const node of next) {
-      node.x = clamp(node.x, BLOB_PADDING, width - node.width - BLOB_PADDING);
-      node.y = clamp(node.y, BLOB_TOP_INSET, height - node.height - BLOB_BOTTOM_INSET);
+    for (const block of blocks) {
+      keepBlockInBounds(block, stageSize);
+      block.velocity.x = clamp(block.velocity.x, -22, 22);
+      block.velocity.y = clamp(block.velocity.y, -22, 22);
     }
   }
-
-  return next;
 }
 
-function buildBlobNodes(tags, stageSize) {
+function buildPortraitBlocks(tags, stageSize, prevBlocks = []) {
   const width = Math.max(320, stageSize.width || 0);
   const height = Math.max(620, stageSize.height || 0);
-  const chosen = tags.slice(0, EXPANDED_WEIGHT_LIMIT);
-  if (chosen.length === 0) return [];
-  const weights = chosen.map((tag) => Number(tag.weight || 0));
-  const minWeight = Math.min(...weights);
-  const maxWeight = Math.max(...weights);
-  const span = Math.max(0.0001, maxWeight - minWeight);
-  const centerX = width / 2;
-  const centerY = BLOB_TOP_INSET + (height - BLOB_TOP_INSET - BLOB_BOTTOM_INSET) / 2;
+  const sorted = [...(tags || [])].sort((a, b) => {
+    const wa = Number(a?.weight || 0);
+    const wb = Number(b?.weight || 0);
+    if (wb !== wa) return wb - wa;
+    return Number(b?.tag_id || 0) - Number(a?.tag_id || 0);
+  });
+  const limited = sorted.slice(0, MAX_PORTRAIT_TAGS);
+  if (limited.length === 0) {
+    return (prevBlocks || []).filter((block) => block.isExiting);
+  }
 
-  const nodes = chosen.map((tag, index) => {
+  const prevMap = new Map(prevBlocks.map((block) => [block.id, block]));
+  const activeIds = new Set(limited.map((tag) => tag.tag_id));
+  const centerX = width / 2;
+  const centerY = height * 0.46;
+
+  const keepBlocks = limited.map((tag, index) => {
     const palette = typePalette(tag.type);
-    const normalized = (Number(tag.weight || 0) - minWeight) / span;
-    const size = BLOB_MIN_SIZE + normalized * (BLOB_MAX_SIZE - BLOB_MIN_SIZE);
-    const nodeWidth = size * 1.16;
-    const nodeHeight = size * 0.84;
-    const theta = index * 2.399963229728653;
-    const radius = 30 + index * 18;
-    const x = clamp(centerX + Math.cos(theta) * radius - nodeWidth / 2, BLOB_PADDING, width - nodeWidth - BLOB_PADDING);
-    const y = clamp(centerY + Math.sin(theta) * radius - nodeHeight / 2, BLOB_TOP_INSET, height - nodeHeight - BLOB_BOTTOM_INSET);
-    return {
+    const seed = hashString(String(tag.tag_id) + '-' + String(tag.name) + '-' + String(tag.type));
+    const angle = index * 2.399963229728653 + (seed % 17) * 0.03;
+    const ring = 44 + Math.floor(index / 3) * 52 + (seed % 12);
+    const x = centerX + Math.cos(angle) * ring * 1.2;
+    const y = centerY + Math.sin(angle) * ring * 0.88;
+    const previous = prevMap.get(tag.tag_id);
+    const startSize = previous ? clamp(previous.currentSize, PORTRAIT_MIN_SIZE, PORTRAIT_MAX_SIZE) : deriveBlockSize(tag, index);
+
+    const baseBlock = {
       id: tag.tag_id,
       tag,
-      x,
-      y,
-      anchorX: x,
-      anchorY: y,
-      width: nodeWidth,
-      height: nodeHeight,
-      collisionRadius: Math.max(nodeWidth, nodeHeight) * 0.52,
       color: palette[0],
       glow: palette[1],
-      text: palette[2]
+      text: '#FFFFFF',
+      minSize: PORTRAIT_MIN_SIZE,
+      maxSize: PORTRAIT_MAX_SIZE,
+      originSize: PORTRAIT_ORIGIN_SIZE,
+      currentSize: startSize,
+      targetSize: previous ? clamp(previous.targetSize, PORTRAIT_MIN_SIZE, PORTRAIT_MAX_SIZE) : startSize,
+      anchorPos: previous ? { ...previous.anchorPos } : { x, y },
+      currentPos: previous ? { ...previous.currentPos } : { x, y },
+      velocity: previous ? { ...previous.velocity } : { x: 0, y: 0 },
+      isDragging: false,
+      needBackToAnchor: previous ? previous.needBackToAnchor : false,
+      isEntering: !previous,
+      isExiting: false
     };
+
+    baseBlock.anchorPos = sanitizeBlockPoint(baseBlock, { x, y }, stageSize);
+
+    if (!previous) {
+      const introX = clamp(baseBlock.anchorPos.x + (index % 2 === 0 ? -16 : 16), PORTRAIT_SIDE_INSET, width - PORTRAIT_SIDE_INSET);
+      baseBlock.currentPos = {
+        x: introX,
+        y: height + 110 + (index % 3) * 26
+      };
+      baseBlock.velocity = { x: 0, y: -2.1 };
+      baseBlock.needBackToAnchor = true;
+    } else {
+      baseBlock.currentPos = sanitizeBlockPoint(baseBlock, baseBlock.currentPos, stageSize);
+      baseBlock.isEntering = Boolean(previous.isEntering && previous.currentPos.y > baseBlock.anchorPos.y + 6);
+    }
+
+    return baseBlock;
   });
 
-  return relaxBlobLayout(nodes, stageSize, null);
+  const exitingBlocks = (prevBlocks || [])
+    .filter((block) => !activeIds.has(block.id))
+    .map((block) => {
+      const copied = {
+        ...block,
+        tag: block.tag,
+        isDragging: false,
+        isEntering: false,
+        isExiting: true,
+        needBackToAnchor: true,
+        velocity: { x: block.velocity?.x || 0, y: Math.min(block.velocity?.y || -1.5, -1.5) }
+      };
+      const targetY = -Math.max(120, getBlockMetrics(copied).height + 36);
+      copied.anchorPos = { x: copied.currentPos.x, y: targetY };
+      return copied;
+    });
+
+  return [...exitingBlocks, ...keepBlocks];
 }
 
-function ScreenTitle({ eyebrow, title, subtitle }) {
+function pickBlockAtPoint(blocks, point) {
+  let best = null;
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    const block = blocks[i];
+    const metrics = getBlockMetrics(block);
+    const insideX = Math.abs(point.x - block.currentPos.x) <= metrics.width / 2;
+    const insideY = Math.abs(point.y - block.currentPos.y) <= metrics.height / 2;
+    if (!insideX || !insideY) continue;
+    const dx = point.x - block.currentPos.x;
+    const dy = point.y - block.currentPos.y;
+    const score = Math.hypot(dx, dy) / metrics.radius;
+    if (!best || score < best.score) best = { block, score };
+  }
+  return best ? best.block : null;
+}
+
+function ScreenTitle({ eyebrow, title, subtitle, light = false }) {
   return (
     <View style={styles.titleBlock}>
-      {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
-      <Text style={styles.title}>{title}</Text>
-      {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+      {eyebrow ? <Text style={[styles.eyebrow, light && styles.eyebrowLight]}>{eyebrow}</Text> : null}
+      <Text style={[styles.title, light && styles.titleLight]}>{title}</Text>
+      {subtitle ? <Text style={[styles.subtitle, light && styles.subtitleLight]}>{subtitle}</Text> : null}
     </View>
   );
 }
@@ -165,53 +370,82 @@ function SeedTag({ item, selected, onPress }) {
   );
 }
 
-function TagBlob({ node, onDragStart, onDragMove, onDragEnd }) {
-  const startRef = useRef({ x: node.x, y: node.y });
-  const movedRef = useRef(false);
-
-  useEffect(() => {
-    startRef.current = { x: node.x, y: node.y };
-  }, [node.x, node.y]);
-
-  const responder = useRef(PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 3 || Math.abs(gesture.dy) > 3,
-    onPanResponderGrant: () => {
-      movedRef.current = false;
-      startRef.current = { x: node.x, y: node.y };
-      onDragStart(node.id);
-    },
-    onPanResponderMove: (_, gesture) => {
-      movedRef.current = true;
-      onDragMove(node.id, startRef.current.x + gesture.dx, startRef.current.y + gesture.dy);
-    },
-    onPanResponderRelease: (_, gesture) => onDragEnd(node.id, startRef.current.x + gesture.dx, startRef.current.y + gesture.dy, movedRef.current),
-    onPanResponderTerminate: (_, gesture) => onDragEnd(node.id, startRef.current.x + gesture.dx, startRef.current.y + gesture.dy, movedRef.current)
-  })).current;
+function PortraitBackdrop({ blocks, stageSize }) {
+  const width = Math.max(1, stageSize.width || 0);
+  const height = Math.max(1, stageSize.height || 0);
+  const source = (blocks || []).length > 0 ? blocks : FALLBACK_BLOBS.map((item, index) => ({
+    id: `fallback-${index}`,
+    color: item.color,
+    glow: item.color,
+    currentPos: { x: width * item.x, y: height * item.y },
+    currentSize: clamp(item.r * 160, PORTRAIT_MIN_SIZE, PORTRAIT_MAX_SIZE),
+    tag: { name: "" }
+  }));
 
   return (
+    <View pointerEvents="none" style={styles.backdropLayer}>
+      <View style={styles.backdropBase} />
+      <Canvas style={styles.backdropCanvas}>
+        <Group blendMode="screen">
+          {source.map((block) => {
+            const radius = getBlockMetrics(block).radius;
+            const primaryRadius = radius * 1.65;
+            const secondaryRadius = radius * 1.12;
+            return (
+              <React.Fragment key={block.id}>
+                <Circle
+                  cx={block.currentPos.x - radius * 0.18}
+                  cy={block.currentPos.y - radius * 0.12}
+                  r={primaryRadius}
+                  color={hexToRgba(block.color, 0.48)}
+                >
+                  <BlurMask blur={92} style="solid" />
+                </Circle>
+                <Circle
+                  cx={block.currentPos.x + radius * 0.24}
+                  cy={block.currentPos.y + radius * 0.2}
+                  r={secondaryRadius}
+                  color={hexToRgba(block.glow || block.color, 0.24)}
+                >
+                  <BlurMask blur={78} style="solid" />
+                </Circle>
+              </React.Fragment>
+            );
+          })}
+        </Group>
+      </Canvas>
+      <View style={styles.backdropSoftener} />
+    </View>
+  );
+}
+
+function PortraitTag({ block, isDragging }) {
+  const metrics = getBlockMetrics(block);
+  return (
     <View
-      {...responder.panHandlers}
+      pointerEvents="none"
       style={[
-        styles.blob,
+        styles.tagBlock,
         {
-          left: node.x,
-          top: node.y,
-          width: node.width,
-          height: node.height,
-          backgroundColor: hexToRgba(node.color, 0.74),
-          shadowColor: node.color
+          left: block.currentPos.x - metrics.width / 2,
+          top: block.currentPos.y - metrics.height / 2,
+          width: metrics.width,
+          height: metrics.height,
+          borderRadius: metrics.height / 2,
+          backgroundColor: hexToRgba(block.color, isDragging ? 0.78 : 0.68),
+          shadowColor: block.color,
+          transform: [{ scale: isDragging ? 1.04 : 1 }]
         }
       ]}
     >
-      <View style={[styles.blobSheen, { backgroundColor: hexToRgba(node.glow, 0.28) }]} />
-      <Text style={[styles.blobText, { color: node.text }]} numberOfLines={2}>{node.tag.name}</Text>
+      <Text style={styles.tagType}>{block.tag.type}</Text>
+      <Text style={styles.tagText} numberOfLines={1}>{block.tag.name}</Text>
     </View>
   );
 }
 
 export default function App() {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState("player");
   const [authMode, setAuthMode] = useState("login");
   const [accountId, setAccountId] = useState("demo-device");
@@ -225,6 +459,7 @@ export default function App() {
   const [songs, setSongs] = useState([]);
   const [favorites, setFavorites] = useState([]);
   const [playlists, setPlaylists] = useState([]);
+  const [playlistSongsMap, setPlaylistSongsMap] = useState({});
   const [playlistSongs, setPlaylistSongs] = useState([]);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState(null);
   const [newPlaylistName, setNewPlaylistName] = useState("");
@@ -238,17 +473,28 @@ export default function App() {
   const [pendingTagName, setPendingTagName] = useState("");
   const [selectedCategory, setSelectedCategory] = useState(CATEGORY_ORDER[0] || "");
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [isTagSheetCollapsed, setIsTagSheetCollapsed] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [tagMessage, setTagMessage] = useState("");
   const [health, setHealth] = useState({ loading: false, ok: null, message: "" });
+  const [portraitStageSize, setPortraitStageSize] = useState({ width: 1, height: 1 });
+  const [portraitBlocks, setPortraitBlocks] = useState([]);
+  const [activeZoneId, setActiveZoneId] = useState(-1);
   const [progressLayout, setProgressLayout] = useState(null);
   const progressTrackRef = useRef(null);
   const completeSentFor = useRef(null);
   const autoNextLock = useRef(false);
-  const prefetchLock = useRef(false);
-  const prefetchedForSong = useRef(null);
+  const blocksRef = useRef([]);
+  const stageSizeRef = useRef({ width: 1, height: 1 });
+  const activeTabRef = useRef(activeTab);
+  const draggingIdRef = useRef(null);
+  const dragOffsetRef = useRef({ x: 0, y: 0 });
+  const playbackRef = useRef(playback);
+  const soundRef = useRef(sound);
+  const progressLayoutRef = useRef(progressLayout);
   const userId = session?.userId || null;
-  const displayName = session?.name || session?.deviceId || "访客";
+  const displayName = session?.name || session?.deviceId || "\u8bbf\u5ba2";
+  const effectiveStageSize = portraitStageSize.width > 20 && portraitStageSize.height > 20 ? portraitStageSize : { width, height: Math.max(620, height - 28) };
 
   const groupedTags = useMemo(() => {
     const map = new Map();
@@ -260,14 +506,40 @@ export default function App() {
     return Array.from(map.entries());
   }, [tags]);
 
-  const activeProfileTags = useMemo(() => profileTags.filter((item) => item.is_active !== false && Number(item.weight || 0) > 0), [profileTags]);
+  const activeProfileTags = useMemo(
+    () => profileTags.filter((item) => item.is_active !== false).slice(0, MAX_PORTRAIT_TAGS),
+    [profileTags]
+  );
+
   const existingTagMatch = useMemo(() => {
     const clean = newTagName.trim().toLowerCase();
     if (!clean) return null;
     return tags.find((tag) => String(tag.name || "").trim().toLowerCase() === clean) || null;
   }, [newTagName, tags]);
-  const onboardingGroups = useMemo(() => CATEGORY_ORDER.map((type) => [type, groupedTags.find(([groupType]) => groupType === type)?.[1] || []]).filter(([, items]) => items.length > 0), [groupedTags]);
+
+  const onboardingGroups = useMemo(
+    () => CATEGORY_ORDER
+      .map((type) => [type, groupedTags.find(([groupType]) => groupType === type)?.[1] || []])
+      .filter(([, items]) => items.length > 0),
+    [groupedTags]
+  );
+
   const currentOnboarding = onboardingGroups[Math.min(onboardingStep, Math.max(0, onboardingGroups.length - 1))] || null;
+
+  const selectedSeedCategoryCount = useMemo(() => {
+    const picked = new Set();
+    for (const [type, list] of onboardingGroups) {
+      if (list.some((tag) => seedSelection.has(tag.id))) picked.add(type);
+    }
+    return picked.size;
+  }, [onboardingGroups, seedSelection]);
+
+  useEffect(() => { blocksRef.current = portraitBlocks; }, [portraitBlocks]);
+  useEffect(() => { stageSizeRef.current = effectiveStageSize; }, [effectiveStageSize]);
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  useEffect(() => { playbackRef.current = playback; }, [playback]);
+  useEffect(() => { soundRef.current = sound; }, [sound]);
+  useEffect(() => { progressLayoutRef.current = progressLayout; }, [progressLayout]);
 
   const loadTags = async () => {
     const res = await fetch(`${API_BASE}/tags`);
@@ -275,11 +547,11 @@ export default function App() {
     setTags(data.items || []);
   };
 
-  const ensureUser = async (device = accountId.trim(), displayName = accountName.trim()) => {
+  const ensureUser = async (device = accountId.trim(), displayNameValue = accountName.trim()) => {
     const res = await fetch(`${API_BASE}/users`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_id: device, display_name: displayName || undefined })
+      body: JSON.stringify({ device_id: device, display_name: displayNameValue || undefined })
     });
     const data = await res.json();
     return data.user;
@@ -296,7 +568,7 @@ export default function App() {
 
   const refreshSongs = async (uid, options = {}) => {
     if (!uid) return [];
-    const res = await fetch(`${API_BASE}/songs?user_id=${uid}&include_history=true`);
+    const res = await fetch(`${API_BASE}/songs?user_id=${uid}`);
     const data = await res.json();
     const seen = new Set();
     const items = (data.items || []).filter((item) => {
@@ -304,15 +576,10 @@ export default function App() {
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
-    });
+    }).sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
     setSongs(items);
-    if (items.length > 0) {
-      if (options.preferSongId) {
-        const preferred = items.find((item) => Number(item.id) === Number(options.preferSongId));
-        if (preferred) setCurrent(preferred);
-      } else if (!current || !items.some((item) => Number(item.id) === Number(current.id))) {
-        setCurrent(items[0]);
-      }
+    if (items.length > 0 && (options.preferLatest || !current)) {
+      setCurrent(items[items.length - 1]);
     }
     return items;
   };
@@ -337,61 +604,19 @@ export default function App() {
     if (!playlistId) return [];
     const res = await fetch(`${API_BASE}/playlists/${playlistId}/songs`);
     const data = await res.json();
-    setPlaylistSongs(data.items || []);
-    return data.items || [];
+    const items = data.items || [];
+    setPlaylistSongs(items);
+    setPlaylistSongsMap((prev) => ({ ...prev, [playlistId]: items }));
+    return items;
   };
 
   const bootstrapUser = async (user, nameOverride) => {
     setSession({ userId: user.id, deviceId: user.device_id, name: nameOverride || accountName.trim() || user.device_id });
     const profile = await loadProfileTags(user.id);
     await Promise.all([refreshSongs(user.id, { preferLatest: true }), refreshFavorites(user.id), loadPlaylists(user.id)]);
-    const active = (profile || []).filter((item) => item.is_active !== false && Number(item.weight || 0) > 0);
+    const active = (profile || []).filter((item) => item.is_active !== false);
     setNeedsOnboarding(active.length === 0);
     setOnboardingStep(0);
-  };
-
-  useEffect(() => { loadTags().catch(() => setTags([])); }, []);
-  useEffect(() => () => { if (sound) sound.unloadAsync().catch(() => {}); }, [sound]);
-
-  const submitAuth = async () => {
-    const cleanId = accountId.trim();
-    const cleanName = accountName.trim();
-    if (!cleanId) return Alert.alert("还差一步", "请输入账户 ID");
-    if (authMode === "register" && !cleanName) return Alert.alert("还差一步", "注册时请填写昵称");
-    setAuthLoading(true);
-    try {
-      const user = await ensureUser(cleanId, cleanName);
-      await bootstrapUser(user, cleanName || cleanId);
-    } catch (err) {
-      Alert.alert("连接失败", String(err));
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const submitOnboarding = async () => {
-    if (!userId || seedSelection.size === 0) return Alert.alert("请选择标签", "至少先选一个标签方向");
-    await fetch(`${API_BASE}/init-tags`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, tag_ids: Array.from(seedSelection) })
-    });
-    await loadProfileTags(userId);
-    await refreshSongs(userId);
-    await refreshFavorites(userId);
-    await loadPlaylists(userId);
-    setNeedsOnboarding(false);
-    setOnboardingStep(0);
-    setActiveTab("player");
-  };
-
-  const persistWeight = async (tagId, weight) => {
-    if (!userId) return;
-    await fetch(`${API_BASE}/user-tags/weight`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, tag_id: tagId, weight })
-    });
   };
 
   const persistRemoveProfileTag = async (tag) => {
@@ -403,42 +628,241 @@ export default function App() {
     });
   };
 
-  const animateTagWeightChange = (tag, nextWeight, mode = "update") => {
-    const startWeight = Number(tag.weight || 0);
-    const endWeight = Math.max(0, Math.min(1, nextWeight));
-    const steps = 10;
-    let step = 0;
-    const timer = setInterval(() => {
-      step += 1;
-      const ratio = step / steps;
-      const eased = 1 - Math.pow(1 - ratio, 2);
-      const value = startWeight + (endWeight - startWeight) * eased;
-      setProfileTags((prev) => prev.map((item) => item.tag_id === tag.tag_id ? { ...item, weight: value, is_active: mode === "remove" ? true : item.is_active } : item));
-      if (step >= steps) {
-        clearInterval(timer);
-        if (mode === "remove") {
-          persistRemoveProfileTag(tag).then(() => loadProfileTags(userId)).catch(() => loadProfileTags(userId));
-        } else {
-          persistWeight(tag.tag_id, endWeight).then(() => loadProfileTags(userId)).catch(() => loadProfileTags(userId));
+  useEffect(() => { loadTags().catch(() => setTags([])); }, []);
+
+  useEffect(() => () => {
+    if (soundRef.current) soundRef.current.unloadAsync().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const next = buildPortraitBlocks(activeProfileTags, effectiveStageSize, blocksRef.current);
+    blocksRef.current = next;
+    setPortraitBlocks(next);
+  }, [activeProfileTags, effectiveStageSize.width, effectiveStageSize.height]);
+
+  useEffect(() => {
+    let frameId;
+
+    const tick = () => {
+      const stage = stageSizeRef.current;
+      const currentBlocks = blocksRef.current;
+      if (currentBlocks.length > 0 && stage.width > 20 && stage.height > 20) {
+        const next = currentBlocks.map(cloneBlock);
+
+        for (const block of next) {
+          if (block.isDragging) continue;
+          const spring = block.needBackToAnchor ? BOUNCE_SPRING : STABLE_SPRING;
+          const damping = block.needBackToAnchor ? BOUNCE_DAMPING : STABLE_DAMPING;
+          const dx = block.anchorPos.x - block.currentPos.x;
+          const dy = block.anchorPos.y - block.currentPos.y;
+          block.velocity.x += dx * spring;
+          block.velocity.y += dy * spring;
+          block.velocity.x *= damping;
+          block.velocity.y *= damping;
+          if (Math.abs(block.velocity.x) < VELOCITY_EPSILON) block.velocity.x = 0;
+          if (Math.abs(block.velocity.y) < VELOCITY_EPSILON) block.velocity.y = 0;
+          block.currentPos.x += block.velocity.x;
+          block.currentPos.y += block.velocity.y;
+          block.currentSize += (block.targetSize - block.currentSize) * 0.25;
+
+          if (block.needBackToAnchor && Math.hypot(dx, dy) < 2 && Math.hypot(block.velocity.x, block.velocity.y) < 0.4) {
+            block.currentPos = { ...block.anchorPos };
+            block.velocity = { x: 0, y: 0 };
+            block.needBackToAnchor = false;
+          }
+
+          keepBlockInBounds(block, stage);
         }
+        applyRepulsion(next, stage, 0.09, 1);
+
+        const settled = next.filter((block) => !(block.isExiting && block.currentPos.y <= -140));
+        for (const block of settled) {
+          if (block.isEntering && Math.abs(block.currentPos.y - block.anchorPos.y) < 8 && Math.hypot(block.velocity.x, block.velocity.y) < 0.65) {
+            block.isEntering = false;
+            block.needBackToAnchor = false;
+            block.velocity = { x: 0, y: 0 };
+          }
+        }
+
+        blocksRef.current = settled;
+        setPortraitBlocks(settled);
       }
-    }, 40);
+
+      frameId = requestAnimationFrame(tick);
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
+  }, []);
+
+  const moveDraggedBlock = (id, point) => {
+    const stage = stageSizeRef.current;
+    const zoneId = findZoneAtPoint(point, stage);
+    setActiveZoneId(zoneId);
+    setPortraitBlocks((prev) => {
+      const next = prev.map(cloneBlock);
+      const target = next.find((item) => item.id === id);
+      if (!target) return prev;
+      target.currentPos = sanitizeBlockPoint(target, point, stage);
+      target.velocity = { x: 0, y: 0 };
+      target.needBackToAnchor = zoneId !== -1;
+      applyRepulsion(next, stage, 0.17, 2);
+      blocksRef.current = next;
+      return next;
+    });
+  };
+
+  const finishDraggedBlock = (id, releasePoint) => {
+    const stage = stageSizeRef.current;
+    const zoneId = findZoneAtPoint(releasePoint, stage);
+    let removedTag = null;
+
+    setPortraitBlocks((prev) => {
+      const next = prev.map(cloneBlock);
+      const index = next.findIndex((item) => item.id === id);
+      if (index < 0) return prev;
+      const target = next[index];
+      target.isDragging = false;
+      target.currentPos = sanitizeBlockPoint(target, releasePoint, stage);
+
+      if (zoneId === 1) {
+        removedTag = target.tag;
+        next.splice(index, 1);
+      } else if (zoneId === 2) {
+        target.targetSize = clamp(target.targetSize - PORTRAIT_STEP_SIZE, target.minSize, target.maxSize);
+        target.needBackToAnchor = true;
+        target.velocity = { x: 0, y: 0 };
+      } else if (zoneId === 3) {
+        target.targetSize = clamp(target.targetSize + PORTRAIT_STEP_SIZE, target.minSize, target.maxSize);
+        target.needBackToAnchor = true;
+        target.velocity = { x: 0, y: 0 };
+      } else {
+        const settled = sanitizeBlockPoint(target, releasePoint, stage);
+        target.currentPos = settled;
+        target.anchorPos = settled;
+        target.needBackToAnchor = false;
+        target.velocity = { x: 0, y: 0 };
+      }
+
+      applyRepulsion(next, stage, 0.13, 2);
+      blocksRef.current = next;
+      return next;
+    });
+
+    draggingIdRef.current = null;
+    dragOffsetRef.current = { x: 0, y: 0 };
+    setActiveZoneId(-1);
+
+    if (removedTag) {
+      setProfileTags((prev) => prev.filter((item) => item.tag_id !== removedTag.tag_id));
+      persistRemoveProfileTag(removedTag)
+        .then(() => loadProfileTags(userId))
+        .catch(() => loadProfileTags(userId));
+    }
+  };
+
+  const portraitResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: (evt) => {
+      if (activeTabRef.current !== "galaxy") return false;
+      const point = { x: evt.nativeEvent.locationX, y: evt.nativeEvent.locationY };
+      return Boolean(pickBlockAtPoint(blocksRef.current, point));
+    },
+    onMoveShouldSetPanResponder: (_, gesture) => activeTabRef.current === "galaxy" && (Math.abs(gesture.dx) > 2 || Math.abs(gesture.dy) > 2),
+    onPanResponderGrant: (evt) => {
+      const point = { x: evt.nativeEvent.locationX, y: evt.nativeEvent.locationY };
+      const picked = pickBlockAtPoint(blocksRef.current, point);
+      if (!picked) return;
+      draggingIdRef.current = picked.id;
+      dragOffsetRef.current = { x: picked.currentPos.x - point.x, y: picked.currentPos.y - point.y };
+      setPortraitBlocks((prev) => {
+        const next = prev.map(cloneBlock);
+        const index = next.findIndex((item) => item.id === picked.id);
+        if (index < 0) return prev;
+        const [target] = next.splice(index, 1);
+        target.isDragging = true;
+        target.velocity = { x: 0, y: 0 };
+        target.needBackToAnchor = false;
+        next.push(target);
+        blocksRef.current = next;
+        return next;
+      });
+    },
+    onPanResponderMove: (evt) => {
+      const id = draggingIdRef.current;
+      if (!id) return;
+      const point = {
+        x: evt.nativeEvent.locationX + dragOffsetRef.current.x,
+        y: evt.nativeEvent.locationY + dragOffsetRef.current.y
+      };
+      moveDraggedBlock(id, point);
+    },
+    onPanResponderRelease: (evt) => {
+      const id = draggingIdRef.current;
+      if (!id) return;
+      const point = {
+        x: evt.nativeEvent.locationX + dragOffsetRef.current.x,
+        y: evt.nativeEvent.locationY + dragOffsetRef.current.y
+      };
+      finishDraggedBlock(id, point);
+    },
+    onPanResponderTerminate: (evt) => {
+      const id = draggingIdRef.current;
+      if (!id) return;
+      const point = {
+        x: evt.nativeEvent.locationX + dragOffsetRef.current.x,
+        y: evt.nativeEvent.locationY + dragOffsetRef.current.y
+      };
+      finishDraggedBlock(id, point);
+    }
+  })).current;
+
+  const submitAuth = async () => {
+    const cleanId = accountId.trim();
+    const cleanName = accountName.trim();
+    if (!cleanId) return Alert.alert("\u8fd8\u5dee\u4e00\u6b65", "\u8bf7\u8f93\u5165\u8d26\u6237 ID");
+    if (authMode === "register" && !cleanName) return Alert.alert("\u8fd8\u5dee\u4e00\u6b65", "\u6ce8\u518c\u65f6\u8bf7\u586b\u5199\u6635\u79f0");
+    setAuthLoading(true);
+    try {
+      const user = await ensureUser(cleanId, cleanName);
+      await bootstrapUser(user, cleanName || cleanId);
+    } catch (err) {
+      Alert.alert("\u8fde\u63a5\u5931\u8d25", String(err));
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const submitOnboarding = async () => {
+    if (!userId || seedSelection.size === 0) return Alert.alert("\u8bf7\u9009\u62e9\u6807\u7b7e", "\u81f3\u5c11\u5148\u9009\u4e00\u4e2a\u6807\u7b7e\u65b9\u5411");
+    if (selectedSeedCategoryCount < 2) return Alert.alert("\u5206\u7c7b\u4e0d\u591f", "\u8bf7\u81f3\u5c11\u5728\u4e24\u4e2a\u4e0d\u540c\u5206\u7c7b\u4e2d\u9009\u62e9\u6807\u7b7e");
+    await fetch(`${API_BASE}/init-tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, tag_ids: Array.from(seedSelection) })
+    });
+    await loadProfileTags(userId);
+    await refreshSongs(userId, { preferLatest: true });
+    await refreshFavorites(userId);
+    await loadPlaylists(userId);
+    setNeedsOnboarding(false);
+    setOnboardingStep(0);
+    setActiveTab("player");
   };
 
   const submitNamedTag = async (name, chosenType) => {
     const cleanName = String(name || "").trim();
-    if (!userId || !cleanName) return setTagMessage("请输入标签名称");
+    if (!userId || !cleanName) return setTagMessage("\u8bf7\u8f93\u5165\u6807\u7b7e\u540d\u79f0");
     const res = await fetch(`${API_BASE}/user-tags`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId, name: cleanName, type: chosenType || undefined })
     });
     const data = await res.json();
-    if (!res.ok) return setTagMessage(data.error || "添加失败");
+    if (!res.ok) return setTagMessage(data.error || "\u6dfb\u52a0\u5931\u8d25");
     setNewTagName("");
     setPendingTagName("");
     setShowCategoryPicker(false);
-    setTagMessage(existingTagMatch ? "已加入当前画像" : "标签已提交，会在探索到它后进入画像");
+    setTagMessage(existingTagMatch ? "\u5df2\u52a0\u5165\u5f53\u524d\u753b\u50cf" : "\u6807\u7b7e\u5df2\u63d0\u4ea4\uff0c\u4f1a\u5728\u63a2\u7d22\u5230\u5b83\u540e\u8fdb\u5165\u753b\u50cf");
     await loadTags();
     await loadProfileTags(userId);
   };
@@ -446,10 +870,10 @@ export default function App() {
   const submitUserTag = async () => {
     setTagMessage("");
     const cleanName = newTagName.trim();
-    if (!userId || !cleanName) return setTagMessage("请输入标签名称");
+    if (!userId || !cleanName) return setTagMessage("\u8bf7\u8f93\u5165\u6807\u7b7e\u540d\u79f0");
     if (existingTagMatch) return submitNamedTag(cleanName, existingTagMatch.type);
     setPendingTagName(cleanName);
-    setSelectedCategory(CATEGORY_ORDER[0] || "情绪");
+    setSelectedCategory(CATEGORY_ORDER[0] || "\u60c5\u7eea");
     setShowCategoryPicker(true);
   };
 
@@ -458,17 +882,14 @@ export default function App() {
     await submitNamedTag(pendingTagName, selectedCategory);
   };
 
-  const generate = async (options = {}) => {
-    if (!userId) return null;
-    const res = await fetch(`${API_BASE}/generate`, {
+  const generate = async () => {
+    if (!userId) return;
+    await fetch(`${API_BASE}/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, instrumental: true, prefetch: !!options.preferReuse })
+      body: JSON.stringify({ user_id: userId, instrumental: true })
     });
-    if (!res.ok && !options.silent) throw new Error("generate failed");
-    const data = await res.json().catch(() => null);
-    await refreshSongs(userId);
-    return data;
+    await refreshSongs(userId, { preferLatest: true });
   };
 
   const attachStatus = (status) => {
@@ -482,19 +903,19 @@ export default function App() {
 
   const play = async (song) => {
     if (!song?.audio_url) return;
-    if (sound) await sound.unloadAsync().catch(() => {});
+    if (soundRef.current) await soundRef.current.unloadAsync().catch(() => {});
     completeSentFor.current = null;
     const created = await Audio.Sound.createAsync({ uri: song.audio_url }, { shouldPlay: true, progressUpdateIntervalMillis: 1000 }, attachStatus);
     setSound(created.sound);
     setCurrent(song);
-    setCurrentSoundId(song.id);
+    setCurrentSoundId(queueKeyOf(song));
   };
 
   const togglePlay = async () => {
     if (!current) return generate();
-    if (!sound || currentSoundId !== current.id) return play(current);
-    if (playback.isPlaying) await sound.pauseAsync();
-    else await sound.playAsync();
+    if (!soundRef.current || currentSoundId !== queueKeyOf(current)) return play(current);
+    if (playbackRef.current.isPlaying) await soundRef.current.pauseAsync();
+    else await soundRef.current.playAsync();
   };
 
   const feedback = async (action) => {
@@ -503,35 +924,9 @@ export default function App() {
       await fetch(`${API_BASE}/feedback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, song_id: current.id, action, played_seconds: Math.floor((playback.position || 0) / 1000) })
+        body: JSON.stringify({ user_id: userId, song_id: current.id, action, played_seconds: Math.floor((playbackRef.current.position || 0) / 1000) })
       });
     } catch {}
-  };
-
-  const getPlayableQueue = () => songs.filter((item) => !item.is_hidden && item.audio_url);
-
-  const findNextPlayableSong = (list, currentId) => {
-    if (!Array.isArray(list) || list.length === 0) return null;
-    const index = currentId ? list.findIndex((item) => Number(item.id) === Number(currentId)) : -1;
-    if (index >= 0 && index < list.length - 1) return list[index + 1];
-    return null;
-  };
-
-  const prefetchNextSong = async () => {
-    if (!userId || !current?.id || prefetchLock.current) return;
-    const queue = getPlayableQueue();
-    const currentIndex = queue.findIndex((item) => Number(item.id) === Number(current.id));
-    const remaining = currentIndex >= 0 ? queue.slice(currentIndex + 1) : [];
-    if (remaining.length >= 2) return;
-    if (prefetchedForSong.current === Number(current.id)) return;
-    prefetchLock.current = true;
-    prefetchedForSong.current = Number(current.id);
-    try {
-      await generate({ silent: true, preferReuse: true });
-      await refreshSongs(userId);
-    } catch {} finally {
-      prefetchLock.current = false;
-    }
   };
 
   const handleAutoNext = async (action) => {
@@ -539,58 +934,53 @@ export default function App() {
     autoNextLock.current = true;
     try {
       await feedback(action);
-      const currentId = current?.id;
-      const immediateNext = findNextPlayableSong(getPlayableQueue(), currentId);
-      if (immediateNext) {
-        await play(immediateNext);
-        return;
-      }
-      await generate({ preferReuse: true });
-      const fresh = await refreshSongs(userId);
-      const next = findNextPlayableSong(fresh.filter((item) => !item.is_hidden && item.audio_url), currentId) || fresh.find((item) => !item.is_hidden && item.audio_url);
-      if (next) await play(next);
-    } finally { autoNextLock.current = false; }
+      const index = current ? songs.findIndex((item) => queueKeyOf(item) === queueKeyOf(current)) : -1;
+      if (index >= 0 && index < songs.length - 1) return play(songs[index + 1]);
+      await generate();
+      const fresh = await refreshSongs(userId, { preferLatest: true });
+      if (fresh.length > 0) await play(fresh[fresh.length - 1]);
+    } finally {
+      autoNextLock.current = false;
+    }
   };
 
   const handleNext = async () => {
     if (!current) return generate();
-    const next = findNextPlayableSong(getPlayableQueue(), current.id);
-    if (next) return play(next);
+    const index = songs.findIndex((item) => queueKeyOf(item) === queueKeyOf(current));
+    if (index >= 0 && index < songs.length - 1) return play(songs[index + 1]);
     await handleAutoNext("skip");
   };
 
-  const appendPlaylistToQueue = async (playlistId, startSongId) => {
-    if (!playlistId) return;
-    const list = selectedPlaylistId === playlistId && playlistSongs.length ? playlistSongs : await loadPlaylistSongs(playlistId);
-    if (!list.length) return;
-    const startIndex = list.findIndex((item) => Number(item.id) === Number(startSongId));
-    const ordered = startIndex >= 0 ? [...list.slice(startIndex), ...list.slice(0, startIndex)] : list;
-    const seen = new Set();
-    const queueItems = ordered.filter((item) => {
-      const key = Number(item.id || 0);
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-    setSongs((prev) => {
-      const remaining = prev.filter((item) => !queueItems.some((queued) => Number(queued.id) === Number(item.id)));
-      return [...remaining, ...queueItems];
-    });
-    const target = queueItems.find((item) => Number(item.id) === Number(startSongId)) || queueItems[0];
-    if (target) await play(target);
-    setShowQueue(true);
-    setActiveTab("player");
-  };
   const createPlaylist = async () => {
     if (!userId || !newPlaylistName.trim()) return;
-    await fetch(`${API_BASE}/playlists`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId, name: newPlaylistName.trim() }) });
+    await fetch(`${API_BASE}/playlists`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, name: newPlaylistName.trim() })
+    });
     setNewPlaylistName("");
     await loadPlaylists(userId);
   };
 
   const addSongToPlaylist = async (playlistId, song = current) => {
     if (!song || !playlistId) return;
-    await fetch(`${API_BASE}/playlists/${playlistId}/add`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ song_id: song.id }) });
+    await fetch(`${API_BASE}/playlists/${playlistId}/add`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ song_id: song.id })
+    });
+  };
+
+  const enqueueSongToTail = (song, source = "manual") => {
+    const clone = cloneQueueSong(song, source);
+    if (!clone) return;
+    setSongs((prev) => [...prev, clone]);
+  };
+
+  const enqueueSongsToTail = (list, source = "playlist") => {
+    const clones = (list || []).map((song) => cloneQueueSong(song, source)).filter(Boolean);
+    if (clones.length === 0) return;
+    setSongs((prev) => [...prev, ...clones]);
   };
 
   const testConnection = async () => {
@@ -598,57 +988,82 @@ export default function App() {
     try {
       const res = await fetch(`${API_BASE}/tags`);
       const data = await res.json();
-      setHealth({ loading: false, ok: res.ok, message: `API: ${API_BASE} | 标签数 ${data.items ? data.items.length : 0}` });
+      setHealth({ loading: false, ok: res.ok, message: `API: ${API_BASE} | items: ${data.items ? data.items.length : 0}` });
     } catch (err) {
       setHealth({ loading: false, ok: false, message: `API: ${API_BASE} | ${String(err)}` });
     }
   };
 
-  const logout = async () => {
-    if (sound) await sound.unloadAsync().catch(() => {});
-    setSession(null); setNeedsOnboarding(false); setSeedSelection(new Set()); setOnboardingStep(0);
-    setProfileTags([]); setSongs([]); setFavorites([]); setPlaylists([]); setPlaylistSongs([]); setCurrent(null);
-    setActiveTab("player"); setShowPlaylistPicker(false);
+  const refreshAllData = async () => {
+    if (!userId) return;
+    await Promise.all([loadTags(), loadProfileTags(userId), refreshSongs(userId), refreshFavorites(userId), loadPlaylists(userId)]);
+    setHealth({ loading: false, ok: true, message: "\u6570\u636e\u5df2\u5237\u65b0" });
   };
 
-  useEffect(() => {
-    if (!current?.id || !playback.isPlaying) return;
-    prefetchNextSong().catch(() => {});
-  }, [current?.id, playback.isPlaying, songs.length, userId]);
+  const logout = async () => {
+    if (soundRef.current) await soundRef.current.unloadAsync().catch(() => {});
+    setSound(null);
+    setSession(null);
+    setNeedsOnboarding(false);
+    setSeedSelection(new Set());
+    setOnboardingStep(0);
+    setProfileTags([]);
+    setSongs([]);
+    setFavorites([]);
+    setPlaylists([]);
+    setPlaylistSongsMap({});
+    setPlaylistSongs([]);
+    setSelectedPlaylistId(null);
+    setCurrent(null);
+    setCurrentSoundId(null);
+    setActiveTab("player");
+    setShowPlaylistPicker(false);
+    setPortraitBlocks([]);
+  };
 
   const progressResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
-    onPanResponderMove: (_, g) => {
-      if (!progressLayout || !sound) return;
-      const localX = Math.min(progressLayout.width, Math.max(0, g.moveX - progressLayout.pageX));
-      const percent = progressLayout.width > 0 ? localX / progressLayout.width : 0;
-      setPlayback((prev) => ({ ...prev, position: Math.floor(percent * (playback.duration || 0)) }));
+    onPanResponderMove: (_, gesture) => {
+      const layout = progressLayoutRef.current;
+      const currentSound = soundRef.current;
+      if (!layout || !currentSound) return;
+      const localX = Math.min(layout.width, Math.max(0, gesture.moveX - layout.pageX));
+      const percent = layout.width > 0 ? localX / layout.width : 0;
+      setPlayback((prev) => ({ ...prev, position: Math.floor(percent * (playbackRef.current.duration || 0)) }));
     },
-    onPanResponderRelease: async (_, g) => {
-      if (!progressLayout || !sound) return;
-      const localX = Math.min(progressLayout.width, Math.max(0, g.moveX - progressLayout.pageX));
-      const percent = progressLayout.width > 0 ? localX / progressLayout.width : 0;
-      await sound.setPositionAsync(Math.floor(percent * (playback.duration || 0)));
+    onPanResponderRelease: async (_, gesture) => {
+      const layout = progressLayoutRef.current;
+      const currentSound = soundRef.current;
+      if (!layout || !currentSound) return;
+      const localX = Math.min(layout.width, Math.max(0, gesture.moveX - layout.pageX));
+      const percent = layout.width > 0 ? localX / layout.width : 0;
+      await currentSound.setPositionAsync(Math.floor(percent * (playbackRef.current.duration || 0)));
     }
   })).current;
 
   const renderAuth = () => (
     <SafeAreaView style={styles.page}>
+      <PortraitBackdrop blocks={portraitBlocks} stageSize={{ width, height }} />
       <ScrollView contentContainerStyle={styles.authShell} showsVerticalScrollIndicator={false}>
-        <View style={styles.authBlobA} /><View style={styles.authBlobB} />
         <View style={styles.authCard}>
           <Text style={styles.authEyebrow}>TPY MUSIC</Text>
-          <Text style={styles.authTitle}>先登录，再把你的音乐世界接回来</Text>
-          <Text style={styles.authSubtitle}>这一版先做轻量账户系统：我们用账户 ID 识别用户。登录后会直接拉回标签、收藏、歌单与历史歌曲。</Text>
+          <Text style={styles.authTitle}>Sign in to restore your music space</Text>
+          <Text style={styles.authSubtitle}>After login, we restore tags, queue, playlists and favorites.</Text>
           <View style={styles.authModeRow}>
-            <TouchableOpacity style={[styles.authMode, authMode === "login" && styles.authModeActive]} onPress={() => setAuthMode("login")}><Text style={[styles.authModeText, authMode === "login" && styles.authModeTextActive]}>登录</Text></TouchableOpacity>
-            <TouchableOpacity style={[styles.authMode, authMode === "register" && styles.authModeActive]} onPress={() => setAuthMode("register")}><Text style={[styles.authModeText, authMode === "register" && styles.authModeTextActive]}>注册</Text></TouchableOpacity>
+            <TouchableOpacity style={[styles.authMode, authMode === "login" && styles.authModeActive]} onPress={() => setAuthMode("login")}>
+              <Text style={[styles.authModeText, authMode === "login" && styles.authModeTextActive]}>Login</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.authMode, authMode === "register" && styles.authModeActive]} onPress={() => setAuthMode("register")}>
+              <Text style={[styles.authModeText, authMode === "register" && styles.authModeTextActive]}>Register</Text>
+            </TouchableOpacity>
           </View>
-          {authMode === "register" ? <TextInput value={accountName} onChangeText={setAccountName} placeholder="昵称" placeholderTextColor="#9D978E" style={styles.input} /> : null}
-          <TextInput value={accountId} onChangeText={setAccountId} placeholder="账户 ID，例如 demo-device" placeholderTextColor="#9D978E" autoCapitalize="none" style={styles.input} />
+          {authMode === "register" ? (
+            <TextInput value={accountName} onChangeText={setAccountName} placeholder="Nickname" placeholderTextColor="#B9C2CE" style={styles.input} />
+          ) : null}
+          <TextInput value={accountId} onChangeText={setAccountId} placeholder="Account ID, e.g. demo-device" placeholderTextColor="#B9C2CE" autoCapitalize="none" style={styles.input} />
           <TouchableOpacity style={styles.primary} onPress={submitAuth} disabled={authLoading}>
-            {authLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>{authMode === "login" ? "登录并恢复数据" : "注册并继续"}</Text>}
+            {authLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>{authMode === "login" ? "Login & restore" : "Register & continue"}</Text>}
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -657,176 +1072,364 @@ export default function App() {
 
   const renderOnboarding = () => (
     <SafeAreaView style={styles.page}>
+      <PortraitBackdrop blocks={portraitBlocks} stageSize={{ width, height }} />
       <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-        <ScreenTitle eyebrow="首次进入" title="先按类别建立你的初始标签池" subtitle="每次只专注一个类别，选中的标签会直接成为你的起点，后续新标签再通过探索和自定义慢慢扩展。" />
+        <ScreenTitle eyebrow="First run" title="Pick initial tags" subtitle="Please choose tags from at least two categories." />
         <View style={styles.groupCard}>
           <View style={styles.onboardingProgressHeader}>
-            <Text style={styles.groupTitle}>{currentOnboarding ? currentOnboarding[0] : "已完成"}</Text>
-            <Text style={styles.hintText}>第 {Math.min(onboardingStep + 1, onboardingGroups.length || 1)} / {Math.max(1, onboardingGroups.length)} 类</Text>
+            <Text style={styles.groupTitle}>{currentOnboarding ? currentOnboarding[0] : "Done"}</Text>
+            <Text style={styles.hintText}>{"Step " + Math.min(onboardingStep + 1, onboardingGroups.length || 1) + " / " + Math.max(1, onboardingGroups.length)}</Text>
           </View>
           <View style={styles.onboardingProgressTrack}>
             <View style={[styles.onboardingProgressFill, { width: String(((Math.min(onboardingStep + 1, onboardingGroups.length || 1)) / Math.max(1, onboardingGroups.length)) * 100) + "%" }]} />
           </View>
-          {currentOnboarding ? <View style={styles.seedWrap}>
-            {currentOnboarding[1].map((item) => <SeedTag key={item.id} item={item} selected={seedSelection.has(item.id)} onPress={(tag) => {
-              const next = new Set(seedSelection);
-              if (next.has(tag.id)) next.delete(tag.id); else next.add(tag.id);
-              setSeedSelection(next);
-            }} />)}
-          </View> : <Text style={styles.placeholder}>标签类别已全部选择完成</Text>}
+          {currentOnboarding ? (
+            <View style={styles.seedWrap}>
+              {currentOnboarding[1].map((item) => (
+                <SeedTag
+                  key={item.id}
+                  item={item}
+                  selected={seedSelection.has(item.id)}
+                  onPress={(tag) => {
+                    const next = new Set(seedSelection);
+                    if (next.has(tag.id)) next.delete(tag.id);
+                    else next.add(tag.id);
+                    setSeedSelection(next);
+                  }}
+                />
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.placeholder}>All categories completed.</Text>
+          )}
           <View style={styles.rowGap}>
             <TouchableOpacity style={[styles.secondarySoft, styles.flex]} onPress={() => setOnboardingStep((prev) => Math.max(0, prev - 1))}>
-              <Text style={styles.secondaryText}>上一步</Text>
+              <Text style={styles.secondaryText}>Back</Text>
             </TouchableOpacity>
-            {onboardingStep < onboardingGroups.length - 1 ? <TouchableOpacity style={[styles.primary, styles.flex]} onPress={() => setOnboardingStep((prev) => Math.min(onboardingGroups.length - 1, prev + 1))}><Text style={styles.primaryText}>下一个类别</Text></TouchableOpacity> : <TouchableOpacity style={[styles.primary, styles.flex]} onPress={submitOnboarding}><Text style={styles.primaryText}>完成选择并进入 App</Text></TouchableOpacity>}
+            {onboardingStep < onboardingGroups.length - 1 ? (
+              <TouchableOpacity style={[styles.primary, styles.flex]} onPress={() => setOnboardingStep((prev) => Math.min(onboardingGroups.length - 1, prev + 1))}>
+                <Text style={styles.primaryText}>Next</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity style={[styles.primary, styles.flex]} onPress={submitOnboarding}>
+                <Text style={styles.primaryText}>Enter App</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </ScrollView>
     </SafeAreaView>
   );
+
   const renderPlayer = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow={`你好，${displayName}`} title="现在播放" subtitle="登录后会自动带出你的歌曲与偏好，不用再等到生成时才识别用户。" />
+      <ScreenTitle eyebrow={"Hi, " + displayName} title="Songs" subtitle="Play, favorite and manage your queue." />
       <View style={styles.playerCard}>
-                <View style={styles.coverWrap}><View style={styles.cover}><View style={styles.coverGlowA} /><View style={styles.coverGlowB} /><View style={styles.coverGlowC} /><Text style={styles.coverText}>TPY</Text></View></View>
-        <Text style={styles.playerTitle}>{current?.title || "暂无歌曲"}</Text>
+        <View style={styles.coverWrap}>
+          <View style={styles.cover}>
+            <View style={styles.coverGlowA} />
+            <View style={styles.coverGlowB} />
+            <View style={styles.coverGlowC} />
+            <Text style={styles.coverText}>TPY</Text>
+          </View>
+        </View>
+        <Text style={styles.playerTitle}>{current?.title || "No song yet"}</Text>
         <Text style={styles.playerSub} numberOfLines={2}>{songTagText(current)}</Text>
         <View style={styles.progressWrap}>
-          <View ref={progressTrackRef} style={styles.progressTrack} onLayout={() => {
-            if (!progressTrackRef.current) return;
-            progressTrackRef.current.measure((x, y, w, h, pageX, pageY) => setProgressLayout({ width: w, pageX, pageY }));
-          }} {...progressResponder.panHandlers}>
-            <View style={[styles.progressFill, { width: `${Math.min(1, (playback.position || 0) / (playback.duration || 1)) * 100}%` }]} />
+          <View
+            ref={progressTrackRef}
+            style={styles.progressTrack}
+            onLayout={() => {
+              if (!progressTrackRef.current) return;
+              progressTrackRef.current.measure((x, y, w, h, pageX, pageY) => setProgressLayout({ width: w, pageX, pageY }));
+            }}
+            {...progressResponder.panHandlers}
+          >
+            <View style={[styles.progressFill, { width: String(Math.min(1, (playback.position || 0) / (playback.duration || 1)) * 100) + "%" }]} />
           </View>
-          <View style={styles.progressTimeRow}><Text style={styles.progressText}>{formatTime(playback.position)}</Text><Text style={styles.progressText}>{formatTime(playback.duration)}</Text></View>
+          <View style={styles.progressTimeRow}>
+            <Text style={styles.progressText}>{formatTime(playback.position)}</Text>
+            <Text style={styles.progressText}>{formatTime(playback.duration)}</Text>
+          </View>
         </View>
         <View style={styles.controlsRow}>
-          <TouchableOpacity style={styles.controlBtn} onPress={async () => {
-            if (!current) return;
-            await feedback("like");
-            const list = await loadPlaylists(userId);
-            if (list.length === 0) { Alert.alert("还没有歌单", "先去收藏页创建一个歌单吧。"); setActiveTab("favorites"); return; }
-            setShowPlaylistPicker(true);
-          }}><Text style={styles.controlText}>收藏</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.playBtn} onPress={togglePlay}><Text style={styles.playText}>{current ? (playback.isPlaying ? "暂停" : "播放") : "生成"}</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.controlBtn} onPress={handleNext}><Text style={styles.controlText}>下一曲</Text></TouchableOpacity>
+          <TouchableOpacity
+            style={styles.controlBtn}
+            onPress={async () => {
+              if (!current) return;
+              await feedback("like");
+              const list = await loadPlaylists(userId);
+              if (list.length === 0) {
+                Alert.alert("No playlist", "Create one in Favorites first.");
+                setActiveTab("favorites");
+                return;
+              }
+              setShowPlaylistPicker(true);
+            }}
+          >
+            <Text style={styles.controlText}>Favorite</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.playBtn} onPress={togglePlay}>
+            <Text style={styles.playText}>{current ? (playback.isPlaying ? "Pause" : "Play") : "Generate"}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.controlBtn} onPress={handleNext}>
+            <Text style={styles.controlText}>Next</Text>
+          </TouchableOpacity>
         </View>
       </View>
-      {showPlaylistPicker ? <View style={styles.groupCard}><Text style={styles.groupTitle}>收藏到哪个歌单？</Text>{playlists.map((p) => <TouchableOpacity key={p.id} style={styles.listItem} onPress={async () => { await addSongToPlaylist(p.id); if (selectedPlaylistId === p.id) await loadPlaylistSongs(p.id); setShowPlaylistPicker(false); }}><View><Text style={styles.listTitle}>{p.name}</Text><Text style={styles.listSub}>歌曲 {p.song_count || 0}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}<TouchableOpacity style={styles.secondarySoft} onPress={() => setShowPlaylistPicker(false)}><Text style={styles.secondaryText}>取消</Text></TouchableOpacity></View> : null}
-      <View style={styles.section}><TouchableOpacity style={styles.queueToggle} onPress={() => setShowQueue((prev) => !prev)}><View><Text style={styles.queueLabel}>播放队列</Text><Text style={styles.queueHint}>有下一首就切换，没有就自动生成</Text></View><Text style={styles.queueAction}>{showQueue ? "收起" : "展开"}</Text></TouchableOpacity>{showQueue ? songs.map((item) => <TouchableOpacity key={item.id} style={styles.listItem} onPress={() => play(item)}><View style={styles.flex}><Text style={styles.listTitle}>{item.title || "未命名歌曲"}</Text><Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>) : null}</View>
+
+      {showPlaylistPicker ? (
+        <View style={styles.groupCard}>
+          <Text style={styles.groupTitle}>Save to playlist</Text>
+          {playlists.map((playlist) => (
+            <TouchableOpacity
+              key={playlist.id}
+              style={styles.listItem}
+              onPress={async () => {
+                await addSongToPlaylist(playlist.id);
+                if (selectedPlaylistId === playlist.id) await loadPlaylistSongs(playlist.id);
+                setShowPlaylistPicker(false);
+              }}
+            >
+              <View>
+                <Text style={styles.listTitle}>{playlist.name}</Text>
+                <Text style={styles.listSub}>{"Songs " + (playlist.song_count || 0)}</Text>
+              </View>
+              <Text style={styles.chevron}>></Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity style={styles.secondarySoft} onPress={() => setShowPlaylistPicker(false)}>
+            <Text style={styles.secondaryText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      <View style={styles.section}>
+        <TouchableOpacity style={styles.queueToggle} onPress={() => setShowQueue((prev) => !prev)}>
+          <View>
+            <Text style={styles.queueLabel}>Queue</Text>
+            <Text style={styles.queueHint}>Tap an item to switch playback</Text>
+          </View>
+          <Text style={styles.queueAction}>{showQueue ? "Hide" : "Show"}</Text>
+        </TouchableOpacity>
+        {showQueue ? songs.map((item, index) => (
+          <TouchableOpacity key={String(queueKeyOf(item))} style={[styles.listItem, queueKeyOf(current) === queueKeyOf(item) && styles.currentQueueItem]} onPress={() => play(item)}>
+            <View style={styles.flex}>
+              <Text style={styles.listTitle}>{String(index + 1) + ". " + (item.title || "Untitled")}</Text>
+              <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
+            </View>
+            <Text style={styles.chevron}>></Text>
+          </TouchableOpacity>
+        )) : null}
+      </View>
     </ScrollView>
   );
 
   const renderFavorites = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="你的收藏" title="歌单与喜欢的歌曲" subtitle="播放器负责听，这里负责沉淀内容。" />
+      <ScreenTitle eyebrow="Favorites" title="Playlists and songs" subtitle="Expand playlist, append single song, or append whole playlist by +." />
+
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>新建歌单</Text>
-        <TextInput value={newPlaylistName} onChangeText={setNewPlaylistName} placeholder="比如：深夜情绪 / 周末通勤" placeholderTextColor="#9D978E" style={styles.input} />
-        <TouchableOpacity style={styles.primary} onPress={createPlaylist}><Text style={styles.primaryText}>创建歌单</Text></TouchableOpacity>
+        <Text style={styles.groupTitle}>New playlist</Text>
+        <TextInput value={newPlaylistName} onChangeText={setNewPlaylistName} placeholder="e.g. Late night / Commute" placeholderTextColor="#B9C2CE" style={styles.input} />
+        <TouchableOpacity style={styles.primary} onPress={createPlaylist}>
+          <Text style={styles.primaryText}>Create</Text>
+        </TouchableOpacity>
       </View>
+
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>我的歌单</Text>
-        {playlists.length === 0 ? <Text style={styles.placeholder}>还没有歌单</Text> : playlists.map((p) => <TouchableOpacity key={p.id} style={styles.listItem} onPress={async () => { setSelectedPlaylistId(p.id); await loadPlaylistSongs(p.id); }}><View><Text style={styles.listTitle}>{p.name}</Text><Text style={styles.listSub}>歌曲 {p.song_count || 0}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}
+        <Text style={styles.groupTitle}>My playlists</Text>
+        {playlists.length === 0 ? (
+          <Text style={styles.placeholder}>No playlist yet.</Text>
+        ) : playlists.map((playlist) => {
+          const expanded = selectedPlaylistId === playlist.id;
+          const songsInPlaylist = playlistSongsMap[playlist.id] || [];
+          return (
+            <View key={playlist.id} style={styles.playlistBox}>
+              <View style={styles.playlistRow}>
+                <TouchableOpacity
+                  style={styles.flex}
+                  onPress={async () => {
+                    if (expanded) {
+                      setSelectedPlaylistId(null);
+                    } else {
+                      setSelectedPlaylistId(playlist.id);
+                      await loadPlaylistSongs(playlist.id);
+                    }
+                  }}
+                >
+                  <Text style={styles.listTitle}>{playlist.name}</Text>
+                  <Text style={styles.listSub}>{"Songs " + (playlist.song_count || 0)}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.playlistPlus}
+                  onPress={async () => {
+                    const list = songsInPlaylist.length > 0 ? songsInPlaylist : await loadPlaylistSongs(playlist.id);
+                    enqueueSongsToTail(list, "playlist-" + String(playlist.id));
+                  }}
+                >
+                  <Text style={styles.playlistPlusText}>+</Text>
+                </TouchableOpacity>
+              </View>
+
+              {expanded ? (
+                <View style={{ marginTop: 10 }}>
+                  {songsInPlaylist.length === 0 ? (
+                    <Text style={styles.placeholder}>This playlist is empty.</Text>
+                  ) : songsInPlaylist.map((song) => (
+                    <TouchableOpacity key={String(playlist.id) + "-" + String(song.id)} style={styles.listItem} onPress={() => enqueueSongToTail(song, "playlist-song-" + String(playlist.id))}>
+                      <View style={styles.flex}>
+                        <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
+                        <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
+                      </View>
+                      <Text style={styles.chevron}>></Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          );
+        })}
       </View>
-      {selectedPlaylistId ? <View style={styles.groupCard}><Text style={styles.groupTitle}>当前歌单内容</Text>{playlistSongs.length === 0 ? <Text style={styles.placeholder}>这个歌单还没有歌曲</Text> : playlistSongs.map((song) => <TouchableOpacity key={song.id} style={styles.listItem} onPress={() => appendPlaylistToQueue(selectedPlaylistId, song.id)}><View style={styles.flex}><Text style={styles.listTitle}>{song.title || "未命名歌曲"}</Text><Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}</View> : null}
+
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>收藏记录</Text>
-        {favorites.length === 0 ? <Text style={styles.placeholder}>还没有收藏歌曲</Text> : favorites.map((song) => <TouchableOpacity key={`${song.id}-${song.created_at || "fav"}`} style={styles.listItem} onPress={() => play(song)}><View style={styles.flex}><Text style={styles.listTitle}>{song.title || "未命名歌曲"}</Text><Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>)}
+        <Text style={styles.groupTitle}>Favorite history</Text>
+        {favorites.length === 0 ? (
+          <Text style={styles.placeholder}>No favorite songs yet.</Text>
+        ) : favorites.map((song) => (
+          <TouchableOpacity key={String(song.id) + "-" + String(song.created_at || "fav")} style={styles.listItem} onPress={() => enqueueSongToTail(song, "favorite")}>
+            <View style={styles.flex}>
+              <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
+              <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
+            </View>
+            <Text style={styles.chevron}>></Text>
+          </TouchableOpacity>
+        ))}
       </View>
     </ScrollView>
   );
 
-  const renderGalaxy = () => (
-    <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle
-        eyebrow={"\u6807\u7b7e\u753b\u50cf"}
-        title={"\u7528\u6700\u7b80\u5355\u7684\u65b9\u5f0f\u7ba1\u7406\u4f60\u7684\u6807\u7b7e"}
-        subtitle={"\u53ea\u4fdd\u7559\u6807\u7b7e\u5217\u8868\u3001\u589e\u5f3a\u3001\u51cf\u5f31\u3001\u5220\u9664\u548c\u65b0\u589e\u6807\u7b7e\u3002"}
-      />
+  const renderGalaxy = () => {
+    const zones = getFuncZones(effectiveStageSize);
 
-      {activeProfileTags.length === 0 ? (
-        <View style={styles.groupCard}>
-          <Text style={styles.groupTitle}>{"\u8fd8\u6ca1\u6709\u6807\u7b7e"}</Text>
-          <Text style={styles.placeholder}>{"\u5148\u5728\u4e0b\u65b9\u65b0\u589e\u6807\u7b7e\uff0c\u6216\u91cd\u65b0\u5b8c\u6210\u9996\u6b21\u6807\u7b7e\u9009\u62e9\u3002"}</Text>
+    return (
+      <View style={styles.galaxyScreen} onLayout={(event) => setPortraitStageSize(event.nativeEvent.layout)}>
+        <PortraitBackdrop blocks={portraitBlocks} stageSize={effectiveStageSize} />
+        <View style={styles.galaxyHeader}>
+          <ScreenTitle eyebrow="Portrait" title="Full-screen blurred blobs" subtitle="Drag tags to repel each other. Top zones: delete / smaller / bigger." light />
         </View>
-      ) : (
-        CATEGORY_ORDER.map((type) => {
-          const items = activeProfileTags.filter((item) => item.type === type);
-          if (items.length === 0) return null;
-          return (
-            <View key={type} style={styles.groupCard}>
-              <View style={styles.rowBetween}>
-                <Text style={styles.groupTitle}>{type}</Text>
-                <Text style={styles.groupMeta}>{items.length} {"\u4e2a\u6807\u7b7e"}</Text>
-              </View>
-              {items.map((tag) => (
-                <View key={tag.tag_id} style={styles.tagRowSimple}>
-                  <View style={styles.tagMeta}>
-                    <View style={[styles.tagTypeBadge, { backgroundColor: `${typePalette(tag.type)[0]}22` }]}>
-                      <Text style={[styles.tagTypeBadgeText, { color: typePalette(tag.type)[2] }]}>{tag.type}</Text>
-                    </View>
-                    <Text style={styles.tagNameText}>{tag.name}</Text>
-                  </View>
-                  <View style={styles.tagActions}>
-                    <TouchableOpacity style={styles.tagActionButton} onPress={() => animateTagWeightChange(tag, Math.max(0.03, Number(tag.weight || 0) - 0.12))}>
-                      <Text style={styles.tagActionText}>-</Text>
+
+        <View style={styles.zoneRow} pointerEvents="box-none">
+          {zones.map((zone) => (
+            <View
+              key={zone.id}
+              style={[
+                styles.zoneCard,
+                activeZoneId === zone.id && styles.zoneCardActive,
+                zone.id === 1 && activeZoneId === zone.id && styles.zoneDeleteActive,
+                zone.id === 2 && activeZoneId === zone.id && styles.zoneSmallerActive,
+                zone.id === 3 && activeZoneId === zone.id && styles.zoneBiggerActive
+              ]}
+            >
+              <Text style={styles.zoneLabel}>{zone.label}</Text>
+              <Text style={styles.zoneHint}>{zone.hint}</Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={styles.galaxyStage} {...portraitResponder.panHandlers}>
+          {portraitBlocks.length === 0 ? (
+            <View style={styles.emptyGalaxy}>
+              <Text style={styles.emptyGalaxyTitle}>No tags yet</Text>
+              <Text style={styles.emptyGalaxyText}>Add tags below, or complete onboarding tags first.</Text>
+            </View>
+          ) : portraitBlocks.map((block) => (
+            <PortraitTag key={block.id} block={block} isDragging={block.id === draggingIdRef.current} />
+          ))}
+        </View>
+
+        <View style={[styles.galaxySheet, isTagSheetCollapsed && styles.galaxySheetCollapsed]}>
+          <TouchableOpacity style={styles.sheetHeader} onPress={() => setIsTagSheetCollapsed((prev) => !prev)}>
+            <Text style={styles.groupTitle}>Add tag</Text>
+            <Text style={styles.sheetToggleText}>{isTagSheetCollapsed ? "Expand" : "Collapse"}</Text>
+          </TouchableOpacity>
+
+          {!isTagSheetCollapsed ? (
+            <>
+              <TextInput value={newTagName} onChangeText={setNewTagName} placeholder="Tag name" placeholderTextColor="#B9C2CE" style={styles.input} />
+              {existingTagMatch ? (
+                <Text style={styles.hintText}>{"Existing category found: " + existingTagMatch.type + ". It will be added directly."}</Text>
+              ) : (
+                <Text style={styles.hintText}>For a new tag, submit first and then choose its category.</Text>
+              )}
+              <TouchableOpacity style={styles.primary} onPress={submitUserTag}>
+                <Text style={styles.primaryText}>Add to my portrait</Text>
+              </TouchableOpacity>
+
+              {showCategoryPicker ? (
+                <View style={styles.categoryPickerCard}>
+                  <Text style={styles.categoryPickerTitle}>{"Choose a category for \"" + pendingTagName + "\""}</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryPickerRow}>
+                    {CATEGORY_ORDER.map((type) => (
+                      <TouchableOpacity key={type} style={[styles.categoryChip, selectedCategory === type && styles.categoryChipActive]} onPress={() => setSelectedCategory(type)}>
+                        <Text style={[styles.categoryChipText, selectedCategory === type && styles.categoryChipTextActive]}>{type}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                  <View style={styles.rowGap}>
+                    <TouchableOpacity
+                      style={[styles.secondarySoft, styles.flex]}
+                      onPress={() => {
+                        setShowCategoryPicker(false);
+                        setPendingTagName("");
+                      }}
+                    >
+                      <Text style={styles.secondaryText}>Cancel</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.tagActionButtonPrimary} onPress={() => animateTagWeightChange(tag, Math.min(1, Number(tag.weight || 0) + 0.12))}>
-                      <Text style={styles.tagActionTextPrimary}>+</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.tagRemoveButton} onPress={() => animateTagWeightChange(tag, 0, "remove")}>
-                      <Text style={styles.tagRemoveText}>{"\u5220\u9664"}</Text>
+                    <TouchableOpacity style={[styles.primary, styles.flex]} onPress={confirmCustomTagType}>
+                      <Text style={styles.primaryText}>Confirm</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
-              ))}
-            </View>
-          );
-        })
-      )}
-
-      <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>{"\u65b0\u589e\u6807\u7b7e"}</Text>
-        <TextInput value={newTagName} onChangeText={setNewTagName} placeholder={"\u6807\u7b7e\u540d\u79f0"} placeholderTextColor="#9D978E" style={styles.input} />
-        {existingTagMatch ? (
-          <Text style={styles.hintText}>{`\u8bc6\u522b\u5230\u73b0\u6709\u5206\u7c7b\uff1a${existingTagMatch.type}\uff0c\u4f1a\u76f4\u63a5\u52a0\u5165\u4f60\u7684\u6807\u7b7e\u3002`}</Text>
-        ) : (
-          <Text style={styles.hintText}>{"\u5982\u679c\u8fd9\u662f\u4e00\u4e2a\u5168\u65b0\u6807\u7b7e\uff0c\u63d0\u4ea4\u540e\u518d\u9009\u62e9\u7c7b\u522b\u3002"}</Text>
-        )}
-        <TouchableOpacity style={styles.primary} onPress={submitUserTag}>
-          <Text style={styles.primaryText}>{"\u52a0\u5165\u6211\u7684\u6807\u7b7e"}</Text>
-        </TouchableOpacity>
-        {showCategoryPicker ? (
-          <View style={styles.categoryPickerCard}>
-            <Text style={styles.categoryPickerTitle}>{`\u7ed9\u201c${pendingTagName}\u201d\u9009\u62e9\u4e00\u4e2a\u7c7b\u522b`}</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryPickerRow}>
-              {CATEGORY_ORDER.map((type) => (
-                <TouchableOpacity key={type} style={[styles.categoryChip, selectedCategory === type && styles.categoryChipActive]} onPress={() => setSelectedCategory(type)}>
-                  <Text style={[styles.categoryChipText, selectedCategory === type && styles.categoryChipTextActive]}>{type}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            <View style={styles.rowGap}>
-              <TouchableOpacity style={[styles.secondarySoft, styles.flex]} onPress={() => { setShowCategoryPicker(false); setPendingTagName(""); }}>
-                <Text style={styles.secondaryText}>{"\u53d6\u6d88"}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.primary, styles.flex]} onPress={confirmCustomTagType}>
-                <Text style={styles.primaryText}>{"\u786e\u8ba4\u5206\u7c7b"}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        ) : null}
-        {tagMessage ? <Text style={styles.hintText}>{tagMessage}</Text> : null}
+              ) : null}
+              {tagMessage ? <Text style={styles.hintText}>{tagMessage}</Text> : null}
+            </>
+          ) : null}
+        </View>
       </View>
-    </ScrollView>
-  );
+    );
+  };
+
   const renderSettings = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="账户中心" title="设置与连接状态" subtitle="这是一版简单账户系统，先保证用户能快速回到自己的数据。" />
-      <View style={styles.groupCard}><Text style={styles.groupTitle}>当前账户</Text><View style={styles.accountCard}><Text style={styles.accountName}>{displayName}</Text><Text style={styles.accountMeta}>账户 ID：{session?.deviceId}</Text><Text style={styles.accountMeta}>用户 ID：{session?.userId}</Text></View></View>
-      <View style={styles.groupCard}><Text style={styles.groupTitle}>接口状态</Text><TouchableOpacity style={styles.secondarySoft} onPress={testConnection}><Text style={styles.secondaryText}>{health.loading ? "测试中..." : "测试 API 连接"}</Text></TouchableOpacity>{health.message ? <Text style={health.ok ? styles.okText : styles.errorText}>{health.message}</Text> : null}</View>
-      <View style={styles.groupCard}><Text style={styles.groupTitle}>账户操作</Text><TouchableOpacity style={styles.dangerButton} onPress={logout}><Text style={styles.dangerText}>退出当前账户</Text></TouchableOpacity></View>
+      <ScreenTitle eyebrow="Account" title="Settings and status" subtitle="Manage account, test network and refresh app data." />
+      <View style={styles.groupCard}>
+        <Text style={styles.groupTitle}>Current account</Text>
+        <View style={styles.accountCard}>
+          <Text style={styles.accountName}>{displayName}</Text>
+          <Text style={styles.accountMeta}>{"Account ID: " + String(session?.deviceId || "")}</Text>
+          <Text style={styles.accountMeta}>{"User ID: " + String(session?.userId || "")}</Text>
+        </View>
+      </View>
+      <View style={styles.groupCard}>
+        <Text style={styles.groupTitle}>Network test</Text>
+        <TouchableOpacity style={styles.secondarySoft} onPress={testConnection}>
+          <Text style={styles.secondaryText}>{health.loading ? "Testing..." : "Test API"}</Text>
+        </TouchableOpacity>
+        {health.message ? <Text style={health.ok ? styles.okText : styles.errorText}>{health.message}</Text> : null}
+      </View>
+      <View style={styles.groupCard}>
+        <Text style={styles.groupTitle}>Refresh data</Text>
+        <TouchableOpacity style={styles.secondarySoft} onPress={refreshAllData}>
+          <Text style={styles.secondaryText}>Refresh songs/favorites/playlists/tags</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.groupCard}>
+        <Text style={styles.groupTitle}>Account action</Text>
+        <TouchableOpacity style={styles.dangerButton} onPress={logout}>
+          <Text style={styles.dangerText}>Log out</Text>
+        </TouchableOpacity>
+      </View>
     </ScrollView>
   );
 
@@ -835,87 +1438,150 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.page}>
+      {activeTab !== "galaxy" ? <PortraitBackdrop blocks={portraitBlocks} stageSize={{ width, height }} /> : null}
       <View style={styles.content}>
         {activeTab === "player" && renderPlayer()}
         {activeTab === "favorites" && renderFavorites()}
         {activeTab === "galaxy" && renderGalaxy()}
         {activeTab === "settings" && renderSettings()}
       </View>
-      <View style={styles.tabBarShell}><View style={styles.tabBar}>{TABS.map((tab) => <TouchableOpacity key={tab.key} style={styles.tabItem} onPress={() => setActiveTab(tab.key)}><Text style={[styles.tabIcon, activeTab === tab.key && styles.tabIconActive]}>{tab.icon}</Text><Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>{tab.label}</Text></TouchableOpacity>)}</View></View>
+      <View style={styles.tabBarShell}>
+        <View style={styles.tabBar}>
+          {TABS.map((tab) => (
+            <TouchableOpacity key={tab.key} style={styles.tabItem} onPress={() => setActiveTab(tab.key)}>
+              <Text style={[styles.tabIcon, activeTab === tab.key && styles.tabIconActive]}>{tab.icon}</Text>
+              <Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>{tab.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: "#F6F3EC" },
+  page: { flex: 1, backgroundColor: "#0B1018" },
   content: { flex: 1 },
+  backdropLayer: { ...StyleSheet.absoluteFillObject },
+  backdropBase: { ...StyleSheet.absoluteFillObject, backgroundColor: "#0D121B" },
+  backdropCanvas: { ...StyleSheet.absoluteFillObject },
+  backdropSoftener: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(14,18,28,0.22)" },
   screenPadding: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 120 },
-  titleBlock: { marginBottom: 18 }, eyebrow: { fontSize: 11, fontWeight: "800", color: "#7A746B", letterSpacing: 1.1, textTransform: "uppercase", marginBottom: 8 }, title: { fontSize: 34, fontWeight: "800", color: "#181613", letterSpacing: -0.9 }, subtitle: { fontSize: 15, color: "#756F66", lineHeight: 22, marginTop: 8 },
-  authShell: { flexGrow: 1, justifyContent: "center", padding: 20 }, authBlobA: { position: "absolute", width: 280, height: 280, borderRadius: 999, backgroundColor: "rgba(105,147,255,0.18)", top: 80, right: -80 }, authBlobB: { position: "absolute", width: 220, height: 220, borderRadius: 999, backgroundColor: "rgba(243,147,110,0.18)", bottom: 90, left: -50 },
-  authCard: { backgroundColor: "rgba(255,255,255,0.82)", borderRadius: 30, padding: 22, shadowColor: "#4D4336", shadowOpacity: 0.14, shadowOffset: { width: 0, height: 18 }, shadowRadius: 28, elevation: 10 }, authEyebrow: { fontSize: 12, fontWeight: "800", color: "#7A746B", letterSpacing: 1.8, marginBottom: 12 }, authTitle: { fontSize: 31, fontWeight: "800", color: "#181613", lineHeight: 38, letterSpacing: -0.9 }, authSubtitle: { fontSize: 15, color: "#756F66", lineHeight: 22, marginTop: 10, marginBottom: 16 },
-  authModeRow: { flexDirection: "row", backgroundColor: "#ECE6DD", borderRadius: 18, padding: 4, marginBottom: 14 }, authMode: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 14 }, authModeActive: { backgroundColor: "#FFFFFF" }, authModeText: { color: "#8B8378", fontWeight: "700" }, authModeTextActive: { color: "#181613" },
-  input: { backgroundColor: "#FFFDFC", borderRadius: 18, paddingHorizontal: 16, paddingVertical: 15, marginBottom: 10, color: "#181613", shadowColor: "#D9D1C6", shadowOpacity: 0.08, shadowOffset: { width: 0, height: 8 }, shadowRadius: 18, elevation: 2 },
-  primary: { backgroundColor: "#111217", borderRadius: 20, paddingVertical: 16, alignItems: "center", marginTop: 6, shadowColor: "#111", shadowOpacity: 0.18, shadowOffset: { width: 0, height: 12 }, shadowRadius: 20, elevation: 8 }, primaryText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
-  secondarySoft: { backgroundColor: "rgba(255,255,255,0.8)", borderRadius: 18, paddingVertical: 14, alignItems: "center" }, secondaryText: { color: "#181613", fontSize: 14, fontWeight: "700" },
-  groupCard: { backgroundColor: "rgba(255,252,247,0.94)", borderRadius: 28, padding: 18, marginBottom: 18, shadowColor: "#D8D1C6", shadowOpacity: 0.08, shadowOffset: { width: 0, height: 10 }, shadowRadius: 20, elevation: 3 }, groupTitle: { color: "#181613", fontSize: 21, fontWeight: "800", marginBottom: 12, letterSpacing: -0.4 },
-  seedWrap: { flexDirection: "row", flexWrap: "wrap" }, seedTag: { backgroundColor: "#F7F3ED", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 12, marginRight: 8, marginBottom: 8, minWidth: 110 }, seedTagSelected: { backgroundColor: "#111217" }, seedType: { color: "#8A8175", fontSize: 11, fontWeight: "700", marginBottom: 5 }, seedTypeSelected: { color: "rgba(255,255,255,0.7)" }, seedName: { color: "#181613", fontSize: 14, fontWeight: "800" }, seedNameSelected: { color: "#FFFFFF" },
-  playerCard: { backgroundColor: "rgba(255,252,247,0.96)", borderRadius: 32, padding: 22, marginBottom: 18, shadowColor: "#D8D1C6", shadowOpacity: 0.08, shadowOffset: { width: 0, height: 12 }, shadowRadius: 18, elevation: 3 }, 
-  coverWrap: { alignItems: "center", marginBottom: 18 }, cover: { width: 228, height: 228, borderRadius: 34, alignItems: "center", justifyContent: "center", backgroundColor: "#18181C", overflow: "hidden" }, coverGlowA: { position: "absolute", width: 180, height: 180, borderRadius: 999, backgroundColor: "#4E67C8", top: -34, right: -20 }, coverGlowB: { position: "absolute", width: 140, height: 140, borderRadius: 999, backgroundColor: "#F19472", bottom: -18, left: -16 }, coverGlowC: { position: "absolute", width: 76, height: 76, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", top: 40, left: 42 }, coverText: { color: "#FFFFFF", fontSize: 34, fontWeight: "800", letterSpacing: 1.2 },
-  playerTitle: { color: "#181613", fontSize: 30, fontWeight: "800", textAlign: "center", letterSpacing: -0.8 }, playerSub: { color: "#6F6A62", fontSize: 15, lineHeight: 22, textAlign: "center", marginTop: 8 }, progressWrap: { marginTop: 22 }, progressTrack: { height: 10, borderRadius: 999, backgroundColor: "#E9E3D9", overflow: "hidden" }, progressFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" }, progressTimeRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 }, progressText: { color: "#7B746A", fontSize: 12, fontVariant: ["tabular-nums"] },
-  controlsRow: { flexDirection: "row", gap: 10, marginTop: 22 }, controlBtn: { flex: 1, backgroundColor: "#FFFCF8", borderRadius: 18, paddingVertical: 15, alignItems: "center", shadowColor: "#D9D0C4", shadowOpacity: 0.06, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 2 }, controlText: { color: "#181613", fontSize: 15, fontWeight: "700" }, playBtn: { flex: 1, backgroundColor: "#111217", borderRadius: 18, paddingVertical: 15, alignItems: "center" }, playText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
-  section: { marginBottom: 18 }, queueToggle: { backgroundColor: "rgba(255,252,247,0.94)", borderRadius: 24, padding: 18, marginBottom: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", shadowColor: "#D8D1C6", shadowOpacity: 0.07, shadowOffset: { width: 0, height: 8 }, shadowRadius: 14, elevation: 2 }, queueLabel: { color: "#181613", fontSize: 18, fontWeight: "800" }, queueHint: { color: "#7A746B", fontSize: 13, marginTop: 4 }, queueAction: { color: "#6C675F", fontSize: 14, fontWeight: "700" },
-  listItem: { backgroundColor: "#FFFCF8", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", shadowColor: "#DDD5CA", shadowOpacity: 0.05, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 2 }, listTitle: { color: "#181613", fontSize: 15, fontWeight: "700" }, listSub: { color: "#766F67", fontSize: 13, marginTop: 4, lineHeight: 18 }, chevron: { color: "#B0A89C", fontSize: 20, marginLeft: 12 }, placeholder: { color: "#8C867E", fontSize: 14 },
-  groupMeta: { color: "#8A8175", fontSize: 13, fontWeight: "700" },
-  tagRowSimple: { backgroundColor: "#FFFCF8", borderRadius: 22, padding: 16, marginTop: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-  tagMeta: { flex: 1 },
-  tagTypeBadge: { alignSelf: "flex-start", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, marginBottom: 8 },
-  tagTypeBadgeText: { fontSize: 11, fontWeight: "800" },
-  tagNameText: { color: "#181613", fontSize: 18, fontWeight: "800" },
-  tagActions: { flexDirection: "row", alignItems: "center", gap: 8 },
-  tagActionButton: { width: 36, height: 36, borderRadius: 12, backgroundColor: "#EEE7DD", alignItems: "center", justifyContent: "center" },
-  tagActionButtonPrimary: { width: 36, height: 36, borderRadius: 12, backgroundColor: "#111217", alignItems: "center", justifyContent: "center" },
-  tagActionText: { color: "#181613", fontSize: 20, fontWeight: "800" },
-  tagActionTextPrimary: { color: "#FFFFFF", fontSize: 20, fontWeight: "800" },
-  tagRemoveButton: { borderRadius: 12, backgroundColor: "#5A1A1A", paddingHorizontal: 12, paddingVertical: 10 },
-  tagRemoveText: { color: "#FFFFFF", fontSize: 13, fontWeight: "800" },
-  categoryPickerCard: { marginTop: 14, backgroundColor: "#F7F2EA", borderRadius: 22, padding: 14 }, categoryPickerTitle: { color: "#181613", fontSize: 15, fontWeight: "700", marginBottom: 12 }, categoryPickerRow: { paddingRight: 8 }, categoryChip: { backgroundColor: "#ECE4D9", borderRadius: 999, paddingHorizontal: 16, paddingVertical: 12, marginRight: 10 }, categoryChipActive: { backgroundColor: "#111217" }, categoryChipText: { color: "#6E675F", fontSize: 14, fontWeight: "700" }, categoryChipTextActive: { color: "#FFFFFF" },
-  onboardingProgressHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, onboardingProgressTrack: { height: 10, borderRadius: 999, backgroundColor: "#ECE4D9", overflow: "hidden", marginBottom: 16 }, onboardingProgressFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" },
-  rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }, weightRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 }, weightTitle: { color: "#181613", fontSize: 14, fontWeight: "700", width: 88 }, weightSub: { color: "#8A8175", fontSize: 12, marginTop: 3 }, weightTrack: { flex: 1, height: 10, borderRadius: 999, backgroundColor: "#ECE4D9", overflow: "hidden", marginLeft: 12 }, weightFill: { height: 10, borderRadius: 999, backgroundColor: "#111217" },
-  accountCard: { backgroundColor: "#F7F3ED", borderRadius: 22, padding: 16 }, accountName: { color: "#181613", fontSize: 22, fontWeight: "800", marginBottom: 8 }, accountMeta: { color: "#70685E", fontSize: 14, marginTop: 3 },
-  dangerButton: { backgroundColor: "#5A1A1A", borderRadius: 18, paddingVertical: 15, alignItems: "center" }, dangerText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" }, hintText: { color: "#7A746B", fontSize: 13, lineHeight: 20, marginTop: 10 }, okText: { color: "#1D8A4A", marginTop: 10, fontSize: 13 }, errorText: { color: "#B23B2C", marginTop: 10, fontSize: 13 },
-  tabBarShell: { position: "absolute", left: 0, right: 0, bottom: 12, alignItems: "center" }, tabBar: { flexDirection: "row", width: "92%", backgroundColor: "rgba(255,255,255,0.9)", borderRadius: 28, paddingHorizontal: 10, paddingVertical: 12, shadowColor: "#000", shadowOpacity: 0.1, shadowOffset: { width: 0, height: 12 }, shadowRadius: 26, elevation: 10 }, tabItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 6 }, tabIcon: { fontSize: 16, color: "#938E85", marginBottom: 4 }, tabIconActive: { color: "#171512" }, tabText: { fontSize: 11, color: "#938E85", fontWeight: "600" }, tabTextActive: { color: "#171512", fontWeight: "800" },
-  rowGap: { flexDirection: "row", gap: 10 }, flex: { flex: 1 }
+  titleBlock: { marginBottom: 18 },
+  eyebrow: { fontSize: 11, fontWeight: "800", color: "rgba(236,240,246,0.72)", letterSpacing: 1.1, textTransform: "uppercase", marginBottom: 8 },
+  eyebrowLight: { color: "rgba(255,255,255,0.66)" },
+  title: { fontSize: 34, fontWeight: "800", color: "#F3F6FA", letterSpacing: -0.9 },
+  titleLight: { color: "#FFFFFF" },
+  subtitle: { fontSize: 15, color: "rgba(232,238,246,0.74)", lineHeight: 22, marginTop: 8 },
+  subtitleLight: { color: "rgba(255,255,255,0.74)" },
+  authShell: { flexGrow: 1, justifyContent: "center", padding: 20 },
+  authCard: { backgroundColor: "rgba(12,18,28,0.76)", borderRadius: 30, padding: 22, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", shadowColor: "#000000", shadowOpacity: 0.24, shadowOffset: { width: 0, height: 18 }, shadowRadius: 28, elevation: 10 },
+  authEyebrow: { fontSize: 12, fontWeight: "800", color: "rgba(255,255,255,0.6)", letterSpacing: 1.8, marginBottom: 12 },
+  authTitle: { fontSize: 31, fontWeight: "800", color: "#FFFFFF", lineHeight: 38, letterSpacing: -0.9 },
+  authSubtitle: { fontSize: 15, color: "rgba(232,238,246,0.76)", lineHeight: 22, marginTop: 10, marginBottom: 16 },
+  authModeRow: { flexDirection: "row", backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 18, padding: 4, marginBottom: 14 },
+  authMode: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 14 },
+  authModeActive: { backgroundColor: "rgba(255,255,255,0.14)" },
+  authModeText: { color: "rgba(255,255,255,0.56)", fontWeight: "700" },
+  authModeTextActive: { color: "#FFFFFF" },
+  input: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", paddingHorizontal: 16, paddingVertical: 15, marginBottom: 10, color: "#FFFFFF" },
+  primary: { backgroundColor: "rgba(255,255,255,0.94)", borderRadius: 20, paddingVertical: 16, alignItems: "center", marginTop: 6, shadowColor: "#000", shadowOpacity: 0.16, shadowOffset: { width: 0, height: 12 }, shadowRadius: 20, elevation: 8 },
+  primaryText: { color: "#111217", fontSize: 15, fontWeight: "800" },
+  secondarySoft: { backgroundColor: "rgba(255,255,255,0.12)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", paddingVertical: 14, alignItems: "center" },
+  secondaryText: { color: "#F8FAFD", fontSize: 14, fontWeight: "700" },
+  groupCard: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 28, padding: 18, marginBottom: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  groupTitle: { color: "#FFFFFF", fontSize: 21, fontWeight: "800", marginBottom: 12, letterSpacing: -0.4 },
+  seedWrap: { flexDirection: "row", flexWrap: "wrap" },
+  seedTag: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 12, marginRight: 8, marginBottom: 8, minWidth: 110 },
+  seedTagSelected: { backgroundColor: "rgba(255,255,255,0.92)" },
+  seedType: { color: "rgba(255,255,255,0.58)", fontSize: 11, fontWeight: "700", marginBottom: 5 },
+  seedTypeSelected: { color: "rgba(17,18,23,0.6)" },
+  seedName: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
+  seedNameSelected: { color: "#111217" },
+  playerCard: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 32, padding: 22, marginBottom: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  coverWrap: { alignItems: "center", marginBottom: 18 },
+  cover: { width: 228, height: 228, borderRadius: 34, alignItems: "center", justifyContent: "center", backgroundColor: "#18181C", overflow: "hidden" },
+  coverGlowA: { position: "absolute", width: 180, height: 180, borderRadius: 999, backgroundColor: "#4E67C8", top: -34, right: -20 },
+  coverGlowB: { position: "absolute", width: 140, height: 140, borderRadius: 999, backgroundColor: "#F19472", bottom: -18, left: -16 },
+  coverGlowC: { position: "absolute", width: 76, height: 76, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", top: 40, left: 42 },
+  coverText: { color: "#FFFFFF", fontSize: 34, fontWeight: "800", letterSpacing: 1.2 },
+  playerTitle: { color: "#FFFFFF", fontSize: 30, fontWeight: "800", textAlign: "center", letterSpacing: -0.8 },
+  playerSub: { color: "rgba(236,240,246,0.7)", fontSize: 15, lineHeight: 22, textAlign: "center", marginTop: 8 },
+  progressWrap: { marginTop: 22 },
+  progressTrack: { height: 10, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.12)", overflow: "hidden" },
+  progressFill: { height: 10, borderRadius: 999, backgroundColor: "#FFFFFF" },
+  progressTimeRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 },
+  progressText: { color: "rgba(255,255,255,0.62)", fontSize: 12, fontVariant: ["tabular-nums"] },
+  controlsRow: { flexDirection: "row", gap: 10, marginTop: 22 },
+  controlBtn: { flex: 1, backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 18, paddingVertical: 15, alignItems: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  controlText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
+  playBtn: { flex: 1, backgroundColor: "#FFFFFF", borderRadius: 18, paddingVertical: 15, alignItems: "center" },
+  playText: { color: "#111217", fontSize: 15, fontWeight: "800" },
+  section: { marginBottom: 18 },
+  queueToggle: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 24, padding: 18, marginBottom: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  queueLabel: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" },
+  queueHint: { color: "rgba(255,255,255,0.6)", fontSize: 13, marginTop: 4 },
+  queueAction: { color: "rgba(255,255,255,0.82)", fontSize: 14, fontWeight: "700" },
+  listItem: { backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  currentQueueItem: { borderColor: "rgba(255,255,255,0.28)" },
+  playlistBox: { borderRadius: 20, backgroundColor: "rgba(255,255,255,0.08)", padding: 12, marginBottom: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  playlistRow: { flexDirection: "row", alignItems: "center" },
+  playlistPlus: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF", marginLeft: 12 },
+  playlistPlusText: { color: "#111217", fontSize: 22, lineHeight: 22, marginTop: -2 },
+  listTitle: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
+  listSub: { color: "rgba(255,255,255,0.64)", fontSize: 13, marginTop: 4, lineHeight: 18 },
+  chevron: { color: "rgba(255,255,255,0.48)", fontSize: 20, marginLeft: 12 },
+  placeholder: { color: "rgba(255,255,255,0.62)", fontSize: 14 },
+  galaxyScreen: { flex: 1 },
+  galaxyHeader: { paddingHorizontal: 18, paddingTop: 12 },
+  zoneRow: { position: "absolute", top: 56, left: PORTRAIT_SIDE_INSET, right: PORTRAIT_SIDE_INSET, flexDirection: "row", justifyContent: "space-between" },
+  zoneCard: { flex: 1, minHeight: 72, backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 22, paddingHorizontal: 12, paddingVertical: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", marginHorizontal: 5 },
+  zoneCardActive: { backgroundColor: "rgba(255,255,255,0.22)", borderColor: "rgba(255,255,255,0.22)" },
+  zoneDeleteActive: { backgroundColor: "rgba(255,86,86,0.24)", borderColor: "rgba(255,127,127,0.34)" },
+  zoneSmallerActive: { backgroundColor: "rgba(114,171,255,0.24)" },
+  zoneBiggerActive: { backgroundColor: "rgba(255,210,112,0.24)" },
+  zoneLabel: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
+  zoneHint: { color: "rgba(255,255,255,0.62)", fontSize: 12, marginTop: 4 },
+  galaxyStage: { ...StyleSheet.absoluteFillObject },
+  tagBlock: { position: "absolute", paddingHorizontal: 18, paddingVertical: 10, justifyContent: "center", shadowOpacity: 0.26, shadowOffset: { width: 0, height: 12 }, shadowRadius: 24, elevation: 8 },
+  tagHalo: { position: "absolute", width: 84, height: 84, borderRadius: 999, right: -10, top: -16 },
+  tagType: { color: "rgba(255,255,255,0.7)", fontSize: 11, fontWeight: "700", marginBottom: 4 },
+  tagText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
+  emptyGalaxy: { position: "absolute", left: 26, right: 26, top: "38%", backgroundColor: "rgba(11,17,27,0.56)", padding: 18, borderRadius: 24, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  emptyGalaxyTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" },
+  emptyGalaxyText: { color: "rgba(255,255,255,0.72)", fontSize: 13, lineHeight: 20, marginTop: 6 },
+  galaxySheet: { position: "absolute", left: 14, right: 14, bottom: 96, backgroundColor: "rgba(11,17,27,0.68)", borderRadius: 30, padding: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  galaxySheetCollapsed: { paddingBottom: 10 },
+  sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  sheetToggleText: { color: "rgba(255,255,255,0.86)", fontSize: 13, fontWeight: "700" },
+  categoryPickerCard: { marginTop: 14, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)" },
+  categoryPickerTitle: { color: "#FFFFFF", fontSize: 15, fontWeight: "700", marginBottom: 12 },
+  categoryPickerRow: { paddingRight: 8 },
+  categoryChip: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 999, paddingHorizontal: 16, paddingVertical: 12, marginRight: 10 },
+  categoryChipActive: { backgroundColor: "#FFFFFF" },
+  categoryChipText: { color: "rgba(255,255,255,0.72)", fontSize: 14, fontWeight: "700" },
+  categoryChipTextActive: { color: "#111217" },
+  onboardingProgressHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  onboardingProgressTrack: { height: 10, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.1)", overflow: "hidden", marginBottom: 16 },
+  onboardingProgressFill: { height: 10, borderRadius: 999, backgroundColor: "#FFFFFF" },
+  accountCard: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 22, padding: 16, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  accountName: { color: "#FFFFFF", fontSize: 22, fontWeight: "800", marginBottom: 8 },
+  accountMeta: { color: "rgba(255,255,255,0.68)", fontSize: 14, marginTop: 3 },
+  dangerButton: { backgroundColor: "rgba(145,38,38,0.88)", borderRadius: 18, paddingVertical: 15, alignItems: "center" },
+  dangerText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
+  hintText: { color: "rgba(255,255,255,0.68)", fontSize: 13, lineHeight: 20, marginTop: 10 },
+  okText: { color: "#72D595", marginTop: 10, fontSize: 13 },
+  errorText: { color: "#FF8D7C", marginTop: 10, fontSize: 13 },
+  tabBarShell: { position: "absolute", left: 0, right: 0, bottom: 12, alignItems: "center" },
+  tabBar: { flexDirection: "row", width: "92%", backgroundColor: "rgba(14,18,28,0.86)", borderRadius: 28, paddingHorizontal: 10, paddingVertical: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  tabItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 6 },
+  tabIcon: { fontSize: 16, color: "rgba(255,255,255,0.42)", marginBottom: 4 },
+  tabIconActive: { color: "#FFFFFF" },
+  tabText: { fontSize: 11, color: "rgba(255,255,255,0.42)", fontWeight: "600" },
+  tabTextActive: { color: "#FFFFFF", fontWeight: "800" },
+  rowGap: { flexDirection: "row", gap: 10 },
+  flex: { flex: 1 }
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
