@@ -37,9 +37,9 @@ const PORTRAIT_MIN_SIZE = 20;
 const PORTRAIT_MAX_SIZE = 80;
 const PORTRAIT_ORIGIN_SIZE = 40;
 const PORTRAIT_STEP_SIZE = 15;
-const PORTRAIT_TOP_INSET = 104;
-const PORTRAIT_SIDE_INSET = 12;
-const PORTRAIT_BOTTOM_INSET = 156;
+const PORTRAIT_TOP_INSET = 94;
+const PORTRAIT_SIDE_INSET = 10;
+const PORTRAIT_BOTTOM_INSET = 124;
 const REPULSION_GAP = 18;
 const STABLE_SPRING = 0.028;
 const STABLE_DAMPING = 0.72;
@@ -115,6 +115,17 @@ function deriveBlockSize(tag, index) {
   return scale[seed % scale.length];
 }
 
+function sortProfileTags(tags) {
+  return [...(tags || [])].sort((a, b) => {
+    const activeDelta = Number(b?.is_active !== false) - Number(a?.is_active !== false);
+    if (activeDelta !== 0) return activeDelta;
+    const wa = Number(a?.weight || 0);
+    const wb = Number(b?.weight || 0);
+    if (wb !== wa) return wb - wa;
+    return Number(b?.tag_id || 0) - Number(a?.tag_id || 0);
+  });
+}
+
 function getBlockMetrics(block) {
   const label = String(block?.tag?.name || "");
   const visualHeight = clamp(block.currentSize * 1.3 + 18, 52, 126);
@@ -145,6 +156,17 @@ function findZoneAtPoint(point, stageSize) {
   return match ? match.id : -1;
 }
 
+function findZoneForBlock(block, point, stageSize) {
+  const zones = getFuncZones(stageSize);
+  const metrics = getBlockMetrics(block);
+  const left = point.x - metrics.width / 2;
+  const right = point.x + metrics.width / 2;
+  const top = point.y - metrics.height / 2;
+  const bottom = point.y + metrics.height / 2;
+  const match = zones.find((zone) => right >= zone.x && left <= zone.x + zone.width && bottom >= zone.y && top <= zone.y + zone.height);
+  return match ? match.id : findZoneAtPoint(point, stageSize);
+}
+
 function sanitizeBlockPoint(block, point, stageSize) {
   const { width: blockWidth, height: blockHeight } = getBlockMetrics(block);
   const minX = PORTRAIT_SIDE_INSET + blockWidth / 2;
@@ -154,6 +176,20 @@ function sanitizeBlockPoint(block, point, stageSize) {
   return {
     x: clamp(point.x, minX, maxX),
     y: clamp(point.y, minY, maxY)
+  };
+}
+
+function sanitizeDragPoint(block, point, stageSize) {
+  const { width: blockWidth, height: blockHeight } = getBlockMetrics(block);
+  const zones = getFuncZones(stageSize);
+  const topZoneY = zones.reduce((min, zone) => Math.min(min, zone.y), PORTRAIT_TOP_INSET);
+  const minX = PORTRAIT_SIDE_INSET + blockWidth / 2;
+  const maxX = Math.max(minX, (stageSize.width || 0) - PORTRAIT_SIDE_INSET - blockWidth / 2);
+  const dragMinY = Math.min(PORTRAIT_TOP_INSET + blockHeight / 2, topZoneY + Math.min(28, blockHeight * 0.24));
+  const dragMaxY = Math.max(dragMinY, (stageSize.height || 0) - PORTRAIT_BOTTOM_INSET - blockHeight / 2);
+  return {
+    x: clamp(point.x, minX, maxX),
+    y: clamp(point.y, dragMinY, dragMaxY)
   };
 }
 
@@ -265,13 +301,13 @@ function buildPortraitBlocks(tags, stageSize, prevBlocks = []) {
   const prevMap = new Map(prevBlocks.map((block) => [block.id, block]));
   const activeIds = new Set(limited.map((tag) => tag.tag_id));
   const centerX = width / 2;
-  const centerY = height * 0.46;
+  const centerY = height * 0.6;
 
   const keepBlocks = limited.map((tag, index) => {
     const palette = typePalette(tag.type);
     const seed = hashString(String(tag.tag_id) + '-' + String(tag.name) + '-' + String(tag.type));
     const angle = index * 2.399963229728653 + (seed % 17) * 0.03;
-    const ring = 44 + Math.floor(index / 3) * 52 + (seed % 12);
+    const ring = 92 + Math.floor(index / 3) * 74 + (seed % 28);
     const x = centerX + Math.cos(angle) * ring * 1.2;
     const y = centerY + Math.sin(angle) * ring * 0.88;
     const previous = prevMap.get(tag.tag_id);
@@ -389,30 +425,30 @@ function PortraitBackdrop({ blocks, stageSize }) {
         <Group blendMode="screen">
           {source.map((block) => {
             const radius = getBlockMetrics(block).radius;
-            const primaryRadius = radius * 1.65;
-            const secondaryRadius = radius * 1.12;
+            const seed = hashString(`${block.id}-${block.tag?.name || ""}`);
+            const driftX = ((seed % 29) - 14) * 2.6;
+            const driftY = (((seed >> 3) % 25) - 12) * 3.8;
+            const bloomRadius = radius * 1.68;
+            const mistRadius = radius * 1.3;
+            const bloomX = clamp(block.currentPos.x + driftX, -width * 0.18, width * 1.18);
+            const bloomY = clamp(block.currentPos.y + driftY, -height * 0.18, height * 1.22);
+            const mistX = clamp(block.currentPos.x - driftX * 0.34, -width * 0.18, width * 1.18);
+            const mistY = clamp(block.currentPos.y - driftY * 0.28, -height * 0.18, height * 1.22);
             return (
-              <React.Fragment key={block.id}>
-                <Circle
-                  cx={block.currentPos.x - radius * 0.18}
-                  cy={block.currentPos.y - radius * 0.12}
-                  r={primaryRadius}
-                  color={hexToRgba(block.color, 0.48)}
-                >
-                  <BlurMask blur={92} style="solid" />
+              <Group key={block.id}>
+                <Circle cx={bloomX} cy={bloomY} r={bloomRadius} color={hexToRgba(block.color, 0.31)}>
+                  <BlurMask blur={206} style="normal" />
                 </Circle>
-                <Circle
-                  cx={block.currentPos.x + radius * 0.24}
-                  cy={block.currentPos.y + radius * 0.2}
-                  r={secondaryRadius}
-                  color={hexToRgba(block.glow || block.color, 0.24)}
-                >
-                  <BlurMask blur={78} style="solid" />
+                <Circle cx={mistX} cy={mistY} r={mistRadius} color={hexToRgba(block.glow || block.color, 0.2)}>
+                  <BlurMask blur={246} style="normal" />
                 </Circle>
-              </React.Fragment>
+              </Group>
             );
           })}
         </Group>
+        <Circle cx={width * 0.5} cy={height * 0.48} r={Math.max(width, height) * 0.28} color="rgba(6,10,16,0.08)">
+          <BlurMask blur={190} style="normal" />
+        </Circle>
       </Canvas>
       <View style={styles.backdropSoftener} />
     </View>
@@ -421,26 +457,45 @@ function PortraitBackdrop({ blocks, stageSize }) {
 
 function PortraitTag({ block, isDragging }) {
   const metrics = getBlockMetrics(block);
+  const left = block.currentPos.x - metrics.width / 2;
+  const top = block.currentPos.y - metrics.height / 2;
+
   return (
-    <View
-      pointerEvents="none"
-      style={[
-        styles.tagBlock,
-        {
-          left: block.currentPos.x - metrics.width / 2,
-          top: block.currentPos.y - metrics.height / 2,
-          width: metrics.width,
-          height: metrics.height,
-          borderRadius: metrics.height / 2,
-          backgroundColor: hexToRgba(block.color, isDragging ? 0.78 : 0.68),
-          shadowColor: block.color,
-          transform: [{ scale: isDragging ? 1.04 : 1 }]
-        }
-      ]}
-    >
-      <Text style={styles.tagType}>{block.tag.type}</Text>
-      <Text style={styles.tagText} numberOfLines={1}>{block.tag.name}</Text>
-    </View>
+    <React.Fragment>
+      <Text
+        pointerEvents="none"
+        style={[
+          styles.tagType,
+          styles.tagTypeFloating,
+          {
+            left: left + 18,
+            top: top + 10,
+            opacity: isDragging ? 0.96 : 0.82,
+            transform: [{ scale: isDragging ? 1.04 : 1 }]
+          }
+        ]}
+        numberOfLines={1}
+      >
+        {block.tag.type}
+      </Text>
+      <Text
+        pointerEvents="none"
+        style={[
+          styles.tagText,
+          styles.tagTextFloating,
+          {
+            left: left + 18,
+            top: top + 28,
+            maxWidth: Math.max(72, metrics.width - 36),
+            opacity: isDragging ? 1 : 0.94,
+            transform: [{ scale: isDragging ? 1.04 : 1 }]
+          }
+        ]}
+        numberOfLines={1}
+      >
+        {block.tag.name}
+      </Text>
+    </React.Fragment>
   );
 }
 
@@ -489,6 +544,7 @@ export default function App() {
   const activeTabRef = useRef(activeTab);
   const draggingIdRef = useRef(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
+  const lastDragPointRef = useRef(null);
   const playbackRef = useRef(playback);
   const soundRef = useRef(sound);
   const progressLayoutRef = useRef(progressLayout);
@@ -507,7 +563,7 @@ export default function App() {
   }, [tags]);
 
   const activeProfileTags = useMemo(
-    () => profileTags.filter((item) => item.is_active !== false).slice(0, MAX_PORTRAIT_TAGS),
+    () => sortProfileTags(profileTags.filter((item) => item.is_active !== false && Number(item.weight || 0) > 0)).slice(0, MAX_PORTRAIT_TAGS),
     [profileTags]
   );
 
@@ -619,6 +675,15 @@ export default function App() {
     setOnboardingStep(0);
   };
 
+  const persistProfileTagWeight = async (tagId, weight) => {
+    if (!userId) return;
+    await fetch(`${API_BASE}/user-tags/weight`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, tag_id: tagId, weight })
+    });
+  };
+
   const persistRemoveProfileTag = async (tag) => {
     if (!userId) return;
     await fetch(`${API_BASE}/user-tags/remove`, {
@@ -626,6 +691,32 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId, tag_id: tag.tag_id })
     });
+  };
+
+  const applyProfileTagAction = (tag, zoneId) => {
+    if (!tag || zoneId === -1) return;
+    if (zoneId === 1) {
+      setProfileTags((prev) => sortProfileTags(prev.map((item) => (
+        item.tag_id === tag.tag_id ? { ...item, is_active: false, weight: 0 } : item
+      ))));
+      persistRemoveProfileTag(tag)
+        .then(() => loadProfileTags(userId))
+        .catch(() => loadProfileTags(userId));
+      return;
+    }
+
+    const latestTag = profileTags.find((item) => item.tag_id === tag.tag_id) || tag;
+    const currentWeight = clamp(Number(latestTag.weight || 0), 0, 1);
+    const nextWeight = zoneId === 2
+      ? Math.max(0.01, currentWeight - 0.14)
+      : Math.min(1, currentWeight + 0.1);
+
+    setProfileTags((prev) => sortProfileTags(prev.map((item) => (
+      item.tag_id === tag.tag_id ? { ...item, is_active: true, weight: nextWeight } : item
+    ))));
+    persistProfileTagWeight(tag.tag_id, nextWeight)
+      .then(() => loadProfileTags(userId))
+      .catch(() => loadProfileTags(userId));
   };
 
   useEffect(() => { loadTags().catch(() => setTags([])); }, []);
@@ -673,7 +764,7 @@ export default function App() {
 
           keepBlockInBounds(block, stage);
         }
-        applyRepulsion(next, stage, 0.09, 1);
+        applyRepulsion(next, stage, 0.115, 2);
 
         const settled = next.filter((block) => !(block.isExiting && block.currentPos.y <= -140));
         for (const block of settled) {
@@ -697,16 +788,18 @@ export default function App() {
 
   const moveDraggedBlock = (id, point) => {
     const stage = stageSizeRef.current;
-    const zoneId = findZoneAtPoint(point, stage);
-    setActiveZoneId(zoneId);
     setPortraitBlocks((prev) => {
       const next = prev.map(cloneBlock);
       const target = next.find((item) => item.id === id);
       if (!target) return prev;
-      target.currentPos = sanitizeBlockPoint(target, point, stage);
+      const settledPoint = sanitizeDragPoint(target, point, stage);
+      const zoneId = findZoneForBlock(target, settledPoint, stage);
+      lastDragPointRef.current = settledPoint;
+      setActiveZoneId(zoneId);
+      target.currentPos = settledPoint;
       target.velocity = { x: 0, y: 0 };
       target.needBackToAnchor = zoneId !== -1;
-      applyRepulsion(next, stage, 0.17, 2);
+      applyRepulsion(next, stage, 0.2, 2);
       blocksRef.current = next;
       return next;
     });
@@ -714,50 +807,54 @@ export default function App() {
 
   const finishDraggedBlock = (id, releasePoint) => {
     const stage = stageSizeRef.current;
-    const zoneId = findZoneAtPoint(releasePoint, stage);
-    let removedTag = null;
+    const fallbackPoint = lastDragPointRef.current;
+    const hasReleasePoint = releasePoint && Number.isFinite(releasePoint.x) && Number.isFinite(releasePoint.y);
+    const resolvedPoint = fallbackPoint && (!hasReleasePoint || Math.hypot(releasePoint.x - fallbackPoint.x, releasePoint.y - fallbackPoint.y) > 160)
+      ? fallbackPoint
+      : releasePoint;
+    const safePoint = resolvedPoint || fallbackPoint || { x: stage.width / 2, y: stage.height / 2 };
+    let affectedTag = null;
+    let activeZone = -1;
 
     setPortraitBlocks((prev) => {
       const next = prev.map(cloneBlock);
       const index = next.findIndex((item) => item.id === id);
       if (index < 0) return prev;
       const target = next[index];
+      const dragPoint = sanitizeDragPoint(target, safePoint, stage);
+      const zoneId = findZoneForBlock(target, dragPoint, stage);
+      const settledPoint = zoneId === -1 ? sanitizeBlockPoint(target, safePoint, stage) : dragPoint;
+      activeZone = zoneId;
+      affectedTag = target.tag;
       target.isDragging = false;
-      target.currentPos = sanitizeBlockPoint(target, releasePoint, stage);
+      target.currentPos = settledPoint;
+      target.velocity = { x: 0, y: 0 };
 
       if (zoneId === 1) {
-        removedTag = target.tag;
-        next.splice(index, 1);
+        target.needBackToAnchor = false;
       } else if (zoneId === 2) {
         target.targetSize = clamp(target.targetSize - PORTRAIT_STEP_SIZE, target.minSize, target.maxSize);
         target.needBackToAnchor = true;
-        target.velocity = { x: 0, y: 0 };
       } else if (zoneId === 3) {
         target.targetSize = clamp(target.targetSize + PORTRAIT_STEP_SIZE, target.minSize, target.maxSize);
         target.needBackToAnchor = true;
-        target.velocity = { x: 0, y: 0 };
       } else {
-        const settled = sanitizeBlockPoint(target, releasePoint, stage);
-        target.currentPos = settled;
-        target.anchorPos = settled;
+        target.anchorPos = settledPoint;
         target.needBackToAnchor = false;
-        target.velocity = { x: 0, y: 0 };
       }
 
-      applyRepulsion(next, stage, 0.13, 2);
+      applyRepulsion(next, stage, 0.16, 2);
       blocksRef.current = next;
       return next;
     });
 
     draggingIdRef.current = null;
     dragOffsetRef.current = { x: 0, y: 0 };
+    lastDragPointRef.current = null;
     setActiveZoneId(-1);
 
-    if (removedTag) {
-      setProfileTags((prev) => prev.filter((item) => item.tag_id !== removedTag.tag_id));
-      persistRemoveProfileTag(removedTag)
-        .then(() => loadProfileTags(userId))
-        .catch(() => loadProfileTags(userId));
+    if (affectedTag && activeZone !== -1) {
+      applyProfileTagAction(affectedTag, activeZone);
     }
   };
 
@@ -773,6 +870,7 @@ export default function App() {
       const picked = pickBlockAtPoint(blocksRef.current, point);
       if (!picked) return;
       draggingIdRef.current = picked.id;
+      lastDragPointRef.current = { ...picked.currentPos };
       dragOffsetRef.current = { x: picked.currentPos.x - point.x, y: picked.currentPos.y - point.y };
       setPortraitBlocks((prev) => {
         const next = prev.map(cloneBlock);
@@ -1465,7 +1563,7 @@ const styles = StyleSheet.create({
   backdropLayer: { ...StyleSheet.absoluteFillObject },
   backdropBase: { ...StyleSheet.absoluteFillObject, backgroundColor: "#0D121B" },
   backdropCanvas: { ...StyleSheet.absoluteFillObject },
-  backdropSoftener: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(14,18,28,0.22)" },
+  backdropSoftener: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(9,12,18,0.025)" },
   screenPadding: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 120 },
   titleBlock: { marginBottom: 18 },
   eyebrow: { fontSize: 11, fontWeight: "800", color: "rgba(236,240,246,0.72)", letterSpacing: 1.1, textTransform: "uppercase", marginBottom: 8 },
@@ -1543,10 +1641,12 @@ const styles = StyleSheet.create({
   zoneLabel: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
   zoneHint: { color: "rgba(255,255,255,0.62)", fontSize: 12, marginTop: 4 },
   galaxyStage: { ...StyleSheet.absoluteFillObject },
-  tagBlock: { position: "absolute", paddingHorizontal: 18, paddingVertical: 10, justifyContent: "center", shadowOpacity: 0.26, shadowOffset: { width: 0, height: 12 }, shadowRadius: 24, elevation: 8 },
+  tagBlock: { position: "absolute", backgroundColor: "transparent" },
   tagHalo: { position: "absolute", width: 84, height: 84, borderRadius: 999, right: -10, top: -16 },
-  tagType: { color: "rgba(255,255,255,0.7)", fontSize: 11, fontWeight: "700", marginBottom: 4 },
-  tagText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
+  tagType: { color: "rgba(255,255,255,0.76)", fontSize: 11, fontWeight: "700", marginBottom: 4, textShadowColor: "rgba(12,16,24,0.5)", textShadowRadius: 12, textShadowOffset: { width: 0, height: 2 } },
+  tagTypeFloating: { position: "absolute" },
+  tagText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800", textShadowColor: "rgba(12,16,24,0.58)", textShadowRadius: 16, textShadowOffset: { width: 0, height: 3 } },
+  tagTextFloating: { position: "absolute" },
   emptyGalaxy: { position: "absolute", left: 26, right: 26, top: "38%", backgroundColor: "rgba(11,17,27,0.56)", padding: 18, borderRadius: 24, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   emptyGalaxyTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" },
   emptyGalaxyText: { color: "rgba(255,255,255,0.72)", fontSize: 13, lineHeight: 20, marginTop: 6 },
