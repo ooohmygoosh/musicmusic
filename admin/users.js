@@ -113,6 +113,13 @@ async function loadUserDetail(userId) {
   ]);
   renderTable(userSongs, ["歌曲名称", "来源", "标签"], songRows);
 
+  const tagRows = (data.tag_weights || []).map((item) => [
+    item.name || "-",
+    item.type || "-",
+    Number(item.weight || 0).toFixed(6)
+  ]);
+  renderTable(userTags, ["标签", "分类", "权重"], tagRows);
+
 }
 
 document.getElementById("saveToken").addEventListener("click", () => {
