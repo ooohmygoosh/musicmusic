@@ -24,6 +24,154 @@ const TABS = [
   { key: "settings", label: "\u8bbe\u7f6e", icon: "\u2318" }
 ];
 
+const STRINGS = {
+  zh: {
+    tab_player: "歌曲",
+    tab_favorites: "收藏",
+    tab_galaxy: "画像",
+    tab_settings: "设置",
+    auth_title: "登录后继续使用",
+    auth_login: "登录",
+    auth_register: "注册",
+    auth_username: "用户名",
+    auth_choose_avatar: "选择头像",
+    auth_account_id: "账号",
+    auth_password: "密码",
+    auth_confirm_password: "确认密码",
+    auth_login_cta: "登录",
+    auth_register_cta: "注册并继续",
+    onboarding_title: "选择初始标签",
+    onboarding_subtitle: "至少选择两个不同分类。",
+    enter_app: "进入应用",
+    back: "返回",
+    player_title: "歌曲",
+    no_song: "暂无歌曲",
+    favorite: "收藏",
+    generating: "生成中...",
+    pause: "暂停",
+    play: "播放",
+    generate: "生成",
+    load_queue: "加载歌曲",
+    assigning: "分配中...",
+    next: "下一首",
+    save_to_playlist: "保存到歌单",
+    cancel: "取消",
+    songs_count: "歌曲 ",
+    queue: "播放队列",
+    show: "展开",
+    hide: "收起",
+    untitled: "未命名",
+    no_playlist_alert_title: "暂无歌单",
+    no_playlist_alert_body: "请先在收藏页创建歌单。",
+    favorites_title: "歌单",
+    new_playlist: "新建歌单",
+    playlist_placeholder: "例如：深夜 / 通勤",
+    create: "创建",
+    my_playlists: "我的歌单",
+    no_playlist_yet: "还没有歌单。",
+    playlist_empty: "这个歌单还是空的。",
+    generated_songs: "我生成的歌曲",
+    no_generated_yet: "还没有生成歌曲。",
+    generate_song_cta: "生成新歌曲",
+    portrait_generate_title: "生成新歌曲",
+    portrait_generate_subtitle: "会展示骨架图，完成后直接进入播放队列尾部。",
+    portrait_generated_ready: "已加入播放列表最后一首",
+    favorite_history: "收藏记录",
+    no_favorite_yet: "还没有收藏歌曲。",
+    galaxy_title: "全屏模糊色块",
+    no_tags_yet: "暂无标签",
+    add_tag: "新增标签",
+    add_to_portrait: "加入我的画像",
+    expand: "展开",
+    collapse: "收起",
+    tag_name: "标签名",
+    zone_softer: "贴近",
+    zone_softer_hint: "降低权重",
+    zone_stronger: "远离",
+    zone_stronger_hint: "提高权重",
+    choose_category_for_tag: "为“{name}”选择分类",
+    confirm: "确认",
+    settings_title: "设置",
+    current_account: "当前账户",
+    language: "语言",
+    lang_zh: "中文",
+    lang_en: "English",
+    account_action: "账户操作",
+    logout: "退出登录"
+  },
+  en: {
+    tab_player: "Songs",
+    tab_favorites: "Favorites",
+    tab_galaxy: "Portrait",
+    tab_settings: "Settings",
+    auth_title: "Sign in to continue",
+    auth_login: "Login",
+    auth_register: "Register",
+    auth_username: "Username",
+    auth_choose_avatar: "Choose avatar",
+    auth_account_id: "Account ID",
+    auth_password: "Password",
+    auth_confirm_password: "Confirm password",
+    auth_login_cta: "Login",
+    auth_register_cta: "Register",
+    onboarding_title: "Pick initial tags",
+    onboarding_subtitle: "Choose at least two categories.",
+    enter_app: "Enter App",
+    back: "Back",
+    player_title: "Songs",
+    no_song: "No song yet",
+    favorite: "Favorite",
+    generating: "Generating...",
+    pause: "Pause",
+    play: "Play",
+    generate: "Generate",
+    load_queue: "Load songs",
+    assigning: "Assigning...",
+    next: "Next",
+    save_to_playlist: "Save to playlist",
+    cancel: "Cancel",
+    songs_count: "Songs ",
+    queue: "Queue",
+    show: "Show",
+    hide: "Hide",
+    untitled: "Untitled",
+    no_playlist_alert_title: "No playlist",
+    no_playlist_alert_body: "Create one in Favorites first.",
+    favorites_title: "Playlists",
+    new_playlist: "New playlist",
+    playlist_placeholder: "e.g. Late night / Commute",
+    create: "Create",
+    my_playlists: "My playlists",
+    no_playlist_yet: "No playlist yet.",
+    playlist_empty: "This playlist is empty.",
+    generated_songs: "My generated songs",
+    no_generated_yet: "No generated songs yet.",
+    generate_song_cta: "Generate new song",
+    portrait_generate_title: "Generate a new song",
+    portrait_generate_subtitle: "Show a skeleton first, then insert the finished song at the end of the queue.",
+    portrait_generated_ready: "Added to the end of the queue",
+    galaxy_title: "Blurred blobs",
+    no_tags_yet: "No tags yet",
+    add_tag: "Add tag",
+    add_to_portrait: "Add to portrait",
+    expand: "Expand",
+    collapse: "Collapse",
+    tag_name: "Tag name",
+    zone_softer: "Closer",
+    zone_softer_hint: "Lower weight",
+    zone_stronger: "Farther",
+    zone_stronger_hint: "Raise weight",
+    choose_category_for_tag: "Choose a category for \"{name}\"",
+    confirm: "Confirm",
+    settings_title: "Settings",
+    current_account: "Current account",
+    language: "Language",
+    lang_zh: "中文",
+    lang_en: "English",
+    account_action: "Account action",
+    logout: "Log out"
+  }
+};
 const TYPE_COLORS = {
   "\u60c5\u7eea": ["#FF8B7A", "#FFD98C", "#FFF3EE"],
   "\u98ce\u683c": ["#3E89FF", "#6CC8FF", "#EEF5FF"],
@@ -93,6 +241,14 @@ function queueKeyOf(song) {
   return song?.queue_id || song?.id;
 }
 
+function songIdentityOf(song) {
+  return song?.id || song?.audio_url || queueKeyOf(song);
+}
+
+function isSameSong(a, b) {
+  return Boolean(songIdentityOf(a)) && songIdentityOf(a) === songIdentityOf(b);
+}
+
 function cloneQueueSong(song, source = "manual") {
   if (!song) return null;
   return { ...song, queue_id: `${source}-${song.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
@@ -144,15 +300,15 @@ function getBlockMetrics(block) {
   };
 }
 
-function getFuncZones(stageSize) {
+function getFuncZones(stageSize, labels = {}) {
   const width = Math.max(320, stageSize.width || 0);
   const zoneTop = 26;
   const zoneHeight = 64;
   const gap = 12;
   const zoneWidth = (width - PORTRAIT_SIDE_INSET * 2 - gap) / 2;
   return [
-    { id: 2, key: "smaller", label: "Softer", hint: "Lower weight", x: PORTRAIT_SIDE_INSET, y: zoneTop, width: zoneWidth, height: zoneHeight },
-    { id: 3, key: "bigger", label: "Stronger", hint: "Raise weight", x: PORTRAIT_SIDE_INSET + zoneWidth + gap, y: zoneTop, width: zoneWidth, height: zoneHeight }
+    { id: 2, key: "smaller", label: labels.strongerLabel || "远离", hint: labels.strongerHint || "提高权重", x: PORTRAIT_SIDE_INSET, y: zoneTop, width: zoneWidth, height: zoneHeight },
+    { id: 3, key: "bigger", label: labels.softerLabel || "贴近", hint: labels.softerHint || "降低权重", x: PORTRAIT_SIDE_INSET + zoneWidth + gap, y: zoneTop, width: zoneWidth, height: zoneHeight }
   ];
 }
 
@@ -540,6 +696,7 @@ export default function App() {
   const [accountPassword, setAccountPassword] = useState("");
   const [accountPasswordConfirm, setAccountPasswordConfirm] = useState("");
   const [selectedAvatar, setSelectedAvatar] = useState(AUTH_AVATARS[0]);
+  const [language, setLanguage] = useState("zh");
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
@@ -547,7 +704,7 @@ export default function App() {
   const [seedSelection, setSeedSelection] = useState(new Set());
   const [profileTags, setProfileTags] = useState([]);
   const [songs, setSongs] = useState([]);
-  const [favorites, setFavorites] = useState([]);
+  const [generatedSongs, setGeneratedSongs] = useState([]);
   const [playlists, setPlaylists] = useState([]);
   const [playlistSongsMap, setPlaylistSongsMap] = useState({});
   const [playlistSongs, setPlaylistSongs] = useState([]);
@@ -558,6 +715,8 @@ export default function App() {
   const [currentSoundId, setCurrentSoundId] = useState(null);
   const [playback, setPlayback] = useState({ position: 0, duration: 1, isPlaying: false });
   const [generationLoading, setGenerationLoading] = useState(false);
+  const [portraitGeneratedSong, setPortraitGeneratedSong] = useState(null);
+  const [assignmentLoading, setAssignmentLoading] = useState(false);
   const [showQueue, setShowQueue] = useState(false);
   const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
   const [newTagName, setNewTagName] = useState("");
@@ -595,9 +754,12 @@ export default function App() {
   const songsRef = useRef(songs);
   const profileTagsRef = useRef(profileTags);
   const prefetchLockRef = useRef(false);
+  const playbackTokenRef = useRef(0);
+  const playbackQueueRef = useRef(Promise.resolve());
   const userId = session?.userId || null;
   const userIdRef = useRef(userId);
   const displayName = session?.name || session?.accountId || session?.deviceId || "\u8bbf\u5ba2";
+  const t = (key) => STRINGS[language]?.[key] || STRINGS.zh[key] || key;
   const effectiveStageSize = portraitStageSize.width > 20 && portraitStageSize.height > 20 ? portraitStageSize : { width, height: Math.max(620, height - 28) };
 
   const groupedTags = useMemo(() => {
@@ -712,19 +874,13 @@ export default function App() {
       return Number(a.id || 0) - Number(b.id || 0);
     });
     setSongs(items);
+    setGeneratedSongs(items.filter((item) => String(item?.source || "").toLowerCase() === "generated"));
     if (items.length > 0 && (options.preferLatest || !current)) {
       setCurrent(items[items.length - 1]);
     }
     return items;
   };
 
-  const refreshFavorites = async (uid) => {
-    if (!uid) return [];
-    const res = await fetch(`${API_BASE}/favorites?user_id=${uid}`);
-    const data = await res.json();
-    setFavorites(data.items || []);
-    return data.items || [];
-  };
 
   const loadPlaylists = async (uid) => {
     if (!uid) return [];
@@ -747,7 +903,7 @@ export default function App() {
   const bootstrapUser = async (user, nameOverride) => {
     setSession({ userId: user.id, deviceId: user.device_id, accountId: user.account_id || user.device_id, name: nameOverride || user.display_name || accountName.trim() || user.account_id || user.device_id, avatar: user.avatar || selectedAvatar });
     const profile = await loadProfileTags(user.id);
-    await Promise.all([refreshSongs(user.id, { preferLatest: true }), refreshFavorites(user.id), loadPlaylists(user.id)]);
+    await Promise.all([refreshSongs(user.id, { preferLatest: true }), loadPlaylists(user.id)]);
     const active = (profile || []).filter((item) => item.is_active !== false);
     setNeedsOnboarding(active.length === 0);
     setOnboardingStep(0);
@@ -771,10 +927,10 @@ export default function App() {
   const computeNextWeight = (currentWeight, zoneId) => {
     const value = clamp(Number(currentWeight || 0), 0, 1);
     if (zoneId === 2) {
-      const lowered = value * 0.4 - 0.08;
+      const lowered = value * 0.7 - 0.04;
       return lowered <= 0.04 ? 0 : Number(lowered.toFixed(3));
     }
-    return Number(Math.min(1, value + 0.26).toFixed(3));
+    return Number(Math.min(1, value + 0.13).toFixed(3));
   };
 
   const applyProfileTagActionById = async (tagIdInput, zoneId, fallbackWeight = 0, options = {}) => {
@@ -805,7 +961,8 @@ export default function App() {
   useEffect(() => { loadTags().catch(() => setTags([])); }, []);
 
   useEffect(() => () => {
-    if (soundRef.current) soundRef.current.unloadAsync().catch(() => {});
+    playbackTokenRef.current += 1;
+    if (soundRef.current) stopAndUnloadSound(soundRef.current).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -888,6 +1045,8 @@ export default function App() {
       if (!dragActionCommittedRef.current && zoneId !== -1) {
         dragActionCommittedRef.current = true;
         shouldAutoFinish = true;
+        activeZoneRef.current = -1;
+        setActiveZoneId(-1);
         applyProfileTagActionById(Number(liveBlock.id), zoneId, Number(liveBlock.tag?.weight || 0), { refreshAfter: false }).catch(() => {
           dragActionCommittedRef.current = false;
         });
@@ -1075,7 +1234,6 @@ export default function App() {
     });
     await loadProfileTags(userId);
     await refreshSongs(userId, { preferLatest: true });
-    await refreshFavorites(userId);
     await loadPlaylists(userId);
     setNeedsOnboarding(false);
     setOnboardingStep(0);
@@ -1116,8 +1274,10 @@ export default function App() {
   };
 
   const generate = async (options = {}) => {
-    const { prefetch = false, silent = false, preferLatest = !prefetch } = options;
+    const { prefetch = false, silent = false, preferLatest = !prefetch, onSongResolved = null } = options;
     if (!userId || generationLoading) return songs;
+    const beforeSongs = [...(songsRef.current || [])];
+    const beforeIds = new Set(beforeSongs.map((item) => songIdentityOf(item)).filter(Boolean));
     if (!prefetch) setGenerationLoading(true);
     try {
       const res = await fetch(`${API_BASE}/generate`, {
@@ -1130,9 +1290,24 @@ export default function App() {
         throw new Error(data.error || data.detail || "generate failed");
       }
 
+      const resolveGeneratedSong = (items, payload = {}, jobItem = {}) => {
+        const list = Array.isArray(items) ? items : [];
+        const hintedId = Number(jobItem?.song?.id || payload.song_id || 0);
+        if (hintedId) {
+          const matched = list.find((item) => Number(item?.id || 0) === hintedId);
+          if (matched) return matched;
+        }
+        const fresh = list.find((item) => !beforeIds.has(songIdentityOf(item)));
+        if (fresh) return fresh;
+        return list[list.length - 1] || null;
+      };
+
       const jobId = Number(data.job_id || 0);
       if (!jobId) {
-        return refreshSongs(userId, { preferLatest });
+        const refreshed = await refreshSongs(userId, { preferLatest });
+        const resolvedSong = resolveGeneratedSong(refreshed, data, {});
+        if (resolvedSong && typeof onSongResolved === "function") onSongResolved(resolvedSong, refreshed);
+        return refreshed;
       }
 
       const start = Date.now();
@@ -1148,7 +1323,10 @@ export default function App() {
           throw new Error(item.error || data.error || "generation failed");
         }
         if ((status === "done" || status === "reused") && (item.song?.id || data.song_id)) {
-          return refreshSongs(userId, { preferLatest });
+          const refreshed = await refreshSongs(userId, { preferLatest });
+          const resolvedSong = resolveGeneratedSong(refreshed, data, item);
+          if (resolvedSong && typeof onSongResolved === "function") onSongResolved(resolvedSong, refreshed);
+          return refreshed;
         }
         await wait(3000);
       }
@@ -1169,53 +1347,110 @@ export default function App() {
     return null;
   };
 
-  const ensureNextSongReady = async (playingSong) => {
-    if (!userId || !playingSong || generationLoading || prefetchLockRef.current) return;
-    const queueSnapshot = songsRef.current || [];
-    if (getNextSongFromList(playingSong, queueSnapshot)) return;
-    prefetchLockRef.current = true;
-    try {
-      await generate({ prefetch: true, silent: true, preferLatest: false });
-      await refreshSongs(userId, { preferLatest: false });
-    } catch {}
-    finally {
-      prefetchLockRef.current = false;
-    }
+  const resolveIncomingNextSong = (baseSong, list) => {
+    const directNext = getNextSongFromList(baseSong, list);
+    if (directNext) return directNext;
+    const currentKey = queueKeyOf(baseSong);
+    const tail = (list || [])[list.length - 1] || null;
+    if (tail && queueKeyOf(tail) !== currentKey) return tail;
+    return null;
   };
 
-  const attachStatus = (status) => {
-    if (!status?.isLoaded) return;
+  const stopAndUnloadSound = async (soundInstance) => {
+    if (!soundInstance) return;
+    try { await soundInstance.stopAsync(); } catch {}
+    try { await soundInstance.setOnPlaybackStatusUpdate(null); } catch {}
+    try { await soundInstance.unloadAsync(); } catch {}
+  };
+
+  const runPlaybackTask = async (task) => {
+    const run = playbackQueueRef.current.then(task, task);
+    playbackQueueRef.current = run.catch(() => {});
+    return run;
+  };
+
+  const attachStatus = (token, song) => (status) => {
+    if (token !== playbackTokenRef.current || !status?.isLoaded) return;
     setPlayback((prev) => ({
       position: seekingRef.current ? prev.position : (status.positionMillis || 0),
       duration: status.durationMillis || prev.duration || 1,
       isPlaying: status.isPlaying
     }));
     if (!seekingRef.current) setSeekPreviewPosition(null);
-    if (status.didJustFinish && current && completeSentFor.current !== current.id) {
-      completeSentFor.current = current.id;
-      handleAutoNext("complete").catch(() => {});
+    if (status.didJustFinish && song && completeSentFor.current !== queueKeyOf(song)) {
+      completeSentFor.current = queueKeyOf(song);
+      handleAutoNext("complete", song).catch(() => {});
     }
   };
 
-  const play = async (song) => {
+  const play = async (song) => runPlaybackTask(async () => {
     if (!song?.audio_url) return;
-    if (soundRef.current) await soundRef.current.unloadAsync().catch(() => {});
+    const token = playbackTokenRef.current + 1;
+    playbackTokenRef.current = token;
+    const previousSound = soundRef.current;
+    soundRef.current = null;
+    setSound(null);
+    setCurrent(song);
+    setCurrentSoundId(queueKeyOf(song));
+    setPlayback({ position: 0, duration: 1, isPlaying: false });
     completeSentFor.current = null;
     setIsSeeking(false);
     seekingRef.current = false;
     setSeekPreviewPosition(null);
-    const created = await Audio.Sound.createAsync({ uri: song.audio_url }, { shouldPlay: true, progressUpdateIntervalMillis: 250 }, attachStatus);
+    await stopAndUnloadSound(previousSound);
+    const created = await Audio.Sound.createAsync(
+      { uri: song.audio_url },
+      { shouldPlay: false, progressUpdateIntervalMillis: 250 },
+      attachStatus(token, song)
+    );
+    if (token !== playbackTokenRef.current) {
+      await stopAndUnloadSound(created.sound);
+      return;
+    }
+    soundRef.current = created.sound;
     setSound(created.sound);
-    setCurrent(song);
-    setCurrentSoundId(queueKeyOf(song));
-    ensureNextSongReady(song).catch(() => {});
+    await created.sound.playAsync();
+  });
+
+  const requestAssignedSong = async ({ autoplay = false } = {}) => {
+    if (!userId) return null;
+    setAssignmentLoading(true);
+    try {
+      const items = await refreshSongs(userId, { preferLatest: true });
+      const target = items[items.length - 1] || null;
+      if (autoplay && target) await play(target);
+      return target;
+    } finally {
+      setAssignmentLoading(false);
+    }
+  };
+
+  const waitForAssignedNextSong = async (baseSong) => {
+    if (!userId) return null;
+    setAssignmentLoading(true);
+    try {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 45000) {
+        const fresh = await refreshSongs(userId, { preferLatest: false });
+        const next = resolveIncomingNextSong(baseSong, fresh);
+        if (next) return next;
+        await wait(3000);
+      }
+      return null;
+    } finally {
+      setAssignmentLoading(false);
+    }
   };
 
   const togglePlay = async () => {
-    if (!current) return generate();
+    if (!current) return requestAssignedSong({ autoplay: true });
     if (!soundRef.current || currentSoundId !== queueKeyOf(current)) return play(current);
-    if (playbackRef.current.isPlaying) await soundRef.current.pauseAsync();
-    else await soundRef.current.playAsync();
+    return runPlaybackTask(async () => {
+      const activeSound = soundRef.current;
+      if (!activeSound) return;
+      if (playbackRef.current.isPlaying) await activeSound.pauseAsync();
+      else await activeSound.playAsync();
+    });
   };
 
   const feedback = async (action) => {
@@ -1229,27 +1464,30 @@ export default function App() {
     } catch {}
   };
 
-  const handleAutoNext = async (action) => {
+  const handleAutoNext = async (action, baseSong = current) => {
     if (!userId || autoNextLock.current) return;
     autoNextLock.current = true;
     try {
       await feedback(action);
-      const index = current ? songs.findIndex((item) => queueKeyOf(item) === queueKeyOf(current)) : -1;
-      if (index >= 0 && index < songs.length - 1) return play(songs[index + 1]);
-      await ensureNextSongReady(current);
-      const fresh = await refreshSongs(userId, { preferLatest: false });
-      const next = getNextSongFromList(current, fresh) || (fresh.length > 0 ? fresh[fresh.length - 1] : null);
-      if (next) await play(next);
+      const queueSnapshot = songsRef.current || [];
+      const next = resolveIncomingNextSong(baseSong, queueSnapshot);
+      if (next) {
+        await play(next);
+        return;
+      }
+      const assignedNext = await waitForAssignedNextSong(baseSong);
+      if (assignedNext) await play(assignedNext);
     } finally {
       autoNextLock.current = false;
     }
   };
 
   const handleNext = async () => {
-    if (!current) return generate();
-    const index = songs.findIndex((item) => queueKeyOf(item) === queueKeyOf(current));
-    if (index >= 0 && index < songs.length - 1) return play(songs[index + 1]);
-    await handleAutoNext("skip");
+    if (!current) return requestAssignedSong({ autoplay: true });
+    const queueSnapshot = songsRef.current || [];
+    const next = getNextSongFromList(current, queueSnapshot);
+    if (next) return play(next);
+    await handleAutoNext("skip", current);
   };
 
   const createPlaylist = async () => {
@@ -1284,6 +1522,16 @@ export default function App() {
     setSongs((prev) => [...prev, ...clones]);
   };
 
+  const ensureSongAtQueueTail = (song, source = "portrait-generated") => {
+    if (!song) return;
+    setSongs((prev) => {
+      const list = Array.isArray(prev) ? prev : [];
+      const tail = list[list.length - 1] || null;
+      if (isSameSong(tail, song)) return list;
+      return [...list, cloneQueueSong(song, source)].filter(Boolean);
+    });
+  };
+
   const testConnection = async () => {
     setHealth({ loading: true, ok: null, message: "" });
     try {
@@ -1297,12 +1545,14 @@ export default function App() {
 
   const refreshAllData = async () => {
     if (!userId) return;
-    await Promise.all([loadTags(), loadProfileTags(userId), refreshSongs(userId), refreshFavorites(userId), loadPlaylists(userId)]);
+    await Promise.all([loadTags(), loadProfileTags(userId), refreshSongs(userId), loadPlaylists(userId)]);
     setHealth({ loading: false, ok: true, message: "\u6570\u636e\u5df2\u5237\u65b0" });
   };
 
   const logout = async () => {
-    if (soundRef.current) await soundRef.current.unloadAsync().catch(() => {});
+    playbackTokenRef.current += 1;
+    await stopAndUnloadSound(soundRef.current);
+    soundRef.current = null;
     setSound(null);
     setSession(null);
     setNeedsOnboarding(false);
@@ -1310,7 +1560,7 @@ export default function App() {
     setOnboardingStep(0);
     setProfileTags([]);
     setSongs([]);
-    setFavorites([]);
+    setGeneratedSongs([]);
     setPlaylists([]);
     setPlaylistSongsMap({});
     setPlaylistSongs([]);
@@ -1387,21 +1637,19 @@ export default function App() {
       <PortraitBackdrop blocks={portraitBlocks} stageSize={{ width, height }} />
       <ScrollView contentContainerStyle={styles.authShell} showsVerticalScrollIndicator={false}>
         <View style={styles.authCard}>
-          <Text style={styles.authEyebrow}>TPY MUSIC</Text>
-          <Text style={styles.authTitle}>Sign in to restore your music space</Text>
-          <Text style={styles.authSubtitle}>Register with username, account, password and avatar. Login uses account and password.</Text>
+<Text style={styles.authTitle}>{t("auth_title")}</Text>
           <View style={styles.authModeRow}>
             <TouchableOpacity style={[styles.authMode, authMode === "login" && styles.authModeActive]} onPress={() => setAuthMode("login")}>
-              <Text style={[styles.authModeText, authMode === "login" && styles.authModeTextActive]}>Login</Text>
+              <Text style={[styles.authModeText, authMode === "login" && styles.authModeTextActive]}>{t("auth_login")}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.authMode, authMode === "register" && styles.authModeActive]} onPress={() => setAuthMode("register")}>
-              <Text style={[styles.authModeText, authMode === "register" && styles.authModeTextActive]}>Register</Text>
+              <Text style={[styles.authModeText, authMode === "register" && styles.authModeTextActive]}>{t("auth_register")}</Text>
             </TouchableOpacity>
           </View>
           {authMode === "register" ? (
             <>
-              <TextInput value={accountName} onChangeText={setAccountName} placeholder="Username" placeholderTextColor="#B9C2CE" style={styles.input} />
-              <Text style={styles.avatarPickerLabel}>Choose avatar</Text>
+              <TextInput value={accountName} onChangeText={setAccountName} placeholder={t("auth_username")} placeholderTextColor="#B9C2CE" style={styles.input} />
+              <Text style={styles.avatarPickerLabel}>{t("auth_choose_avatar")}</Text>
               <View style={styles.avatarPickerRow}>
                 {AUTH_AVATARS.map((avatar) => (
                   <TouchableOpacity key={avatar} style={[styles.avatarChip, selectedAvatar === avatar && styles.avatarChipActive]} onPress={() => setSelectedAvatar(avatar)}>
@@ -1411,13 +1659,13 @@ export default function App() {
               </View>
             </>
           ) : null}
-          <TextInput value={accountId} onChangeText={(value) => setAccountId(value.replace(/\s+/g, "").toLowerCase())} placeholder="Account ID" placeholderTextColor="#B9C2CE" autoCapitalize="none" style={styles.input} />
-          <TextInput value={accountPassword} onChangeText={setAccountPassword} placeholder="Password" placeholderTextColor="#B9C2CE" secureTextEntry style={styles.input} />
+          <TextInput value={accountId} onChangeText={(value) => setAccountId(value.replace(/\s+/g, "").toLowerCase())} placeholder={t("auth_account_id")} placeholderTextColor="#B9C2CE" autoCapitalize="none" style={styles.input} />
+          <TextInput value={accountPassword} onChangeText={setAccountPassword} placeholder={t("auth_password")} placeholderTextColor="#B9C2CE" secureTextEntry style={styles.input} />
           {authMode === "register" ? (
-            <TextInput value={accountPasswordConfirm} onChangeText={setAccountPasswordConfirm} placeholder="Confirm password" placeholderTextColor="#B9C2CE" secureTextEntry style={styles.input} />
+            <TextInput value={accountPasswordConfirm} onChangeText={setAccountPasswordConfirm} placeholder={t("auth_confirm_password")} placeholderTextColor="#B9C2CE" secureTextEntry style={styles.input} />
           ) : null}
           <TouchableOpacity style={styles.primary} onPress={submitAuth} disabled={authLoading}>
-            {authLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>{authMode === "login" ? "Login & restore" : "Register & continue"}</Text>}
+            {authLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>{authMode === "login" ? t("auth_login_cta") : t("auth_register_cta")}</Text>}
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -1428,7 +1676,6 @@ export default function App() {
     <SafeAreaView style={styles.page}>
       <PortraitBackdrop blocks={portraitBlocks} stageSize={{ width, height }} />
       <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-        <ScreenTitle eyebrow="First run" title="Pick initial tags" subtitle="Please choose tags from at least two categories." />
         <View style={styles.groupCard}>
           <View style={styles.onboardingProgressHeader}>
             <Text style={styles.groupTitle}>{currentOnboarding ? currentOnboarding[0] : "Done"}</Text>
@@ -1458,15 +1705,15 @@ export default function App() {
           )}
           <View style={styles.rowGap}>
             <TouchableOpacity style={[styles.secondarySoft, styles.flex]} onPress={() => setOnboardingStep((prev) => Math.max(0, prev - 1))}>
-              <Text style={styles.secondaryText}>Back</Text>
+              <Text style={styles.secondaryText}>{t("back")}</Text>
             </TouchableOpacity>
             {onboardingStep < onboardingGroups.length - 1 ? (
               <TouchableOpacity style={[styles.primary, styles.flex]} onPress={() => setOnboardingStep((prev) => Math.min(onboardingGroups.length - 1, prev + 1))}>
-                <Text style={styles.primaryText}>Next</Text>
+                <Text style={styles.primaryText}>{t("next")}</Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity style={[styles.primary, styles.flex]} onPress={submitOnboarding}>
-                <Text style={styles.primaryText}>Enter App</Text>
+                <Text style={styles.primaryText}>{t("enter_app")}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -1481,12 +1728,11 @@ export default function App() {
 
     return (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow={"Hi, " + displayName} title="Songs" subtitle="Play, favorite and manage your queue." />
       <View style={styles.playerCard}>
         <View style={styles.coverWrap}>
           <SongArtwork uri={current?.cover_url} size={228} radius={34} label={current?.title || "TPY"} />
         </View>
-        <Text style={styles.playerTitle}>{current?.title || "No song yet"}</Text>
+        <Text style={styles.playerTitle}>{current?.title || t("no_song")}</Text>
         <Text style={styles.playerSub} numberOfLines={2}>{songTagText(current)}</Text>
         <View style={styles.progressWrap}>
           <View
@@ -1516,27 +1762,27 @@ export default function App() {
               await feedback("like");
               const list = await loadPlaylists(userId);
               if (list.length === 0) {
-                Alert.alert("No playlist", "Create one in Favorites first.");
+                Alert.alert(t("no_playlist_alert_title"), t("no_playlist_alert_body"));
                 setActiveTab("favorites");
                 return;
               }
               setShowPlaylistPicker(true);
             }}
           >
-            <Text style={styles.controlText}>Favorite</Text>
+            <Text style={styles.controlText}>{t("favorite")}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.playBtn} onPress={togglePlay}>
-            <Text style={styles.playText}>{!current && generationLoading ? "Generating..." : current ? (playback.isPlaying ? "Pause" : "Play") : "Generate"}</Text>
+            <Text style={styles.playText}>{assignmentLoading ? t("assigning") : current ? (playback.isPlaying ? t("pause") : t("play")) : t("load_queue")}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.controlBtn} onPress={handleNext}>
-            <Text style={styles.controlText}>Next</Text>
+            <Text style={styles.controlText}>{t("next")}</Text>
           </TouchableOpacity>
         </View>
       </View>
 
       {showPlaylistPicker ? (
         <View style={styles.groupCard}>
-          <Text style={styles.groupTitle}>Save to playlist</Text>
+          <Text style={styles.groupTitle}>{t("save_to_playlist")}</Text>
           {playlists.map((playlist) => (
             <TouchableOpacity
               key={playlist.id}
@@ -1549,13 +1795,13 @@ export default function App() {
             >
               <View>
                 <Text style={styles.listTitle}>{playlist.name}</Text>
-                <Text style={styles.listSub}>{"Songs " + (playlist.song_count || 0)}</Text>
+                <Text style={styles.listSub}>{t("songs_count") + (playlist.song_count || 0)}</Text>
               </View>
               <Text style={styles.chevron}>></Text>
             </TouchableOpacity>
           ))}
           <TouchableOpacity style={styles.secondarySoft} onPress={() => setShowPlaylistPicker(false)}>
-            <Text style={styles.secondaryText}>Cancel</Text>
+            <Text style={styles.secondaryText}>{t("cancel")}</Text>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -1563,17 +1809,17 @@ export default function App() {
       <View style={styles.section}>
         <TouchableOpacity style={styles.queueToggle} onPress={() => setShowQueue((prev) => !prev)}>
           <View>
-            <Text style={styles.queueLabel}>Queue</Text>
-            <Text style={styles.queueHint}>Tap an item to switch playback</Text>
+            <Text style={styles.queueLabel}>{t("queue")}</Text>
+            
           </View>
-          <Text style={styles.queueAction}>{showQueue ? "Hide" : "Show"}</Text>
+          <Text style={styles.queueAction}>{showQueue ? t("hide") : t("show")}</Text>
         </TouchableOpacity>
         {showQueue ? songs.map((item, index) => (
           <TouchableOpacity key={String(queueKeyOf(item))} style={[styles.listItem, queueKeyOf(current) === queueKeyOf(item) && styles.currentQueueItem]} onPress={() => play(item)}>
             <View style={styles.songListMain}>
               <SongArtwork uri={item.cover_url} size={56} radius={18} label={item.title || "TPY"} />
               <View style={styles.songListText}>
-                <Text style={styles.listTitle}>{String(index + 1) + ". " + (item.title || "Untitled")}</Text>
+                <Text style={styles.listTitle}>{String(index + 1) + ". " + (item.title || t("untitled"))}</Text>
                 <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
               </View>
             </View>
@@ -1587,20 +1833,19 @@ export default function App() {
 
   const renderFavorites = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="Favorites" title="Playlists and songs" subtitle="Expand playlist, append single song, or append whole playlist by +." />
 
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>New playlist</Text>
-        <TextInput value={newPlaylistName} onChangeText={setNewPlaylistName} placeholder="e.g. Late night / Commute" placeholderTextColor="#B9C2CE" style={styles.input} />
+        <Text style={styles.groupTitle}>{t("new_playlist")}</Text>
+        <TextInput value={newPlaylistName} onChangeText={setNewPlaylistName} placeholder={t("playlist_placeholder")} placeholderTextColor="#B9C2CE" style={styles.input} />
         <TouchableOpacity style={styles.primary} onPress={createPlaylist}>
-          <Text style={styles.primaryText}>Create</Text>
+          <Text style={styles.primaryText}>{t("create")}</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>My playlists</Text>
+        <Text style={styles.groupTitle}>{t("my_playlists")}</Text>
         {playlists.length === 0 ? (
-          <Text style={styles.placeholder}>No playlist yet.</Text>
+          <Text style={styles.placeholder}>{t("no_playlist_yet")}</Text>
         ) : playlists.map((playlist) => {
           const expanded = selectedPlaylistId === playlist.id;
           const songsInPlaylist = playlistSongsMap[playlist.id] || [];
@@ -1619,7 +1864,7 @@ export default function App() {
                   }}
                 >
                   <Text style={styles.listTitle}>{playlist.name}</Text>
-                  <Text style={styles.listSub}>{"Songs " + (playlist.song_count || 0)}</Text>
+                  <Text style={styles.listSub}>{t("songs_count") + (playlist.song_count || 0)}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.playlistPlus}
@@ -1635,13 +1880,13 @@ export default function App() {
               {expanded ? (
                 <View style={{ marginTop: 10 }}>
                   {songsInPlaylist.length === 0 ? (
-                    <Text style={styles.placeholder}>This playlist is empty.</Text>
+                    <Text style={styles.placeholder}>{t("playlist_empty")}</Text>
                   ) : songsInPlaylist.map((song) => (
                     <TouchableOpacity key={String(playlist.id) + "-" + String(song.id)} style={styles.listItem} onPress={() => enqueueSongToTail(song, "playlist-song-" + String(playlist.id))}>
                       <View style={styles.songListMain}>
                         <SongArtwork uri={song.cover_url} size={56} radius={18} label={song.title || "TPY"} />
                         <View style={styles.songListText}>
-                          <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
+                          <Text style={styles.listTitle}>{song.title || t("untitled")}</Text>
                           <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
                         </View>
                       </View>
@@ -1656,15 +1901,15 @@ export default function App() {
       </View>
 
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>Favorite history</Text>
-        {favorites.length === 0 ? (
-          <Text style={styles.placeholder}>No favorite songs yet.</Text>
-        ) : favorites.map((song) => (
+        <Text style={styles.groupTitle}>{t("generated_songs")}</Text>
+        {generatedSongs.length === 0 ? (
+          <Text style={styles.placeholder}>{t("no_generated_yet")}</Text>
+        ) : generatedSongs.map((song) => (
           <TouchableOpacity key={String(song.id) + "-" + String(song.created_at || "fav")} style={styles.listItem} onPress={() => enqueueSongToTail(song, "favorite")}>
             <View style={styles.songListMain}>
               <SongArtwork uri={song.cover_url} size={56} radius={18} label={song.title || "TPY"} />
               <View style={styles.songListText}>
-                <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
+                <Text style={styles.listTitle}>{song.title || t("untitled")}</Text>
                 <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
               </View>
             </View>
@@ -1676,13 +1921,17 @@ export default function App() {
   );
 
   const renderGalaxy = () => {
-    const zones = getFuncZones(effectiveStageSize);
+    const zones = getFuncZones(effectiveStageSize, {
+      softerLabel: t("zone_softer"),
+      softerHint: t("zone_softer_hint"),
+      strongerLabel: t("zone_stronger"),
+      strongerHint: t("zone_stronger_hint")
+    });
 
     return (
       <View style={styles.galaxyScreen} onLayout={(event) => setPortraitStageSize(event.nativeEvent.layout)}>
         <PortraitBackdrop blocks={portraitBlocks} stageSize={effectiveStageSize} />
         <View style={styles.galaxyHeader}>
-          <ScreenTitle eyebrow="Portrait" title="Full-screen blurred blobs" subtitle="Drag tags to repel each other. Top zones: softer / stronger." light />
         </View>
 
         <View style={styles.zoneRow} pointerEvents="box-none">
@@ -1706,8 +1955,8 @@ export default function App() {
         <View style={styles.galaxyStage} {...portraitResponder.panHandlers}>
           {portraitBlocks.length === 0 ? (
             <View style={styles.emptyGalaxy}>
-              <Text style={styles.emptyGalaxyTitle}>No tags yet</Text>
-              <Text style={styles.emptyGalaxyText}>Add tags below, or complete onboarding tags first.</Text>
+              <Text style={styles.emptyGalaxyTitle}>{t("no_tags_yet")}</Text>
+              
             </View>
           ) : portraitBlocks.map((block) => (
             <PortraitTag key={block.id} block={block} isDragging={block.id === draggingIdRef.current} />
@@ -1723,25 +1972,60 @@ export default function App() {
           ]}
         >
           <TouchableOpacity style={styles.sheetHeader} onPress={() => setIsTagSheetCollapsed((prev) => !prev)}>
-            <Text style={styles.groupTitle}>Add tag</Text>
-            <Text style={styles.sheetToggleText}>{isTagSheetCollapsed ? "Expand" : "Collapse"}</Text>
+            <Text style={styles.groupTitle}>{t("add_tag")}</Text>
+            <Text style={styles.sheetToggleText}>{isTagSheetCollapsed ? t("expand") : t("collapse")}</Text>
           </TouchableOpacity>
 
           {!isTagSheetCollapsed ? (
             <>
-              <TextInput value={newTagName} onChangeText={setNewTagName} placeholder="Tag name" placeholderTextColor="#B9C2CE" style={styles.input} />
-              {existingTagMatch ? (
-                <Text style={styles.hintText}>{"Existing category found: " + existingTagMatch.type + ". It will be added directly."}</Text>
-              ) : (
-                <Text style={styles.hintText}>For a new tag, submit first and then choose its category.</Text>
-              )}
+              <TextInput value={newTagName} onChangeText={setNewTagName} placeholder={t("tag_name")} placeholderTextColor="#B9C2CE" style={styles.input} />
               <TouchableOpacity style={styles.primary} onPress={submitUserTag}>
-                <Text style={styles.primaryText}>Add to my portrait</Text>
+                <Text style={styles.primaryText}>{t("add_to_portrait")}</Text>
               </TouchableOpacity>
+              <View style={styles.portraitGenerateCard}>
+                <View style={styles.portraitGenerateHeader}>
+                  <Text style={styles.portraitGenerateTitle}>{t("portrait_generate_title")}</Text>
+                  <Text style={styles.portraitGenerateSubTitle}>{t("portrait_generate_subtitle")}</Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.secondarySoft, styles.portraitGenerateAction]}
+                  onPress={() => generate({
+                    preferLatest: false,
+                    onSongResolved: (song, refreshed) => {
+                      setPortraitGeneratedSong(song);
+                      const queueTail = (refreshed || [])[refreshed.length - 1] || null;
+                      if (!isSameSong(queueTail, song)) ensureSongAtQueueTail(song);
+                    }
+                  })}
+                  disabled={generationLoading}
+                >
+                  {generationLoading ? <ActivityIndicator color="#EAF2FF" /> : <Text style={styles.secondaryText}>{t("generate_song_cta")}</Text>}
+                </TouchableOpacity>
+
+                {generationLoading ? (
+                  <View style={styles.skeletonRow}>
+                    <View style={styles.skeletonArtwork} />
+                    <View style={styles.skeletonTextWrap}>
+                      <View style={styles.skeletonLineLg} />
+                      <View style={styles.skeletonLineSm} />
+                      <View style={styles.skeletonLineXs} />
+                    </View>
+                  </View>
+                ) : portraitGeneratedSong ? (
+                  <View style={styles.portraitResultCard}>
+                    <SongArtwork uri={portraitGeneratedSong.cover_url} size={68} radius={20} label={portraitGeneratedSong.title || "TPY"} />
+                    <View style={styles.portraitResultText}>
+                      <Text style={styles.portraitResultTitle}>{portraitGeneratedSong.title || t("untitled")}</Text>
+                      <Text style={styles.portraitResultSub} numberOfLines={2}>{songTagText(portraitGeneratedSong)}</Text>
+                      <Text style={styles.portraitResultHint}>{t("portrait_generated_ready")}</Text>
+                    </View>
+                  </View>
+                ) : null}
+              </View>
 
               {showCategoryPicker ? (
                 <View style={styles.categoryPickerCard}>
-                  <Text style={styles.categoryPickerTitle}>{"Choose a category for \"" + pendingTagName + "\""}</Text>
+                  <Text style={styles.categoryPickerTitle}>{t("choose_category_for_tag").replace("{name}", pendingTagName)}</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryPickerRow}>
                     {CATEGORY_ORDER.map((type) => (
                       <TouchableOpacity key={type} style={[styles.categoryChip, selectedCategory === type && styles.categoryChipActive]} onPress={() => setSelectedCategory(type)}>
@@ -1757,10 +2041,10 @@ export default function App() {
                         setPendingTagName("");
                       }}
                     >
-                      <Text style={styles.secondaryText}>Cancel</Text>
+                      <Text style={styles.secondaryText}>{t("cancel")}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={[styles.primary, styles.flex]} onPress={confirmCustomTagType}>
-                      <Text style={styles.primaryText}>Confirm</Text>
+                      <Text style={styles.primaryText}>{t("confirm")}</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -1775,9 +2059,8 @@ export default function App() {
 
   const renderSettings = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="Account" title="Settings and status" subtitle="Manage account, test network and refresh app data." />
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>Current account</Text>
+        <Text style={styles.groupTitle}>{t("current_account")}</Text>
         <View style={styles.accountCard}>
           <View style={styles.accountAvatar}><Text style={styles.accountAvatarText}>{session?.avatar || "\uD83C\uDFA7"}</Text></View>
           <Text style={styles.accountName}>{displayName}</Text>
@@ -1786,22 +2069,20 @@ export default function App() {
         </View>
       </View>
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>Network test</Text>
-        <TouchableOpacity style={styles.secondarySoft} onPress={testConnection}>
-          <Text style={styles.secondaryText}>{health.loading ? "Testing..." : "Test API"}</Text>
-        </TouchableOpacity>
-        {health.message ? <Text style={health.ok ? styles.okText : styles.errorText}>{health.message}</Text> : null}
+        <Text style={styles.groupTitle}>{t("language")}</Text>
+        <View style={styles.authModeRow}>
+          <TouchableOpacity style={[styles.authMode, language === "zh" && styles.authModeActive]} onPress={() => setLanguage("zh")}>
+            <Text style={[styles.authModeText, language === "zh" && styles.authModeTextActive]}>{t("lang_zh")}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.authMode, language === "en" && styles.authModeActive]} onPress={() => setLanguage("en")}>
+            <Text style={[styles.authModeText, language === "en" && styles.authModeTextActive]}>{t("lang_en")}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>Refresh data</Text>
-        <TouchableOpacity style={styles.secondarySoft} onPress={refreshAllData}>
-          <Text style={styles.secondaryText}>Refresh songs/favorites/playlists/tags</Text>
-        </TouchableOpacity>
-      </View>
-      <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>Account action</Text>
+        <Text style={styles.groupTitle}>{t("account_action")}</Text>
         <TouchableOpacity style={styles.dangerButton} onPress={logout}>
-          <Text style={styles.dangerText}>Log out</Text>
+          <Text style={styles.dangerText}>{t("logout")}</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>
@@ -1824,7 +2105,7 @@ export default function App() {
           {TABS.map((tab) => (
             <TouchableOpacity key={tab.key} style={styles.tabItem} onPress={() => setActiveTab(tab.key)}>
               <Text style={[styles.tabIcon, activeTab === tab.key && styles.tabIconActive]}>{tab.icon}</Text>
-              <Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>{tab.label}</Text>
+              <Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>{t(`tab_${tab.key}`)}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -1944,6 +2225,22 @@ const styles = StyleSheet.create({
   sheetToggleText: { color: "rgba(255,255,255,0.86)", fontSize: 13, fontWeight: "700" },
   categoryPickerCard: { marginTop: 14, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)" },
   categoryPickerTitle: { color: "#FFFFFF", fontSize: 15, fontWeight: "700", marginBottom: 12 },
+  portraitGenerateCard: { marginTop: 14, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)" },
+  portraitGenerateHeader: { marginBottom: 12 },
+  portraitGenerateTitle: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
+  portraitGenerateSubTitle: { color: "rgba(255,255,255,0.68)", fontSize: 13, lineHeight: 19, marginTop: 6 },
+  portraitGenerateAction: { marginTop: 0 },
+  portraitResultCard: { marginTop: 12, flexDirection: "row", alignItems: "center", backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 18, padding: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)" },
+  portraitResultText: { flex: 1, marginLeft: 12 },
+  portraitResultTitle: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
+  portraitResultSub: { color: "rgba(255,255,255,0.68)", fontSize: 13, lineHeight: 19, marginTop: 4 },
+  portraitResultHint: { color: "rgba(255,255,255,0.52)", fontSize: 12, marginTop: 6 },
+  skeletonRow: { flexDirection: "row", alignItems: "center", marginTop: 12, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 18, padding: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.04)" },
+  skeletonArtwork: { width: 68, height: 68, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.08)" },
+  skeletonTextWrap: { flex: 1, marginLeft: 12 },
+  skeletonLineLg: { width: "72%", height: 14, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.1)", marginBottom: 10 },
+  skeletonLineSm: { width: "54%", height: 11, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", marginBottom: 8 },
+  skeletonLineXs: { width: "38%", height: 10, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.06)" },
   categoryPickerRow: { paddingRight: 8 },
   categoryChip: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 999, paddingHorizontal: 16, paddingVertical: 12, marginRight: 10 },
   categoryChipActive: { backgroundColor: "#FFFFFF" },
@@ -1972,6 +2269,13 @@ const styles = StyleSheet.create({
   rowGap: { flexDirection: "row", gap: 10 },
   flex: { flex: 1 }
 });
+
+
+
+
+
+
+
 
 
 
