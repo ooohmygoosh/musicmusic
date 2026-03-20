@@ -125,7 +125,7 @@ async function loadUserDetail(userId) {
     <div class="stat-card"><div class="stat-label">账号 ID</div><div class="stat-value small">${user.account_id || "-"}</div></div>
     <div class="stat-card"><div class="stat-label">设备 ID</div><div class="stat-value small">${user.device_id || "-"}</div></div>
     <div class="stat-card"><div class="stat-label">头像</div><div class="stat-value small">${user.avatar || "-"}</div></div>
-    <div class="stat-card"><div class="stat-label">密码状态</div><div class="stat-value small">${user.has_password ? "已设置" : "未设置"}</div></div>
+    <div class="stat-card"><div class="stat-label">密码</div><div class="stat-value small">${user.has_password ? "已设置" : "未设置"}</div></div>
     <div class="stat-card"><div class="stat-label">注册时间</div><div class="stat-value small">${user.created_at ? new Date(user.created_at).toLocaleString() : "-"}</div></div>
     <div class="stat-card"><div class="stat-label">最近活跃</div><div class="stat-value small">${user.last_seen_at ? new Date(user.last_seen_at).toLocaleString() : "-"}</div></div>
     <div class="stat-card"><div class="stat-label">状态</div><div class="stat-value small">${user.is_active === false ? "已停用" : "正常"}</div></div>
@@ -177,3 +177,4 @@ document.getElementById("refreshUserDetail").addEventListener("click", () => {
 
 tokenInput.value = getToken();
 loadUsers();
+
