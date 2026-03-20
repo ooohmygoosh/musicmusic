@@ -1,4 +1,4 @@
-﻿{
+{
   "cli": {
     "version": ">= 18.3.0",
     "appVersionSource": "remote"
@@ -6,7 +6,11 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "http://10.0.2.2:8080",
+        "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-amd64"
+      }
     },
     "preview": {
       "distribution": "internal",
@@ -14,6 +18,7 @@
         "image": "latest"
       },
       "env": {
+        "EXPO_PUBLIC_API_BASE": "https://api.ooooooo0hmygooooooo0sh.xyz/api",
         "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-amd64"
       }
     },
@@ -23,6 +28,7 @@
         "image": "latest"
       },
       "env": {
+        "EXPO_PUBLIC_API_BASE": "https://api.ooooooo0hmygooooooo0sh.xyz/api",
         "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-amd64"
       }
     }

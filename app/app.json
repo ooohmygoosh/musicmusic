@@ -1,4 +1,4 @@
-﻿{
+{
   "expo": {
     "name": "TPY Music",
     "slug": "tpy-music",
@@ -30,7 +30,7 @@
       ]
     ],
     "extra": {
-      "apiBase": "http://47.98.253.11/api",
+      "apiBase": "https://api.ooooooo0hmygooooooo0sh.xyz/api",
       "eas": {
         "projectId": "ffefaf70-c41d-4524-bc84-f9cf404981d3"
       }
