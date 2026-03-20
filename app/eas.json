@@ -18,7 +18,7 @@
         "image": "latest"
       },
       "env": {
-        "EXPO_PUBLIC_API_BASE": "https://api.ooooooo0hmygooooooo0sh.xyz/api",
+        "EXPO_PUBLIC_API_BASE": "http://47.98.253.11/api",
         "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-amd64"
       }
     },
@@ -28,7 +28,7 @@
         "image": "latest"
       },
       "env": {
-        "EXPO_PUBLIC_API_BASE": "https://api.ooooooo0hmygooooooo0sh.xyz/api",
+        "EXPO_PUBLIC_API_BASE": "http://47.98.253.11/api",
         "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-amd64"
       }
     }
