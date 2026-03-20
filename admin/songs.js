@@ -20,7 +20,7 @@ function escapeHtml(value) {
 }
 
 function updateSelectionHint() {
-  songSelectionHint.textContent = `已选 ${selectedSongIds.size} 首歌曲`;
+  songSelectionHint.textContent = `${selectedSongIds.size} songs selected`;
 }
 
 async function toggleAvailability(songId, isAvailable) {
@@ -30,7 +30,7 @@ async function toggleAvailability(songId, isAvailable) {
     body: JSON.stringify({ is_available: !isAvailable })
   });
   if (!res.ok) {
-    alert("更新失败，请确认 Token 或服务状态");
+    alert("Update failed. Check token or service status.");
     return;
   }
   await loadSongs();
@@ -39,17 +39,17 @@ async function toggleAvailability(songId, isAvailable) {
 async function deleteSelectedSongs() {
   const ids = [...selectedSongIds];
   if (!ids.length) {
-    alert("请先选择要删除的歌曲");
+    alert("Select songs first.");
     return;
   }
-  if (!confirm(`确认删除选中的 ${ids.length} 首歌曲？此操作会同时删除它们的分发记录。`)) return;
+  if (!confirm(`Delete ${ids.length} selected songs? This also removes related delivery records.`)) return;
   const res = await fetch("/admin/library-songs/batch-delete", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-admin-token": getToken() },
     body: JSON.stringify({ ids })
   });
   if (!res.ok) {
-    alert("批量删除失败，请确认 Token 或服务状态");
+    alert("Batch delete failed.");
     return;
   }
   selectedSongIds.clear();
@@ -60,7 +60,7 @@ async function deleteSelectedSongs() {
 function renderSongs(items) {
   list.innerHTML = "";
   if (!items || items.length === 0) {
-    list.innerHTML = "<div class='muted'>暂无库存歌曲</div>";
+    list.innerHTML = "<div class='muted'>No songs found</div>";
     updateSelectionHint();
     return;
   }
@@ -83,33 +83,33 @@ function renderSongs(items) {
       <div class="library-main">
         <div class="row library-head">
           <div>
-            <div class="library-title">${escapeHtml(item.title || "未命名歌曲")}</div>
-            <div class="muted">${escapeHtml(item.model || "未知模型")} · ${Number(item.duration || 0)}s · ${escapeHtml(item.primary_type || "未分类")} · ${item.is_available ? "启用中" : "已停用"}</div>
-            <div class="muted">创建者：${escapeHtml(item.creator_name || `用户 ${item.creator_user_id || "-"}`)} · ${item.created_at ? new Date(item.created_at).toLocaleString() : "-"} · ${escapeHtml(item.generation_mode || "generated")}</div>
+            <div class="library-title">${escapeHtml(item.title || "Untitled")}</div>
+            <div class="muted">${escapeHtml(item.model || "Unknown model")} · ${Number(item.duration || 0)}s · ${escapeHtml(item.primary_type || "Uncategorized")} · ${item.is_available ? "Available" : "Disabled"}</div>
+            <div class="muted">Creator: ${escapeHtml(item.creator_name || `User ${item.creator_user_id || "-"}`)} · ${item.created_at ? new Date(item.created_at).toLocaleString() : "-"} · ${escapeHtml(item.generation_mode || "generated")}</div>
           </div>
           ${item.cover_url ? `<img class="cover-thumb" src="${escapeHtml(item.cover_url)}" alt="cover" />` : ""}
         </div>
         <div class="library-prompts">
           <div class="library-prompt-block">
-            <div class="library-prompt-label">发给天谱乐的 Prompt</div>
-            <div class="muted library-prompt">${escapeHtml(item.prompt || "无提示词")}</div>
+            <div class="library-prompt-label">Prompt sent to generator</div>
+            <div class="muted library-prompt">${escapeHtml(item.prompt || "-")}</div>
           </div>
           <div class="library-prompt-block">
-            <div class="library-prompt-label">原始标签 Prompt</div>
-            <div class="muted library-prompt">${escapeHtml(item.base_prompt || item.prompt || "无原始提示词")}</div>
+            <div class="library-prompt-label">Base prompt</div>
+            <div class="muted library-prompt">${escapeHtml(item.base_prompt || item.prompt || "-")}</div>
           </div>
         </div>
-        <div class="pill-row">${types}${tags || "<span class='muted'>暂无标签</span>"}</div>
+        <div class="pill-row">${types}${tags || "<span class='muted'>No tags</span>"}</div>
         <div class="meta-grid">
-          <div><strong>分发次数</strong><span>${Number(item.deliveries || 0)}</span></div>
-          <div><strong>复用次数</strong><span>${Number(item.reuse_count || 0)}</span></div>
-          <div><strong>收藏次数</strong><span>${Number(item.likes || 0)}</span></div>
-          <div><strong>跳过次数</strong><span>${Number(item.skips || 0)}</span></div>
-          <div><strong>副本数量</strong><span>${Number(item.copies || 0)}</span></div>
+          <div><strong>Deliveries</strong><span>${Number(item.deliveries || 0)}</span></div>
+          <div><strong>Reuse</strong><span>${Number(item.reuse_count || 0)}</span></div>
+          <div><strong>Likes</strong><span>${Number(item.likes || 0)}</span></div>
+          <div><strong>Skips</strong><span>${Number(item.skips || 0)}</span></div>
+          <div><strong>Copies</strong><span>${Number(item.copies || 0)}</span></div>
         </div>
         <div class="row">
-          ${item.audio_url ? `<a class="link-button" href="${escapeHtml(item.audio_url)}" target="_blank" rel="noreferrer">试听音频</a>` : ""}
-          <button class="ghost-btn" data-toggle="${item.id}">${item.is_available ? "停用复用" : "重新启用"}</button>
+          ${item.audio_url ? `<a class="link-button" href="${escapeHtml(item.audio_url)}" target="_blank" rel="noreferrer">Preview Audio</a>` : ""}
+          <button class="ghost-btn" data-toggle="${item.id}">${item.is_available ? "Disable Reuse" : "Enable Reuse"}</button>
         </div>
       </div>
     `;
@@ -136,7 +136,7 @@ async function loadSongs() {
   const query = params.toString();
   const res = await fetch(`/admin/library-songs${query ? `?${query}` : ""}`, { headers: { "x-admin-token": getToken() } });
   if (!res.ok) {
-    list.innerHTML = "<div class='muted'>未授权或服务未启动</div>";
+    list.innerHTML = "<div class='muted'>Unauthorized or service unavailable</div>";
     return;
   }
   const data = await res.json();

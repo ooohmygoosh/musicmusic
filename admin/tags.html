@@ -1,46 +1,46 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>标签管理 | 天谱乐 后台管理</title>
+    <title>Tags</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="page">
       <header>
-        <h1>标签管理</h1>
+        <h1>Tags</h1>
         <nav class="nav">
-          <a href="/" class="nav-link">概览</a>
-          <a href="/songs.html" class="nav-link">歌曲库</a>
-          <a href="/users.html" class="nav-link">用户数据</a>
-          <a href="/tags.html" class="nav-link is-active">标签管理</a>
+          <a href="/" class="nav-link">Overview</a>
+          <a href="/songs.html" class="nav-link">Song Library</a>
+          <a href="/users.html" class="nav-link">Users</a>
+          <a href="/tags.html" class="nav-link is-active">Tags</a>
         </nav>
         <div class="token">
           <input id="token" type="password" placeholder="Admin Token" />
-          <button id="saveToken">保存</button>
+          <button id="saveToken">Save</button>
         </div>
       </header>
 
       <section class="card">
         <div class="row between">
-          <h2>标签池维护</h2>
-          <button id="refreshTags">刷新</button>
+          <h2>Tag Pool</h2>
+          <button id="refreshTags">Refresh</button>
         </div>
         <div class="row">
-          <input id="tagName" placeholder="标签名称" />
-          <input id="tagType" placeholder="标签类别（情绪/风格/乐器等）" />
-          <input id="tagDescription" placeholder="补充说明，可选" />
-          <button id="addTag">新增标签</button>
+          <input id="tagName" placeholder="Tag name" />
+          <input id="tagType" placeholder="Tag type" />
+          <input id="tagDescription" placeholder="Description (optional)" />
+          <button id="addTag">Add Tag</button>
         </div>
         <div id="tagTypeSummary" class="stats-grid"></div>
         <div class="selection-bar row between">
-          <div id="tagSelectionHint" class="muted">已选 0 个标签</div>
+          <div id="tagSelectionHint" class="muted">0 tags selected</div>
           <div class="row compact-row">
-            <button id="clearTagSelection" class="ghost-btn" type="button">清空选择</button>
-            <button id="disableSelectedTags" class="ghost-btn" type="button">批量停用</button>
-            <button id="deleteSelectedTags" class="danger-btn" type="button">批量删除</button>
-            <button id="deleteAndBlacklistTags" class="danger-btn" type="button">删除并拉黑</button>
+            <button id="clearTagSelection" class="ghost-btn" type="button">Clear</button>
+            <button id="disableSelectedTags" class="ghost-btn" type="button">Disable Selected</button>
+            <button id="deleteSelectedTags" class="danger-btn" type="button">Delete Selected</button>
+            <button id="deleteAndBlacklistTags" class="danger-btn" type="button">Delete + Blacklist</button>
           </div>
         </div>
         <div id="tagGroups" class="list"></div>
@@ -48,25 +48,24 @@
 
       <section class="card">
         <div class="row between">
-          <h2>屏蔽词</h2>
-          <button id="refreshBlacklist">刷新</button>
+          <h2>Blacklist</h2>
+          <button id="refreshBlacklist">Refresh</button>
         </div>
         <div class="row">
-          <input id="blacklistWord" placeholder="单个屏蔽词" />
-          <input id="blacklistReason" placeholder="备注，可选" />
-          <button id="addBlacklist">新增屏蔽词</button>
+          <input id="blacklistWord" placeholder="Single word" />
+          <input id="blacklistReason" placeholder="Reason (optional)" />
+          <button id="addBlacklist">Add Word</button>
         </div>
         <div class="bulk-panel">
-          <textarea id="blacklistBulkText" rows="5" placeholder="批量写入屏蔽词，一行一个，或用逗号分隔"></textarea>
+          <textarea id="blacklistBulkText" rows="5" placeholder="Bulk words, one per line or comma separated"></textarea>
           <div class="row compact-row">
-            <input id="blacklistBulkReason" placeholder="批量备注，可选" />
-            <button id="addBlacklistBulk">批量写入</button>
+            <input id="blacklistBulkReason" placeholder="Bulk reason (optional)" />
+            <button id="addBlacklistBulk">Bulk Insert</button>
           </div>
         </div>
         <div id="blacklistList" class="list"></div>
       </section>
-    </div>
 
-    <script src="./tags.js?v=20260320-1"></script>
+    <script src="./tags.js?v=20260320-2"></script>
   </body>
 </html>

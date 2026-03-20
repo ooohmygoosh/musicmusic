@@ -1,4 +1,4 @@
-﻿const tokenInput = document.getElementById("token");
+const tokenInput = document.getElementById("token");
 const statsGrid = document.getElementById("statsGrid");
 const tagUsage = document.getElementById("tagUsage");
 const feedbackSummary = document.getElementById("feedbackSummary");
@@ -15,7 +15,7 @@ document.getElementById("saveToken").addEventListener("click", () => {
 function renderBars(container, items, formatter) {
   container.innerHTML = "";
   if (!items || items.length === 0) {
-    container.innerHTML = "<div class='muted'>暂无数据</div>";
+    container.innerHTML = "<div class='muted'>No data</div>";
     return;
   }
   const maxValue = Math.max(...items.map((item) => item.value));
@@ -37,20 +37,20 @@ async function loadStats() {
     headers: { "x-admin-token": getToken() }
   });
   if (!res.ok) {
-    statsGrid.innerHTML = "<div class='muted'>未授权或服务未启动</div>";
+    statsGrid.innerHTML = "<div class='muted'>Unauthorized or service unavailable</div>";
     return;
   }
   const data = await res.json();
   const stats = data.stats || {};
   statsGrid.innerHTML = "";
   const cards = [
-    { label: "用户数", value: stats.users || 0 },
-    { label: "歌曲总数", value: stats.songs || 0 },
-    { label: "可复用库存", value: stats.reusable_songs || 0 },
-    { label: "反馈数", value: stats.feedback || 0 },
-    { label: "收藏数", value: stats.favorites || 0 },
-    { label: "标签总数", value: stats.tags_total || 0 },
-    { label: "启用标签", value: stats.tags_active || 0 }
+    { label: "Users", value: stats.users || 0 },
+    { label: "Songs", value: stats.songs || 0 },
+    { label: "Reusable", value: stats.reusable_songs || 0 },
+    { label: "Feedback", value: stats.feedback || 0 },
+    { label: "Favorites", value: stats.favorites || 0 },
+    { label: "Tags", value: stats.tags_total || 0 },
+    { label: "Active Tags", value: stats.tags_active || 0 }
   ];
   for (const card of cards) {
     const div = document.createElement("div");

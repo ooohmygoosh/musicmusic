@@ -1,57 +1,57 @@
-﻿<!doctype html>
-<html lang="zh-CN">
+<!doctype html>
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>天谱乐 后台管理</title>
+    <title>Admin Dashboard</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="page">
       <header>
-        <h1>天谱乐 后台管理</h1>
+        <h1>Admin Dashboard</h1>
         <nav class="nav">
-          <a href="/" class="nav-link is-active">概览</a>
-          <a href="/songs.html" class="nav-link">歌曲库</a>
-          <a href="/users.html" class="nav-link">用户数据</a>
-          <a href="/tags.html" class="nav-link">标签管理</a>
+          <a href="/" class="nav-link is-active">Overview</a>
+          <a href="/songs.html" class="nav-link">Song Library</a>
+          <a href="/users.html" class="nav-link">Users</a>
+          <a href="/tags.html" class="nav-link">Tags</a>
         </nav>
         <div class="token">
           <input id="token" type="password" placeholder="Admin Token" />
-          <button id="saveToken">保存</button>
+          <button id="saveToken">Save</button>
         </div>
       </header>
 
       <section class="card">
-        <h2>数据概览</h2>
+        <h2>Overview</h2>
         <div id="statsGrid" class="stats-grid"></div>
         <div class="quick-links">
           <a class="quick-card" href="/songs.html">
-            <div class="quick-title">歌曲库管理</div>
-            <div class="quick-sub">查看库存歌曲、复用次数与上下线状态</div>
+            <div class="quick-title">Song Library</div>
+            <div class="quick-sub">Inventory, reuse stats, availability, batch delete.</div>
           </a>
           <a class="quick-card" href="/users.html">
-            <div class="quick-title">用户数据</div>
-            <div class="quick-sub">查看用户画像、收藏与生成记录</div>
+            <div class="quick-title">Users</div>
+            <div class="quick-sub">Profiles, queues, created songs, earnings summary.</div>
           </a>
           <a class="quick-card" href="/tags.html">
-            <div class="quick-title">标签管理</div>
-            <div class="quick-sub">维护标准标签池，控制推荐基础素材</div>
+            <div class="quick-title">Tags</div>
+            <div class="quick-sub">Tag pool, blacklist, moderation controls.</div>
           </a>
         </div>
         <div class="charts">
           <div>
-            <h3>标签使用 Top10</h3>
+            <h3>Top Tags</h3>
             <div id="tagUsage" class="bar-list"></div>
           </div>
           <div>
-            <h3>用户行为分布</h3>
+            <h3>Feedback Actions</h3>
             <div id="feedbackSummary" class="bar-list"></div>
           </div>
         </div>
       </section>
     </div>
 
-    <script src="./app.js"></script>
+    <script src="./app.js?v=20260320-2"></script>
   </body>
 </html>
