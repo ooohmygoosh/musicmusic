@@ -11,7 +11,7 @@ const TPY_API_KEY = process.env.TPY_API_KEY || "";
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "DeepSeek-V3.2-Exp";
-const DEEPSEEK_ENABLED = process.env.DEEPSEEK_ENABLED === "true";
+const DEEPSEEK_ENABLED = process.env.DEEPSEEK_ENABLED !== "false";
 const COVER_IMAGE_API_KEY = process.env.COVER_IMAGE_API_KEY || "";
 const COVER_IMAGE_BASE_URL = (process.env.COVER_IMAGE_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3").replace(/\/$/, "");
 const COVER_IMAGE_MODEL = process.env.COVER_IMAGE_MODEL || "doubao-seedream-4-0-250828";
@@ -20,15 +20,23 @@ const COVER_IMAGE_ENABLED = process.env.COVER_IMAGE_ENABLED === "true";
 const CREATOR_EARNING_PER_DELIVERY = Number(process.env.CREATOR_EARNING_PER_DELIVERY || 0.02);
 const CREATOR_EARNING_PER_LIKE = Number(process.env.CREATOR_EARNING_PER_LIKE || 0.2);
 
-const DEFAULT_TAG_WEIGHT = 0.3;
-const SELECTED_TAG_WEIGHT = 0.7;
-const COEF_FAVORITE = 0.15;
-const COEF_SKIP_EARLY = 0.2;
-const COEF_SKIP_LATE = 0.1;
-const COEF_COMPLETE = 0.05;
-const NORMALIZE_EVERY = 10;
+const MIN_RAW_SCORE = Number(process.env.MIN_RAW_SCORE || -50);
+const DEFAULT_TAG_RAW_SCORE = Number(process.env.DEFAULT_TAG_RAW_SCORE || 0);
+const SELECTED_TAG_RAW_SCORE = Number(process.env.SELECTED_TAG_RAW_SCORE || 18);
+const ANCHOR_TAG_RAW_SCORE = Number(process.env.ANCHOR_TAG_RAW_SCORE || 26);
+const ANCHOR_FLOOR = Number(process.env.ANCHOR_FLOOR || 0.3);
+const SOFTMAX_TEMPERATURE = Number(process.env.SOFTMAX_TEMPERATURE || 12);
+const FAVORITE_RAW_DELTA = Number(process.env.FAVORITE_RAW_DELTA || 11);
+const COMPLETE_RAW_DELTA = Number(process.env.COMPLETE_RAW_DELTA || 3.5);
+const SKIP_EARLY_RAW_DELTA = Number(process.env.SKIP_EARLY_RAW_DELTA || -8);
+const SKIP_LATE_RAW_DELTA = Number(process.env.SKIP_LATE_RAW_DELTA || -4);
+const MANUAL_WEIGHT_SCALE = Number(process.env.MANUAL_WEIGHT_SCALE || 36);
+const NORMAL_QUEUE_TARGET = Number(process.env.NORMAL_QUEUE_TARGET || 2);
+const EXPLORE_QUEUE_TARGET = Number(process.env.EXPLORE_QUEUE_TARGET || 5);
 const MAX_TAGS_TOTAL = 6;
-const MAX_PER_TYPE = 2;
+const MAX_CORE_TAGS = 3;
+const MAX_SUPPORT_TAGS = 2;
+const MAX_PER_TYPE = 1;
 const REUSE_SIMILARITY_MIN = Number(process.env.REUSE_SIMILARITY_MIN || 0.38);
 const PREFETCH_REUSE_SIMILARITY_MIN = Number(process.env.PREFETCH_REUSE_SIMILARITY_MIN || 0.28);
 const INIT_REUSE_SIMILARITY_MIN = Number(process.env.INIT_REUSE_SIMILARITY_MIN || 0.3);
@@ -89,6 +97,29 @@ async function ensureRuntimeSchema() {
     WHERE account_id IS NULL AND device_id IS NOT NULL
   `);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_account_id_unique ON users(account_id) WHERE account_id IS NOT NULL`);
+  await query(`
+    ALTER TABLE user_tags
+      ADD COLUMN IF NOT EXISTS raw_score NUMERIC DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS softmax_weight NUMERIC DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS is_anchor BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS anchor_floor NUMERIC DEFAULT 0.3
+  `);
+  await query(`
+    UPDATE user_tags
+    SET raw_score = COALESCE(raw_score, ROUND(COALESCE(weight, 0) * 36)),
+        softmax_weight = COALESCE(softmax_weight, COALESCE(weight, 0)),
+        anchor_floor = COALESCE(anchor_floor, 0.3)
+  `);
+  await query(`
+    ALTER TABLE generation_jobs
+      ADD COLUMN IF NOT EXISTS strategy_mode TEXT,
+      ADD COLUMN IF NOT EXISTS exploration_level TEXT,
+      ADD COLUMN IF NOT EXISTS prompt_debug JSONB
+  `);
+  await query(`
+    ALTER TABLE user_song_queue
+      ADD COLUMN IF NOT EXISTS queue_bucket TEXT
+  `);
 }
 
 function requireAdmin(request, reply) {
@@ -116,7 +147,7 @@ function normalizeWordList(values) {
   const raw = Array.isArray(values)
     ? values
     : String(values || "")
-      .split(/[\n,，;；]+/)
+      .split(/[\n,\uFF0C;\uFF1B]+/)
       .map((value) => value.trim());
   return [...new Set(raw.map((value) => String(value || "").trim()).filter(Boolean))];
 }
@@ -701,17 +732,25 @@ app.post("/init-tags", async (request, reply) => {
   }
 
   await ensureUserTagWeights(user_id);
-
   await query(
-    "UPDATE user_tags SET weight = $1, initial_weight = $1, update_count = 0, last_updated = NOW() WHERE user_id = $2 AND tag_id = ANY($3)",
-    [SELECTED_TAG_WEIGHT, user_id, allowedTagIds]
+    "UPDATE user_tags SET is_active = false, is_anchor = false, weight = 0, softmax_weight = 0, raw_score = $1, update_count = 0, last_updated = NOW() WHERE user_id = $2",
+    [MIN_RAW_SCORE, Number(user_id)]
   );
+
+  const anchorTagId = allowedTagIds[0];
+  for (const tagId of allowedTagIds) {
+    const isAnchor = Number(tagId) === Number(anchorTagId);
+    await query(
+      "UPDATE user_tags SET raw_score = $1, initial_weight = $2, softmax_weight = 0, weight = 0, update_count = 0, last_updated = NOW(), is_active = true, is_anchor = $3, anchor_floor = $4 WHERE user_id = $5 AND tag_id = $6",
+      [isAnchor ? ANCHOR_TAG_RAW_SCORE : SELECTED_TAG_RAW_SCORE, isAnchor ? ANCHOR_FLOOR : 0, isAnchor, ANCHOR_FLOOR, Number(user_id), Number(tagId)]
+    );
+  }
 
   await normalizeUserWeights(user_id);
 
   const seededSongs = await findReusableSongs(user_id, allowedTagIds, 4, INIT_REUSE_SIMILARITY_MIN);
   for (const song of seededSongs) {
-    await queueSongForUser(user_id, song.id, null, 'seeded');
+    await queueSongForUser(user_id, song.id, null, 'seeded', { queueBucket: 'stable' });
     await query("UPDATE songs SET reuse_count = reuse_count + 1 WHERE id = $1", [Number(song.id)]);
   }
 
@@ -759,9 +798,14 @@ app.post("/user-tags", async (request, reply) => {
   }
 
   await ensureUserTagWeights(user_id);
+  const anchorLookup = await query(
+    "SELECT tag_id FROM user_tags WHERE user_id = $1 AND COALESCE(is_active, true) = true AND COALESCE(is_anchor, false) = true LIMIT 1",
+    [Number(user_id)]
+  );
+  const shouldAnchor = anchorLookup.rows.length === 0;
   await query(
-    "UPDATE user_tags SET weight = $1, initial_weight = $1, update_count = 0, last_updated = NOW(), is_active = true WHERE user_id = $2 AND tag_id = $3",
-    [SELECTED_TAG_WEIGHT, user_id, tag.id]
+    "UPDATE user_tags SET raw_score = $1, initial_weight = $2, softmax_weight = 0, weight = 0, update_count = 0, last_updated = NOW(), is_active = true, is_anchor = $3, anchor_floor = $4 WHERE user_id = $5 AND tag_id = $6",
+    [shouldAnchor ? ANCHOR_TAG_RAW_SCORE : SELECTED_TAG_RAW_SCORE, shouldAnchor ? ANCHOR_FLOOR : 0, shouldAnchor, ANCHOR_FLOOR, Number(user_id), Number(tag.id)]
   );
   await normalizeUserWeights(user_id);
 
@@ -775,7 +819,7 @@ app.get("/user-tags", async (request, reply) => {
     return;
   }
   const { rows } = await query(
-    "SELECT t.id AS tag_id, t.name, t.type, ut.weight, COALESCE(ut.is_active, true) AS is_active FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 ORDER BY ut.weight DESC",
+    "SELECT t.id AS tag_id, t.name, t.type, ut.weight, COALESCE(ut.softmax_weight, ut.weight, 0) AS softmax_weight, COALESCE(ut.raw_score, 0) AS raw_score, COALESCE(ut.is_anchor, false) AS is_anchor, COALESCE(ut.anchor_floor, 0) AS anchor_floor, COALESCE(ut.is_active, true) AS is_active FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 ORDER BY COALESCE(ut.is_anchor, false) DESC, COALESCE(ut.softmax_weight, ut.weight, 0) DESC, COALESCE(ut.raw_score, 0) DESC",
     [Number(user_id)]
   );
   return { items: rows };
@@ -788,30 +832,60 @@ app.post("/user-tags/remove", async (request, reply) => {
     return;
   }
   await query(
-    "UPDATE user_tags SET is_active = false, weight = 0, last_updated = NOW() WHERE user_id = $1 AND tag_id = $2",
-    [Number(user_id), Number(tag_id)]
+    "UPDATE user_tags SET is_active = false, is_anchor = false, weight = 0, softmax_weight = 0, raw_score = $1, last_updated = NOW() WHERE user_id = $2 AND tag_id = $3",
+    [MIN_RAW_SCORE, Number(user_id), Number(tag_id)]
   );
+  await normalizeUserWeights(user_id);
   return { ok: true };
 });
 
 app.post("/user-tags/weight", async (request, reply) => {
-  const { user_id, tag_id, weight } = request.body || {};
+  const { user_id, tag_id, weight, is_anchor } = request.body || {};
   const parsedWeight = Number(weight);
   if (!user_id || !tag_id || !Number.isFinite(parsedWeight)) {
     reply.code(400).send({ error: "user_id, tag_id, weight required" });
     return;
   }
-  const clamped = Math.max(0, Math.min(1, parsedWeight));
-  const isActive = clamped > 0;
-  const { rows } = await query(
-    "UPDATE user_tags SET weight = $1, is_active = $2, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4 RETURNING user_id, tag_id, weight, is_active, last_updated",
-    [clamped, isActive, Number(user_id), Number(tag_id)]
+
+  await ensureUserTagWeights(user_id);
+  const currentLookup = await query(
+    "SELECT tag_id, COALESCE(raw_score, 0) AS raw_score, COALESCE(is_anchor, false) AS is_anchor FROM user_tags WHERE user_id = $1 AND tag_id = $2 LIMIT 1",
+    [Number(user_id), Number(tag_id)]
   );
-  if (!rows[0]) {
+  const current = currentLookup.rows[0];
+  if (!current) {
     reply.code(404).send({ error: "user tag relation not found" });
     return;
   }
-  return { ok: true, item: rows[0] };
+
+  const clampedWeight = clampNumber(parsedWeight, 0, 1);
+  if (clampedWeight <= 0) {
+    await query(
+      "UPDATE user_tags SET is_active = false, is_anchor = false, weight = 0, softmax_weight = 0, raw_score = $1, update_count = update_count + 1, last_updated = NOW() WHERE user_id = $2 AND tag_id = $3",
+      [MIN_RAW_SCORE, Number(user_id), Number(tag_id)]
+    );
+    await normalizeUserWeights(user_id);
+    return { ok: true, item: null };
+  }
+
+  const peers = await query(
+    "SELECT COALESCE(raw_score, 0) AS raw_score FROM user_tags WHERE user_id = $1 AND tag_id <> $2 AND COALESCE(is_active, true) = true",
+    [Number(user_id), Number(tag_id)]
+  );
+  const targetRawScore = estimateRawScoreFromShare(clampedWeight, peers.rows.map((row) => Number(row.raw_score || 0)));
+  const nextAnchor = typeof is_anchor === "boolean" ? Boolean(is_anchor) : (clampedWeight >= ANCHOR_FLOOR ? true : Boolean(current.is_anchor));
+
+  await query(
+    "UPDATE user_tags SET raw_score = $1, is_active = true, is_anchor = $2, anchor_floor = $3, update_count = update_count + 1, last_updated = NOW() WHERE user_id = $4 AND tag_id = $5",
+    [targetRawScore, nextAnchor, nextAnchor ? ANCHOR_FLOOR : 0, Number(user_id), Number(tag_id)]
+  );
+  await normalizeUserWeights(user_id);
+
+  const { rows } = await query(
+    "SELECT user_id, tag_id, weight, softmax_weight, raw_score, is_anchor, anchor_floor, is_active, last_updated FROM user_tags WHERE user_id = $1 AND tag_id = $2 LIMIT 1",
+    [Number(user_id), Number(tag_id)]
+  );
+  return { ok: true, item: rows[0] || null };
 });
 
 app.get("/my-created-songs", async (request, reply) => {
@@ -899,178 +973,330 @@ app.post("/playlists/:id/remove", async (request, reply) => {
   return { ok: true };
 });
 
-function pickTagsWeighted(tags, maxCount, weightKey = "weight") {
-  const pool = [...tags];
-  const picked = [];
-  const total = () => pool.reduce((sum, t) => sum + Number(t[weightKey] || 0), 0);
-  while (pool.length > 0 && picked.length < maxCount) {
-    const r = Math.random() * total();
-    let acc = 0;
-    let idx = 0;
-    for (; idx < pool.length; idx += 1) {
-      acc += Number(pool[idx][weightKey] || 0);
-      if (acc >= r) break;
-    }
-    const chosen = pool.splice(idx, 1)[0];
-    picked.push(chosen);
-  }
-  return picked;
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, Number(value || 0)));
 }
 
-async function getRecentTagIds(userId, limit = 5) {
+function roundWeight(value) {
+  return Number(Number(value || 0).toFixed(4));
+}
+
+function clampRawScore(value) {
+  return Math.max(MIN_RAW_SCORE, Number(Number(value || 0).toFixed(3)));
+}
+
+function average(values) {
+  if (!Array.isArray(values) || values.length === 0) return DEFAULT_TAG_RAW_SCORE;
+  return values.reduce((sum, value) => sum + Number(value || 0), 0) / values.length;
+}
+
+function lowerName(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function parseJsonObject(content) {
+  const raw = String(content || "").trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function tagsConflict(a, b) {
+  const left = lowerName(a?.name);
+  const right = lowerName(b?.name);
+  if (!left || !right || left === right) return false;
+  const conflicts = [
+    ["\u52a9\u7720", "\u5065\u8eab\u623f"],
+    ["\u51a5\u60f3", "\u786c\u6838"],
+    ["\u5b89\u9759", "\u70b8\u88c2"],
+    ["\u94a2\u7434\u72ec\u594f", "\u91cd\u91d1\u5c5e"],
+    ["lofi", "180bpm"]
+  ];
+  return conflicts.some((pair) => pair.includes(left) && pair.includes(right));
+}
+
+async function getRecentTagIds(userId, limit = 8) {
   const { rows } = await query(
-    "SELECT st.tag_id FROM songs s JOIN song_tags st ON st.song_id = s.id WHERE s.user_id = $1 ORDER BY s.created_at DESC LIMIT $2",
-    [userId, limit]
+    "SELECT DISTINCT st.tag_id FROM (SELECT song_id FROM user_song_queue WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2) q JOIN song_tags st ON st.song_id = q.song_id",
+    [Number(userId), limit]
   );
-  return new Set(rows.map((row) => row.tag_id));
+  return new Set(rows.map((row) => Number(row.tag_id)).filter(Boolean));
+}
+
+async function getRecentlyAdjustedTagIds(userId, minutes = 20) {
+  const { rows } = await query(
+    "SELECT tag_id FROM user_tags WHERE user_id = $1 AND COALESCE(is_active, true) = true AND COALESCE(update_count, 0) > 0 AND last_updated >= NOW() - ($2 * INTERVAL '1 minute') ORDER BY last_updated DESC LIMIT 12",
+    [Number(userId), Number(minutes)]
+  );
+  return new Set(rows.map((row) => Number(row.tag_id)).filter(Boolean));
+}
+
+async function getRecentFeedbackActions(userId, limit = 6) {
+  const { rows } = await query(
+    "SELECT action FROM feedback WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2",
+    [Number(userId), Number(limit)]
+  );
+  return rows.map((row) => String(row.action || "").toLowerCase()).filter(Boolean);
 }
 
 async function ensureUserTagWeights(userId) {
-  const { rows } = await query(
-    "SELECT id FROM tags WHERE is_active = true ORDER BY id"
-  );
+  const { rows } = await query("SELECT id FROM tags WHERE is_active = true ORDER BY id");
   if (rows.length === 0) return;
-  const tagIds = rows.map((r) => r.id);
+  const tagIds = rows.map((row) => Number(row.id)).filter(Boolean);
 
   await query(
-    "INSERT INTO user_tags (user_id, tag_id, weight, initial_weight) SELECT $1, t.id, $2, $2 FROM tags t WHERE t.is_active = true ON CONFLICT (user_id, tag_id) DO NOTHING",
-    [userId, DEFAULT_TAG_WEIGHT]
+    "INSERT INTO user_tags (user_id, tag_id, weight, initial_weight, raw_score, softmax_weight, is_anchor, anchor_floor) SELECT $1, t.id, 0, 0, $2, 0, false, $3 FROM tags t WHERE t.is_active = true ON CONFLICT (user_id, tag_id) DO NOTHING",
+    [Number(userId), DEFAULT_TAG_RAW_SCORE, ANCHOR_FLOOR]
   );
 
   await query(
-    "UPDATE user_tags SET is_active = false WHERE user_id = $1 AND tag_id <> ALL($2::int[])",
-    [userId, tagIds]
+    "UPDATE user_tags SET is_active = false, is_anchor = false, weight = 0, softmax_weight = 0 WHERE user_id = $1 AND tag_id <> ALL($2::int[])",
+    [Number(userId), tagIds]
   );
 }
-
 async function normalizeUserWeights(userId) {
   const { rows } = await query(
-    "SELECT tag_id, weight FROM user_tags WHERE user_id = $1 AND COALESCE(is_active, true) = true",
-    [userId]
+    "SELECT tag_id, COALESCE(raw_score, 0) AS raw_score, COALESCE(is_anchor, false) AS is_anchor, COALESCE(anchor_floor, $2) AS anchor_floor FROM user_tags WHERE user_id = $1 AND COALESCE(is_active, true) = true ORDER BY COALESCE(is_anchor, false) DESC, COALESCE(raw_score, 0) DESC, tag_id ASC",
+    [Number(userId), ANCHOR_FLOOR]
   );
   if (rows.length === 0) return;
-  const total = rows.reduce((sum, row) => sum + Number(row.weight || 0), 0);
-  if (total <= 0) return;
 
-  for (const row of rows) {
-    const normalized = Number(row.weight || 0) / total;
+  const working = rows.map((row) => ({
+    tag_id: Number(row.tag_id),
+    raw_score: clampRawScore(row.raw_score),
+    is_anchor: Boolean(row.is_anchor),
+    anchor_floor: clampNumber(row.anchor_floor || ANCHOR_FLOOR, 0, 0.8)
+  }));
+
+  const primaryAnchor = working.find((row) => row.is_anchor) || working[0];
+  const anchorTagId = primaryAnchor ? Number(primaryAnchor.tag_id) : null;
+  const maxRaw = Math.max(...working.map((row) => Number(row.raw_score || 0)));
+  const scores = working.map((row) => Math.exp((Number(row.raw_score || 0) - maxRaw) / SOFTMAX_TEMPERATURE));
+  const total = scores.reduce((sum, value) => sum + value, 0) || 1;
+  const shares = scores.map((value) => value / total);
+
+  if (anchorTagId && working.length > 1) {
+    const anchorIndex = working.findIndex((row) => Number(row.tag_id) === anchorTagId);
+    const floor = clampNumber(primaryAnchor.anchor_floor || ANCHOR_FLOOR, 0, 0.8);
+    if (anchorIndex >= 0 && shares[anchorIndex] < floor) {
+      const otherTotal = shares.reduce((sum, value, index) => index === anchorIndex ? sum : sum + value, 0);
+      const scale = otherTotal > 0 ? (1 - floor) / otherTotal : 0;
+      for (let index = 0; index < shares.length; index += 1) {
+        shares[index] = index === anchorIndex ? floor : shares[index] * scale;
+      }
+    }
+  }
+
+  for (let index = 0; index < working.length; index += 1) {
+    const row = working[index];
     await query(
-      "UPDATE user_tags SET weight = $1, last_updated = NOW() WHERE user_id = $2 AND tag_id = $3",
-      [normalized, userId, row.tag_id]
+      "UPDATE user_tags SET raw_score = $1, weight = $2, softmax_weight = $2, is_anchor = $3, anchor_floor = $4, last_updated = NOW() WHERE user_id = $5 AND tag_id = $6",
+      [
+        clampRawScore(row.raw_score),
+        roundWeight(shares[index]),
+        anchorTagId ? Number(row.tag_id) === anchorTagId : index === 0,
+        Number(row.tag_id) === anchorTagId ? clampNumber(primaryAnchor.anchor_floor || ANCHOR_FLOOR, 0, 0.8) : 0,
+        Number(userId),
+        Number(row.tag_id)
+      ]
     );
   }
 }
 
-async function buildPrompt(userId) {
-  await ensureUserTagWeights(userId);
-  const { rows } = await query(
-    "SELECT t.id, t.name, t.type, ut.weight FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true AND COALESCE(ut.is_active, true) = true",
-    [userId]
-  );
-  if (rows.length === 0) {
-    return {
-      prompt: "",
-      tagIds: [],
-      base_prompt: "",
-      title_hint: "",
-      cover_hint: ""
-    };
-  }
+function estimateRawScoreFromShare(targetShare, peerRawScores = []) {
+  const safeShare = clampNumber(targetShare, 0.01, 0.99);
+  const peerCount = Math.max(1, peerRawScores.length);
+  const baseline = average(peerRawScores);
+  const otherShare = Math.max(0.01, 1 - safeShare);
+  const ratio = safeShare / (otherShare / peerCount);
+  return clampRawScore(baseline + Math.log(ratio) * SOFTMAX_TEMPERATURE);
+}
 
-  const recentTagIds = await getRecentTagIds(userId, 6);
-  const sorted = [...rows].sort((a, b) => b.weight - a.weight);
-  const fresh = sorted.filter((tag) => !recentTagIds.has(tag.id));
-  const recent = sorted.filter((tag) => recentTagIds.has(tag.id));
-  const chosen = [];
-  const byType = new Map();
-  const tryPick = (list) => {
-    for (const tag of list) {
-      const count = byType.get(tag.type) || 0;
-      if (count >= MAX_PER_TYPE) continue;
-      if (chosen.length >= MAX_TAGS_TOTAL) break;
-      chosen.push(tag);
-      byType.set(tag.type, count + 1);
-    }
+function describeWeightedTag(tag) {
+  return `${tag.name}(${Math.round(Number(tag.softmax_weight || 0) * 100)}%)`;
+}
+
+function determineStrategy(requestedMode, skipStreak, recentActions, adjustedCount) {
+  const mode = String(requestedMode || "").trim().toLowerCase();
+  const cleanSkipStreak = Math.max(0, Number(skipStreak || 0));
+  const actionWindow = Array.isArray(recentActions) ? recentActions.slice(0, 3) : [];
+  const completedRun = actionWindow.length === 3 && actionWindow.every((action) => action === "complete" || action === "like");
+
+  if (cleanSkipStreak >= 2) return { strategyMode: "explore", explorationLevel: "deep" };
+  if (mode === "stable") return { strategyMode: "stable", explorationLevel: "none" };
+  if (mode === "explore" && adjustedCount > 0) return { strategyMode: "explore", explorationLevel: "medium" };
+  if (mode === "explore" && completedRun) return { strategyMode: "explore", explorationLevel: "light" };
+  if (adjustedCount > 0) return { strategyMode: "explore", explorationLevel: "medium" };
+  if (completedRun) return { strategyMode: "explore", explorationLevel: "light" };
+  return { strategyMode: "stable", explorationLevel: "none" };
+}
+
+function chooseTagPlan(tags, options = {}) {
+  const recentTagIds = options.recentTagIds || new Set();
+  const adjustedTagIds = options.adjustedTagIds || new Set();
+  const strategyMode = options.strategyMode || "stable";
+  const explorationLevel = options.explorationLevel || "none";
+  const ordered = [...tags].sort((a, b) => Number(b.softmax_weight || 0) - Number(a.softmax_weight || 0) || Number(b.raw_score || 0) - Number(a.raw_score || 0));
+  const anchor = ordered.find((tag) => tag.is_anchor) || ordered[0] || null;
+  if (!anchor) return { anchor: null, coreTags: [], supportTags: [], strategyMode, explorationLevel };
+
+  const remaining = ordered.filter((tag) => Number(tag.id) !== Number(anchor.id));
+  const selectedIds = new Set([Number(anchor.id)]);
+  const coreTags = [];
+  const supportTags = [];
+  const coreTypes = new Set(anchor.type ? [anchor.type] : []);
+  const stableScore = (tag) => Number(tag.softmax_weight || 0) * 1.15 + (recentTagIds.has(Number(tag.id)) ? 0 : 0.18) + (adjustedTagIds.has(Number(tag.id)) ? 0.12 : 0);
+  const exploreScore = (tag) => (1 - Number(tag.softmax_weight || 0)) + (recentTagIds.has(Number(tag.id)) ? 0 : 0.25) + (adjustedTagIds.has(Number(tag.id)) ? 0.3 : 0) - (tag.type && anchor.type && tag.type === anchor.type ? 0.45 : 0);
+  const addTag = (bucket, tag, enforceType) => {
+    if (!tag || selectedIds.has(Number(tag.id))) return false;
+    if (enforceType && tag.type && coreTypes.has(tag.type)) return false;
+    if ([anchor, ...coreTags].some((picked) => tagsConflict(picked, tag))) return false;
+    selectedIds.add(Number(tag.id));
+    bucket.push(tag);
+    if (bucket === coreTags && tag.type) coreTypes.add(tag.type);
+    return true;
   };
 
-  tryPick(fresh);
-  if (chosen.length < MAX_TAGS_TOTAL) {
-    tryPick(recent);
+  const desiredCoreCount = strategyMode === "stable" ? MAX_CORE_TAGS : explorationLevel === "deep" ? 2 : 2;
+  const primaryCorePool = [...remaining].sort((a, b) => ((strategyMode === "explore" ? exploreScore(b) - exploreScore(a) : stableScore(b) - stableScore(a)) || Number(b.softmax_weight || 0) - Number(a.softmax_weight || 0)));
+  for (const tag of primaryCorePool) {
+    if (coreTags.length >= desiredCoreCount) break;
+    addTag(coreTags, tag, true);
   }
 
-  const remaining = sorted.filter((tag) => !chosen.find((c) => c.id === tag.id));
-  if (chosen.length < Math.min(MAX_TAGS_TOTAL, sorted.length) && remaining.length > 0) {
-    const need = Math.min(MAX_TAGS_TOTAL - chosen.length, remaining.length);
-    const explorePool = remaining.map((tag) => ({
-      ...tag,
-      exploreWeight: Math.max(0.05, 1 - Number(tag.weight || 0))
-    }));
-    const explore = pickTagsWeighted(explorePool, need, "exploreWeight");
-    for (const tag of explore) {
-      if (chosen.length >= MAX_TAGS_TOTAL) break;
-      const count = byType.get(tag.type) || 0;
-      if (count >= MAX_PER_TYPE) continue;
-      chosen.push(tag);
-      byType.set(tag.type, count + 1);
+  if (coreTags.length < Math.min(2, desiredCoreCount)) {
+    const stablePool = [...remaining].sort((a, b) => stableScore(b) - stableScore(a) || Number(b.softmax_weight || 0) - Number(a.softmax_weight || 0));
+    for (const tag of stablePool) {
+      if (coreTags.length >= Math.min(2, desiredCoreCount)) break;
+      addTag(coreTags, tag, true);
     }
   }
 
-  const grouped = new Map();
-  for (const tag of chosen) {
-    const list = grouped.get(tag.type) || [];
-    list.push(tag.name);
-    grouped.set(tag.type, list);
+  const supportPool = [...remaining]
+    .filter((tag) => !selectedIds.has(Number(tag.id)))
+    .sort((a, b) => stableScore(b) - stableScore(a) || Number(b.softmax_weight || 0) - Number(a.softmax_weight || 0));
+  for (const tag of supportPool) {
+    if (supportTags.length >= MAX_SUPPORT_TAGS || 1 + coreTags.length + supportTags.length >= MAX_TAGS_TOTAL) break;
+    addTag(supportTags, tag, false);
   }
 
-  const parts = [];
-  for (const [type, list] of grouped.entries()) {
-    parts.push(`${type}: ${list.join(", ")}`);
+  return { anchor, coreTags, supportTags, strategyMode, explorationLevel };
+}
+
+function buildPromptBase(plan) {
+  const anchor = plan.anchor;
+  const coreTags = plan.coreTags || [];
+  const supportTags = plan.supportTags || [];
+  if (!anchor) return "";
+
+  const anchorLead = `Lead with ${anchor.name} as the absolute anchor. The whole song must stay centered on ${anchor.name} from start to finish, and close by reinforcing that anchor again.`;
+  const coreLine = coreTags.length > 0
+    ? `Core constraints: ${coreTags.map(describeWeightedTag).join(", ")}. Keep them clear, compatible, and musically coherent.`
+    : "Keep a single dominant anchor and avoid noisy or conflicting additions.";
+  const supportLine = supportTags.length > 0
+    ? `Weak support only: ${supportTags.map(describeWeightedTag).join(", ")}. Use them as texture and detail, not as the new center.`
+    : "Keep support elements restrained and use them only to improve depth, space, and replay value.";
+  const strategyLine = plan.strategyMode === "explore"
+    ? plan.explorationLevel === "deep"
+      ? `Deep exploration is allowed, but it still must not drift away from ${anchor.name}.`
+      : plan.explorationLevel === "medium"
+        ? "Use moderate exploration by moving recently boosted preferences into the core layer without losing control."
+        : "Use light exploration with a small fresh accent while preserving the anchor."
+    : "Stay in stable mode and prioritize precision over novelty.";
+
+  return [anchorLead, coreLine, supportLine, strategyLine].join(" ");
+}
+
+function buildFallbackHints(plan) {
+  const anchor = plan.anchor;
+  const leadCore = plan.coreTags?.[0] || null;
+  return {
+    title_hint: [anchor?.name, leadCore?.name].filter(Boolean).join(" 路 ").slice(0, 24),
+    cover_hint: [
+      anchor ? `${anchor.name} as the primary visual atmosphere` : "",
+      leadCore ? `with ${leadCore.name} as the supporting imagery` : "",
+      plan.supportTags?.length ? `plus light details from ${plan.supportTags.map((tag) => tag.name).join(", ")}` : ""
+    ].filter(Boolean).join(", ")
+  };
+}
+
+async function buildPrompt(userId, options = {}) {
+  await ensureUserTagWeights(userId);
+  await normalizeUserWeights(userId);
+  const { rows } = await query(
+    "SELECT t.id, t.name, t.type, ut.weight, COALESCE(ut.softmax_weight, ut.weight, 0) AS softmax_weight, COALESCE(ut.raw_score, 0) AS raw_score, COALESCE(ut.is_anchor, false) AS is_anchor, COALESCE(ut.anchor_floor, $2) AS anchor_floor FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true AND COALESCE(ut.is_active, true) = true ORDER BY COALESCE(ut.softmax_weight, ut.weight, 0) DESC, COALESCE(ut.raw_score, 0) DESC",
+    [Number(userId), ANCHOR_FLOOR]
+  );
+  if (rows.length === 0) {
+    return { prompt: "", tagIds: [], base_prompt: "", title_hint: "", cover_hint: "", strategy_mode: "stable", exploration_level: "none", prompt_debug: {} };
   }
-  const tagIds = chosen.map((tag) => tag.id);
-  const basePrompt = parts.join(", ");
-  const optimized = await optimizePromptWithDeepSeek(chosen, basePrompt);
+
+  const [recentTagIds, adjustedTagIds, recentActions] = await Promise.all([
+    getRecentTagIds(userId, 8),
+    getRecentlyAdjustedTagIds(userId, 20),
+    getRecentFeedbackActions(userId, 6)
+  ]);
+
+  const strategy = determineStrategy(options.requestedMode, options.skipStreak, recentActions, adjustedTagIds.size);
+  const plan = chooseTagPlan(rows, { recentTagIds, adjustedTagIds, strategyMode: strategy.strategyMode, explorationLevel: strategy.explorationLevel });
+  const tagIds = [plan.anchor, ...(plan.coreTags || []), ...(plan.supportTags || [])].filter(Boolean).map((tag) => Number(tag.id));
+  const basePrompt = buildPromptBase(plan);
+  const fallbackHints = buildFallbackHints(plan);
+  const optimized = await optimizePromptWithDeepSeek(plan, basePrompt);
+
   return {
     prompt: optimized.prompt || basePrompt,
     tagIds,
     base_prompt: basePrompt,
-    title_hint: optimized.title_hint || "",
-    cover_hint: optimized.cover_hint || ""
+    title_hint: optimized.title_hint || fallbackHints.title_hint || "",
+    cover_hint: optimized.cover_hint || fallbackHints.cover_hint || "",
+    strategy_mode: strategy.strategyMode,
+    exploration_level: strategy.explorationLevel,
+    prompt_debug: {
+      strategy_mode: strategy.strategyMode,
+      exploration_level: strategy.explorationLevel,
+      anchor: plan.anchor ? { id: plan.anchor.id, name: plan.anchor.name, weight: Number(plan.anchor.softmax_weight || 0), raw_score: Number(plan.anchor.raw_score || 0) } : null,
+      core_tags: (plan.coreTags || []).map((tag) => ({ id: tag.id, name: tag.name, type: tag.type, weight: Number(tag.softmax_weight || 0), raw_score: Number(tag.raw_score || 0) })),
+      support_tags: (plan.supportTags || []).map((tag) => ({ id: tag.id, name: tag.name, type: tag.type, weight: Number(tag.softmax_weight || 0), raw_score: Number(tag.raw_score || 0) })),
+      recent_tag_ids: Array.from(recentTagIds),
+      adjusted_tag_ids: Array.from(adjustedTagIds),
+      recent_actions: recentActions
+    }
   };
 }
 
-async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
-  if (!DEEPSEEK_ENABLED || !DEEPSEEK_API_KEY || !Array.isArray(chosenTags) || chosenTags.length === 0) {
+async function optimizePromptWithDeepSeek(plan, basePrompt) {
+  if (!DEEPSEEK_ENABLED || !DEEPSEEK_API_KEY || !plan?.anchor || !String(basePrompt || "").trim()) {
     return { prompt: basePrompt, title_hint: "", cover_hint: "" };
   }
 
-  const tagSummary = chosenTags.map((tag) => ({
-    type: tag.type,
-    name: tag.name,
-    weight: Number(tag.weight || 0)
-  }));
-
-  const groupedGuide = Object.entries(
-    chosenTags.reduce((acc, tag) => {
-      if (!acc[tag.type]) acc[tag.type] = [];
-      acc[tag.type].push(tag.name);
-      return acc;
-    }, {})
-  ).map(([type, names]) => ({
-    type,
-    tags: names,
-    usage: PROMPT_GUIDE[type] || "Add only music-generation-relevant details"
-  }));
+  const payload = {
+    task: "Generate a concise music prompt from anchor, core constraints, weak support tags, and exploration level.",
+    product_requirements: DEEPSEEK_PRODUCT_REQUIREMENTS,
+    strategy_mode: plan.strategyMode,
+    exploration_level: plan.explorationLevel,
+    anchor: plan.anchor ? { type: plan.anchor.type, name: plan.anchor.name, weight: Number(plan.anchor.softmax_weight || 0), raw_score: Number(plan.anchor.raw_score || 0) } : null,
+    core_tags: (plan.coreTags || []).map((tag) => ({ type: tag.type, name: tag.name, weight: Number(tag.softmax_weight || 0), raw_score: Number(tag.raw_score || 0), usage: PROMPT_GUIDE[tag.type] || "Keep it musically actionable" })),
+    support_tags: (plan.supportTags || []).map((tag) => ({ type: tag.type, name: tag.name, weight: Number(tag.softmax_weight || 0), raw_score: Number(tag.raw_score || 0), usage: PROMPT_GUIDE[tag.type] || "Keep it musically actionable" })),
+    base_prompt: basePrompt,
+    output_schema: {
+      prompt: "1-3 sentences. Start with the anchor, put core constraints in the middle, keep support tags late, and end by reinforcing the anchor.",
+      title_hint: "Short natural song title suggestion.",
+      cover_hint: "Short cover-art direction."
+    }
+  };
 
   try {
-    app.log.info(
-      {
-        model: DEEPSEEK_MODEL,
-        base_prompt: basePrompt,
-        tags: tagSummary
-      },
-      "deepseek prompt optimization started"
-    );
-
+    app.log.info({ model: DEEPSEEK_MODEL, payload }, "deepseek prompt optimization started");
     const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
@@ -1079,52 +1305,24 @@ async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
       },
       body: JSON.stringify({
         model: DEEPSEEK_MODEL,
-        temperature: 0.7,
+        temperature: plan.strategyMode === "explore" ? 0.85 : 0.6,
         response_format: { type: "json_object" },
         messages: [
-          {
-            role: "system",
-            content:
-              "\u4f60\u662f\u97f3\u4e50\u751f\u6210\u63d0\u793a\u8bcd\u4f18\u5316\u52a9\u624b\u3002\u4f60\u7684\u4efb\u52a1\u662f\u6839\u636e\u7528\u6237\u6807\u7b7e\u548c\u4ea7\u54c1\u9700\u6c42\uff0c\u628a\u6807\u7b7e\u6574\u7406\u6210\u66f4\u9002\u5408\u76f4\u63a5\u53d1\u9001\u7ed9\u5929\u8c31\u4e50\u7684\u4e2d\u6587\u97f3\u4e50\u751f\u6210\u63d0\u793a\u8bcd\u3002\u4e0d\u8981\u89e3\u91ca\uff0c\u4e0d\u8981\u8f93\u51fa Markdown\uff0c\u53ea\u8fd4\u56de JSON\u3002"
-          },
-          {
-            role: "user",
-            content: JSON.stringify({
-              task: "\u6839\u636e\u4ea7\u54c1\u9700\u6c42\u548c\u7528\u6237\u6807\u7b7e\uff0c\u751f\u6210\u66f4\u9002\u5408\u53d1\u9001\u7ed9\u5929\u8c31\u4e50\u7684\u4e2d\u6587\u97f3\u4e50 prompt",
-              product_requirements: DEEPSEEK_PRODUCT_REQUIREMENTS,
-              base_prompt: basePrompt,
-              tags: tagSummary,
-              grouped_tags: groupedGuide,
-              output_schema: {
-                prompt: "1-3 \u53e5\u4e2d\u6587\u97f3\u4e50\u751f\u6210\u63d0\u793a\u8bcd\uff0c\u76f4\u63a5\u53d1\u9001\u7ed9\u5929\u8c31\u4e50",
-                title_hint: "\u7b80\u77ed\u81ea\u7136\u7684\u4e2d\u6587\u6b4c\u540d\u5efa\u8bae",
-                cover_hint: "\u9002\u5408\u4f5c\u4e3a\u6b4c\u66f2\u5c01\u9762\u7684\u4e2d\u6587\u753b\u9762\u63cf\u8ff0"
-              },
-              constraints: [
-                "\u4fdd\u7559\u6807\u7b7e\u6838\u5fc3\u542b\u4e49\u5e76\u81ea\u7136\u878d\u5165 prompt",
-                "\u8865\u5145\u5408\u7406\u7684\u66f2\u98ce\u3001\u8282\u594f\u3001\u7f16\u66f2\u5c42\u6b21\u3001\u60c5\u7eea\u8d70\u5411\u3001\u6c1b\u56f4\u548c\u573a\u666f",
-                "\u4e0d\u8981\u8f93\u51fa\u5217\u8868\uff0c\u4e0d\u8981\u89e3\u91ca",
-                "\u63d0\u793a\u8bcd\u63a7\u5236\u5728 180 \u4e2a\u4e2d\u6587\u5b57\u7b26\u4ee5\u5185"
-              ]
-            })
-          }
+          { role: "system", content: "You are a music prompt optimizer. Reply with JSON only." },
+          { role: "user", content: JSON.stringify(payload) }
         ]
       })
     });
 
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      app.log.warn({ status: response.status }, "deepseek prompt optimization failed");
+      app.log.warn({ status: response.status, data }, "deepseek prompt optimization failed");
       return { prompt: basePrompt, title_hint: "", cover_hint: "" };
     }
 
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content;
-    if (!content) return { prompt: basePrompt, title_hint: "", cover_hint: "" };
-
-    let parsed = null;
-    try {
-      parsed = JSON.parse(content);
-    } catch {
+    const parsed = parseJsonObject(data?.choices?.[0]?.message?.content);
+    if (!parsed) {
+      app.log.warn({ data }, "deepseek prompt optimization returned invalid json");
       return { prompt: basePrompt, title_hint: "", cover_hint: "" };
     }
 
@@ -1133,7 +1331,6 @@ async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
       title_hint: String(parsed?.title_hint || "").trim(),
       cover_hint: String(parsed?.cover_hint || "").trim()
     };
-
     app.log.info({ model: DEEPSEEK_MODEL, result }, "deepseek prompt optimization succeeded");
     return result;
   } catch (error) {
@@ -1142,6 +1339,61 @@ async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
   }
 }
 
+async function getUserExcludedSongIds(userId) {
+  const { rows } = await query(
+    "SELECT DISTINCT root_id FROM (SELECT COALESCE(s.source_song_id, s.id) AS root_id FROM user_song_queue q JOIN songs s ON s.id = q.song_id WHERE q.user_id = $1 UNION SELECT COALESCE(s.source_song_id, s.id) AS root_id FROM feedback f JOIN songs s ON s.id = f.song_id WHERE f.user_id = $1) history WHERE root_id IS NOT NULL",
+    [Number(userId)]
+  );
+  return rows.map((row) => Number(row.root_id)).filter(Boolean);
+}
+
+async function queueSongForUser(userId, songId, jobId, source, options = {}) {
+  const { displayTitle = null, displayCoverUrl = null, queueBucket = null } = options;
+  const { rows } = await query(
+    "INSERT INTO user_song_queue (user_id, song_id, generation_job_id, source, display_title, display_cover_url, queue_bucket) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+    [Number(userId), Number(songId), jobId ? Number(jobId) : null, source, displayTitle || null, displayCoverUrl || null, queueBucket || null]
+  );
+  return rows[0] || null;
+}
+
+async function findReusableSongs(userId, tagIds, limit = 1, threshold = REUSE_SIMILARITY_MIN) {
+  if (!Array.isArray(tagIds) || tagIds.length === 0) return [];
+  const excludedSongIds = await getUserExcludedSongIds(userId);
+  const { rows } = await query(
+    "SELECT s.id, s.title, s.cover_url, s.cover_hint, s.prompt, s.model, s.duration, s.style, s.reuse_count, COALESCE(s.source_song_id, s.id) AS root_id, COUNT(DISTINCT st.tag_id)::int AS song_tag_count, COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::int AS matched_tag_count, (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) AS similarity FROM songs s JOIN song_assets sa ON sa.song_id = s.id AND sa.audio_url IS NOT NULL LEFT JOIN song_tags st ON st.song_id = s.id WHERE s.source_song_id IS NULL AND COALESCE(s.is_available, true) = true AND ($4::int[] = '{}'::int[] OR NOT (COALESCE(s.source_song_id, s.id) = ANY($4::int[]))) GROUP BY s.id HAVING COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END) > 0 AND (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) >= $3 ORDER BY similarity DESC, matched_tag_count DESC, s.reuse_count ASC, s.created_at DESC LIMIT $5",
+    [tagIds, tagIds.length, threshold, excludedSongIds, Number(limit)]
+  );
+  const result = [];
+  for (const row of rows) {
+    const asset = await query("SELECT item_id, audio_url FROM song_assets WHERE song_id = $1 ORDER BY id DESC LIMIT 1", [row.id]);
+    if (asset.rows[0]) result.push({ ...row, asset: asset.rows[0] });
+  }
+  return result;
+}
+
+async function findReusableSong(userId, tagIds, threshold = REUSE_SIMILARITY_MIN) {
+  const rows = await findReusableSongs(userId, tagIds, 1, threshold);
+  return rows[0] || null;
+}
+
+async function reuseSongForUser(job, librarySong) {
+  const displayTitle = normalizeTitle(job.title_hint || librarySong.title || null, librarySong.title || null);
+  const generatedCover = await generateCoverImage({
+    title: displayTitle || librarySong.title || null,
+    coverHint: job.cover_hint || librarySong.cover_hint || librarySong.prompt || job.prompt,
+    prompt: job.prompt || librarySong.prompt || null
+  });
+  const displayCoverUrl = generatedCover?.cover_url || librarySong.cover_url || null;
+
+  await queueSongForUser(job.user_id, librarySong.id, job.id, 'reused', {
+    displayTitle,
+    displayCoverUrl,
+    queueBucket: job.strategy_mode || 'stable'
+  });
+  await query("UPDATE songs SET reuse_count = reuse_count + 1 WHERE id = $1", [Number(librarySong.id)]);
+  await query("UPDATE generation_jobs SET status = 'reused', item_ids = $1 WHERE id = $2", [[librarySong.asset.item_id].filter(Boolean), Number(job.id)]);
+  return librarySong.id;
+}
 function normalizeTitle(title, fallback = null) {
   const value = String(title || "").trim();
   if (!value) return fallback;
@@ -1151,12 +1403,12 @@ function normalizeTitle(title, fallback = null) {
 function buildCoverPrompt({ title, coverHint, prompt }) {
   const parts = [
     String(coverHint || "").trim(),
-    title ? "单曲名：《" + title + "》。" : "",
-    "请生成一张正方形音乐封面插图，不要任何文字、logo、水印或排版。",
-    "只保留一个明确主体与氛围背景，突出色彩、光感、层次和情绪，适合音乐流媒体封面。",
-    prompt ? "音乐气质参考：" + String(prompt).trim() : ""
+    title ? "Song title: " + title + "." : "",
+    "Create a square music cover illustration with no text, logo, watermark, or layout elements.",
+    "Keep one clear focal subject with an atmospheric background, rich color, lighting, and depth suitable for a streaming cover.",
+    prompt ? "Music direction: " + String(prompt).trim() : ""
   ];
-  return parts.filter(Boolean).join(" ");
+  return parts.filter(Boolean).join(" " );
 }
 
 async function generateCoverImage({ title, coverHint, prompt }) {
@@ -1208,7 +1460,7 @@ async function generateCoverImage({ title, coverHint, prompt }) {
 
 async function getGenerationJobDetail(jobId) {
   const { rows } = await query(
-    "SELECT g.id, g.user_id, g.prompt, g.base_prompt, g.title_hint, g.cover_hint, g.status, g.error, g.item_ids, g.created_at, s.id AS song_id, COALESCE(q.display_title, s.title) AS title, COALESCE(q.display_cover_url, s.cover_url) AS cover_url, sa.audio_url, q.source, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM generation_jobs g LEFT JOIN LATERAL (SELECT id, song_id, source, display_title, display_cover_url FROM user_song_queue WHERE generation_job_id = g.id ORDER BY created_at DESC, id DESC LIMIT 1) q ON true LEFT JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE g.id = $1 GROUP BY g.id, s.id, q.display_title, q.display_cover_url, sa.audio_url, q.source ORDER BY s.id DESC NULLS LAST LIMIT 1",
+    "SELECT g.id, g.user_id, g.prompt, g.base_prompt, g.title_hint, g.cover_hint, g.status, g.error, g.item_ids, g.created_at, g.strategy_mode, g.exploration_level, g.prompt_debug, s.id AS song_id, COALESCE(q.display_title, s.title) AS title, COALESCE(q.display_cover_url, s.cover_url) AS cover_url, sa.audio_url, q.source, q.queue_bucket, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM generation_jobs g LEFT JOIN LATERAL (SELECT id, song_id, source, display_title, display_cover_url, queue_bucket FROM user_song_queue WHERE generation_job_id = g.id ORDER BY created_at DESC, id DESC LIMIT 1) q ON true LEFT JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE g.id = $1 GROUP BY g.id, s.id, q.display_title, q.display_cover_url, sa.audio_url, q.source, q.queue_bucket ORDER BY s.id DESC NULLS LAST LIMIT 1",
     [Number(jobId)]
   );
   return rows[0] || null;
@@ -1223,80 +1475,8 @@ async function isBlockedTag(name) {
   );
   return rows.length > 0;
 }
-async function getUserExcludedSongIds(userId) {
-  const { rows } = await query(
-    "SELECT DISTINCT song_id FROM (SELECT song_id, created_at FROM user_song_queue WHERE user_id = $1 ORDER BY created_at DESC LIMIT 12) recent UNION SELECT DISTINCT song_id FROM feedback WHERE user_id = $1 AND action = 'skip' ORDER BY song_id",
-    [Number(userId)]
-  );
-  return rows.map((row) => Number(row.song_id)).filter(Boolean);
-}
-
-async function queueSongForUser(userId, songId, jobId, source, options = {}) {
-  const { displayTitle = null, displayCoverUrl = null } = options;
-  const { rows } = await query(
-    "INSERT INTO user_song_queue (user_id, song_id, generation_job_id, source, display_title, display_cover_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
-    [
-      Number(userId),
-      Number(songId),
-      jobId ? Number(jobId) : null,
-      source,
-      displayTitle || null,
-      displayCoverUrl || null
-    ]
-  );
-  return rows[0] || null;
-}
-
-async function findReusableSongs(userId, tagIds, limit = 1, threshold = REUSE_SIMILARITY_MIN) {
-  if (!Array.isArray(tagIds) || tagIds.length === 0) return [];
-  const excludedSongIds = await getUserExcludedSongIds(userId);
-  const { rows } = await query(
-    "SELECT s.id, s.title, s.cover_url, s.cover_hint, s.prompt, s.model, s.duration, s.style, s.reuse_count, COUNT(DISTINCT st.tag_id)::int AS song_tag_count, COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::int AS matched_tag_count, (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) AS similarity FROM songs s JOIN song_assets sa ON sa.song_id = s.id AND sa.audio_url IS NOT NULL LEFT JOIN song_tags st ON st.song_id = s.id WHERE s.source_song_id IS NULL AND COALESCE(s.is_available, true) = true AND ($4::int[] = '{}'::int[] OR NOT (s.id = ANY($4::int[]))) GROUP BY s.id HAVING COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END) > 0 AND (COUNT(DISTINCT CASE WHEN st.tag_id = ANY($1::int[]) THEN st.tag_id END)::float / GREATEST(COUNT(DISTINCT st.tag_id), $2)) >= $3 ORDER BY similarity DESC, matched_tag_count DESC, s.reuse_count DESC, s.created_at DESC LIMIT $5",
-    [tagIds, tagIds.length, threshold, excludedSongIds, Number(limit)]
-  );
-  const result = [];
-  for (const row of rows) {
-    const asset = await query(
-      "SELECT item_id, audio_url FROM song_assets WHERE song_id = $1 ORDER BY id DESC LIMIT 1",
-      [row.id]
-    );
-    if (asset.rows[0]) result.push({ ...row, asset: asset.rows[0] });
-  }
-  return result;
-}
-
-async function findReusableSong(userId, tagIds, threshold = REUSE_SIMILARITY_MIN) {
-  const rows = await findReusableSongs(userId, tagIds, 1, threshold);
-  return rows[0] || null;
-}
-async function reuseSongForUser(job, librarySong) {
-  const displayTitle = normalizeTitle(job.title_hint || librarySong.title || null, librarySong.title || null);
-  const generatedCover = await generateCoverImage({
-    title: displayTitle || librarySong.title || null,
-    coverHint: job.cover_hint || librarySong.cover_hint || librarySong.prompt || job.prompt,
-    prompt: job.prompt || librarySong.prompt || null
-  });
-  const displayCoverUrl = generatedCover?.cover_url || librarySong.cover_url || null;
-
-  await queueSongForUser(job.user_id, librarySong.id, job.id, 'reused', {
-    displayTitle,
-    displayCoverUrl
-  });
-
-  await query(
-    "UPDATE songs SET reuse_count = reuse_count + 1 WHERE id = $1",
-    [Number(librarySong.id)]
-  );
-
-  await query(
-    "UPDATE generation_jobs SET status = 'reused', item_ids = $1 WHERE id = $2",
-    [[librarySong.asset.item_id].filter(Boolean), Number(job.id)]
-  );
-
-  return librarySong.id;
-}
 app.post("/generate", async (request, reply) => {
-  const { user_id, instrumental = true, model, prefetch = false } = request.body || {};
+  const { user_id, instrumental = true, model, prefetch = false, play_mode, skip_streak, queue_depth } = request.body || {};
   if (!user_id) {
     reply.code(400).send({ error: "user_id required" });
     return;
@@ -1316,45 +1496,51 @@ app.post("/generate", async (request, reply) => {
       base_prompt: activeJob?.base_prompt || null,
       title_hint: activeJob?.title_hint || null,
       cover_hint: activeJob?.cover_hint || null,
+      strategy_mode: activeJob?.strategy_mode || null,
+      exploration_level: activeJob?.exploration_level || null,
       song_id: activeJob?.song_id || null,
-      song: activeJob?.song_id ? {
-        id: activeJob.song_id,
-        title: activeJob.title,
-        cover_url: activeJob.cover_url,
-        audio_url: activeJob.audio_url,
-        tags: activeJob.tags || []
-      } : null
+      song: activeJob?.song_id ? { id: activeJob.song_id, title: activeJob.title, cover_url: activeJob.cover_url, audio_url: activeJob.audio_url, tags: activeJob.tags || [] } : null
     };
   }
 
-  const { prompt, tagIds, base_prompt, title_hint, cover_hint } = await buildPrompt(user_id);
+  const skipStreak = Math.max(0, Number(skip_streak || 0));
+  const queueDepth = Math.max(0, Number(queue_depth || 0));
+  const promptPayload = await buildPrompt(user_id, { requestedMode: play_mode, skipStreak, queueDepth, prefetch: Boolean(prefetch) });
+  const { prompt, tagIds, base_prompt, title_hint, cover_hint, strategy_mode, exploration_level, prompt_debug } = promptPayload;
   if (!prompt) {
     reply.code(400).send({ error: "no tags found for user" });
     return;
   }
 
+  const queueTarget = strategy_mode === 'explore' ? EXPLORE_QUEUE_TARGET : NORMAL_QUEUE_TARGET;
   const { rows } = await query(
-    "INSERT INTO generation_jobs (user_id, prompt, base_prompt, title_hint, cover_hint, status, tag_ids) VALUES ($1, $2, $3, $4, $5, 'pending', $6) RETURNING *",
-    [user_id, prompt, base_prompt || prompt, title_hint || null, cover_hint || null, tagIds]
+    "INSERT INTO generation_jobs (user_id, prompt, base_prompt, title_hint, cover_hint, status, tag_ids, strategy_mode, exploration_level, prompt_debug) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9::jsonb) RETURNING *",
+    [user_id, prompt, base_prompt || prompt, title_hint || null, cover_hint || null, tagIds, strategy_mode, exploration_level, JSON.stringify(prompt_debug || {})]
   );
   const job = rows[0];
 
-  const reusableSong = await findReusableSong(
-    user_id,
-    tagIds,
-    prefetch ? PREFETCH_REUSE_SIMILARITY_MIN : REUSE_SIMILARITY_MIN
-  );
-  if (reusableSong) {
+  const reusableSongs = await findReusableSongs(user_id, tagIds, 3, prefetch ? PREFETCH_REUSE_SIMILARITY_MIN : REUSE_SIMILARITY_MIN);
+  const reusableSong = reusableSongs[0] || null;
+  const shouldForceFresh = strategy_mode === 'explore' || skipStreak >= 2 || (Boolean(prefetch) && reusableSongs.length < 3);
+
+  if (reusableSong && !shouldForceFresh) {
     const songId = await reuseSongForUser(job, reusableSong);
     return {
       job_id: job.id,
       item_ids: reusableSong.asset.item_id ? [reusableSong.asset.item_id] : [],
       prompt,
+      base_prompt,
+      title_hint,
+      cover_hint,
       reused: true,
       song_id: songId,
       matched_song_id: reusableSong.id,
       similarity: Number(reusableSong.similarity || 0),
-      status: 'reused'
+      status: 'reused',
+      strategy_mode,
+      exploration_level,
+      queue_target: queueTarget,
+      queue_depth: queueDepth
     };
   }
 
@@ -1368,12 +1554,7 @@ app.post("/generate", async (request, reply) => {
     ? `${TPY_BASE_URL}/open-apis/v1/instrumental/generate`
     : `${TPY_BASE_URL}/open-apis/v1/song/generate`;
 
-  const modelToUse =
-    model ||
-    (instrumental
-      ? process.env.TPY_MODEL_INSTRUMENTAL || "TemPolor i3"
-      : process.env.TPY_MODEL_SONG || "TemPolor v3");
-
+  const modelToUse = model || (instrumental ? process.env.TPY_MODEL_INSTRUMENTAL || "TemPolor i3" : process.env.TPY_MODEL_SONG || "TemPolor v3");
   const payload = {
     model: modelToUse,
     prompt,
@@ -1393,39 +1574,39 @@ app.post("/generate", async (request, reply) => {
     });
     data = await res.json();
   } catch (err) {
-    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [
-      String(err),
-      job.id
-    ]);
+    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [String(err), job.id]);
     reply.code(502).send({ error: "tianpuyue request failed", detail: String(err) });
     return;
   }
 
   if (!res.ok) {
-    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [
-      JSON.stringify(data),
-      job.id
-    ]);
+    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [JSON.stringify(data), job.id]);
     reply.code(502).send({ error: "tianpuyue request failed", detail: data });
     return;
   }
 
   const itemIds = data?.data?.item_ids || [];
   if (!Array.isArray(itemIds) || itemIds.length === 0) {
-    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [
-      JSON.stringify(data),
-      job.id
-    ]);
+    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [JSON.stringify(data), job.id]);
     reply.code(502).send({ error: "tianpuyue returned no item_ids", detail: data });
     return;
   }
 
-  await query(
-    "UPDATE generation_jobs SET status = 'submitted', item_ids = $1 WHERE id = $2",
-    [itemIds, job.id]
-  );
-
-  return { job_id: job.id, item_ids: itemIds, prompt, base_prompt, title_hint, cover_hint, reused: false, status: 'submitted' };
+  await query("UPDATE generation_jobs SET status = 'submitted', item_ids = $1 WHERE id = $2", [itemIds, job.id]);
+  return {
+    job_id: job.id,
+    item_ids: itemIds,
+    prompt,
+    base_prompt,
+    title_hint,
+    cover_hint,
+    reused: false,
+    status: 'submitted',
+    strategy_mode,
+    exploration_level,
+    queue_target: queueTarget,
+    queue_depth: queueDepth
+  };
 });
 
 app.get("/generation-jobs/:id", async (request, reply) => {
@@ -1447,6 +1628,9 @@ app.get("/generation-jobs/:id", async (request, reply) => {
       error: detail.error,
       item_ids: detail.item_ids || [],
       created_at: detail.created_at,
+      strategy_mode: detail.strategy_mode || null,
+      exploration_level: detail.exploration_level || null,
+      prompt_debug: detail.prompt_debug || null,
       song: detail.song_id ? {
         id: detail.song_id,
         title: detail.title,
@@ -1494,7 +1678,7 @@ app.post("/callback/tpy", async (request, reply) => {
         continue;
       }
       const { rows } = await query(
-        "UPDATE generation_jobs SET status = 'done' WHERE $1 = ANY(item_ids) RETURNING id, user_id, prompt, base_prompt, title_hint, cover_hint, tag_ids",
+        "UPDATE generation_jobs SET status = 'done' WHERE $1 = ANY(item_ids) RETURNING id, user_id, prompt, base_prompt, title_hint, cover_hint, tag_ids, strategy_mode",
         [itemId]
       );
       if (rows.length > 0) {
@@ -1535,7 +1719,8 @@ app.post("/callback/tpy", async (request, reply) => {
         );
         await queueSongForUser(job.user_id, songId, job.id, 'generated', {
           displayTitle,
-          displayCoverUrl: coverUrl
+          displayCoverUrl: coverUrl,
+          queueBucket: job.strategy_mode || 'stable'
         });
       }
     }
@@ -1564,13 +1749,18 @@ app.post("/feedback", async (request, reply) => {
   }
 
   const seconds = Number(played_seconds || 0);
-  const behavior = normalizedAction === "like" ? "favorite" : normalizedAction === "complete" ? "complete" : "skip";
-  const isLateSkip = behavior === "skip" && seconds >= 30;
+  const rawDelta = normalizedAction === "like"
+    ? FAVORITE_RAW_DELTA
+    : normalizedAction === "complete"
+      ? COMPLETE_RAW_DELTA
+      : seconds >= 30
+        ? SKIP_LATE_RAW_DELTA
+        : SKIP_EARLY_RAW_DELTA;
 
   try {
     await query(
       "INSERT INTO feedback (user_id, song_id, action, score) VALUES ($1, $2, $3, $4)",
-      [Number(user_id), Number(song_id), normalizedAction, behavior === "favorite" ? 1.0 : behavior === "complete" ? 0.4 : -0.7]
+      [Number(user_id), Number(song_id), normalizedAction, rawDelta]
     );
   } catch (err) {
     reply.code(500).send({ error: "feedback insert failed", detail: String(err) });
@@ -1584,18 +1774,19 @@ app.post("/feedback", async (request, reply) => {
 
   await ensureUserTagWeights(user_id);
   const { rows } = await query(
-    "SELECT tag_id, COALESCE(relevance, 1.0) AS relevance FROM song_tags WHERE song_id = $1",
-    [Number(song_id)]
+    "SELECT st.tag_id, COALESCE(st.relevance, 1.0) AS relevance, COALESCE(ut.is_anchor, false) AS is_anchor FROM song_tags st LEFT JOIN user_tags ut ON ut.user_id = $2 AND ut.tag_id = st.tag_id WHERE st.song_id = $1",
+    [Number(song_id), Number(user_id)]
   );
 
   for (const row of rows) {
     const relevance = Number(row.relevance || 1.0);
-    const coef = behavior === "favorite" ? COEF_FAVORITE : behavior === "complete" ? COEF_COMPLETE : isLateSkip ? COEF_SKIP_LATE : COEF_SKIP_EARLY;
-    const updateSql = behavior === "favorite" || behavior === "complete"
-      ? "UPDATE user_tags SET weight = LEAST(1.0, weight + $1::numeric * $2::numeric * (1 - weight)), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4"
-      : "UPDATE user_tags SET weight = GREATEST(0.0, weight - $1::numeric * $2::numeric * weight), update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4";
+    const anchorBoost = normalizedAction === "like" && row.is_anchor ? 1.12 : 1;
+    const delta = rawDelta * relevance * anchorBoost;
     try {
-      await query(updateSql, [coef, relevance, Number(user_id), row.tag_id]);
+      await query(
+        "UPDATE user_tags SET raw_score = GREATEST($1, COALESCE(raw_score, 0) + $2::numeric), is_active = true, update_count = update_count + 1, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4",
+        [MIN_RAW_SCORE, delta, Number(user_id), Number(row.tag_id)]
+      );
     } catch (err) {
       request.log.error({ err: String(err), user_id, song_id, action: normalizedAction, tag_id: row.tag_id }, "feedback weight update failed");
       reply.code(500).send({ error: "feedback update failed", detail: String(err) });
@@ -1603,15 +1794,7 @@ app.post("/feedback", async (request, reply) => {
     }
   }
 
-  const totalUpdates = await query(
-    "SELECT COALESCE(SUM(update_count), 0) AS total FROM user_tags WHERE user_id = $1",
-    [Number(user_id)]
-  );
-  const total = Number(totalUpdates.rows[0]?.total || 0);
-  if (total > 0 && total % NORMALIZE_EVERY === 0) {
-    await normalizeUserWeights(user_id);
-  }
-
+  await normalizeUserWeights(user_id);
   return { ok: true };
 });
 
@@ -1623,7 +1806,7 @@ app.get("/songs", async (request, reply) => {
   }
   const includeHistory = String(include_history || "").toLowerCase() === "true";
   const { rows } = await query(
-    "SELECT q.id AS queue_id, s.id, COALESCE(q.display_title, s.title) AS title, COALESCE(q.display_cover_url, s.cover_url) AS cover_url, s.prompt, sa.audio_url, q.created_at, q.source, COALESCE(q.is_hidden, false) AS is_hidden, q.acted_at, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 AND ($2::boolean = true OR COALESCE(q.is_hidden, false) = false) GROUP BY q.id, s.id, q.display_title, q.display_cover_url, s.prompt, sa.audio_url, q.created_at, q.source, q.is_hidden, q.acted_at ORDER BY q.created_at ASC, q.id ASC",
+    "SELECT q.id AS queue_id, s.id, COALESCE(q.display_title, s.title) AS title, COALESCE(q.display_cover_url, s.cover_url) AS cover_url, s.prompt, sa.audio_url, q.created_at, q.source, q.queue_bucket, COALESCE(q.is_hidden, false) AS is_hidden, q.acted_at, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 AND ($2::boolean = true OR COALESCE(q.is_hidden, false) = false) GROUP BY q.id, s.id, q.display_title, q.display_cover_url, s.prompt, sa.audio_url, q.created_at, q.source, q.queue_bucket, q.is_hidden, q.acted_at ORDER BY q.created_at ASC, q.id ASC",
     [Number(user_id), includeHistory]
   );
   return { items: rows.slice(-50) };

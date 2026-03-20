@@ -727,6 +727,7 @@ export default function App() {
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [tagMessage, setTagMessage] = useState("");
   const [health, setHealth] = useState({ loading: false, ok: null, message: "" });
+  const [playMode, setPlayMode] = useState("stable");
   const [portraitStageSize, setPortraitStageSize] = useState({ width: 1, height: 1 });
   const [portraitBlocks, setPortraitBlocks] = useState([]);
   const [activeZoneId, setActiveZoneId] = useState(-1);
@@ -754,6 +755,9 @@ export default function App() {
   const songsRef = useRef(songs);
   const profileTagsRef = useRef(profileTags);
   const prefetchLockRef = useRef(false);
+  const playModeRef = useRef(playMode);
+  const skipStreakRef = useRef(0);
+  const completeStreakRef = useRef(0);
   const playbackTokenRef = useRef(0);
   const playbackQueueRef = useRef(Promise.resolve());
   const userId = session?.userId || null;
@@ -809,6 +813,7 @@ export default function App() {
   useEffect(() => { seekingRef.current = isSeeking; }, [isSeeking]);
   useEffect(() => { songsRef.current = songs; }, [songs]);
   useEffect(() => { profileTagsRef.current = profileTags; }, [profileTags]);
+  useEffect(() => { playModeRef.current = playMode; }, [playMode]);
   useEffect(() => { userIdRef.current = userId; }, [userId]);
   useEffect(() => { activeZoneRef.current = activeZoneId; }, [activeZoneId]);
 
@@ -873,14 +878,54 @@ export default function App() {
       if (at !== bt) return at - bt;
       return Number(a.id || 0) - Number(b.id || 0);
     });
+    const visibleItems = items.filter((item) => item?.is_hidden !== true);
     setSongs(items);
     setGeneratedSongs(items.filter((item) => String(item?.source || "").toLowerCase() === "generated"));
-    if (items.length > 0 && (options.preferLatest || !current)) {
-      setCurrent(items[items.length - 1]);
+    if (visibleItems.length > 0 && (options.preferLatest || !current)) {
+      setCurrent(visibleItems[visibleItems.length - 1]);
     }
     return items;
   };
 
+  const getVisibleQueue = (list = songsRef.current || []) => (Array.isArray(list) ? list : []).filter((item) => item?.is_hidden !== true);
+
+  const getUpcomingQueue = (baseSong = current, list = songsRef.current || []) => {
+    const visible = getVisibleQueue(list);
+    if (!baseSong) return visible;
+    const index = visible.findIndex((item) => queueKeyOf(item) === queueKeyOf(baseSong));
+    return index >= 0 ? visible.slice(index + 1) : visible;
+  };
+
+  const syncPlayMode = (nextMode) => {
+    playModeRef.current = nextMode;
+    setPlayMode(nextMode);
+  };
+
+  const applyFeedbackMode = (action) => {
+    if (action === "skip") {
+      skipStreakRef.current += 1;
+      completeStreakRef.current = 0;
+    } else if (action === "complete") {
+      completeStreakRef.current += 1;
+      skipStreakRef.current = 0;
+    } else {
+      skipStreakRef.current = 0;
+    }
+    syncPlayMode(skipStreakRef.current >= 2 || completeStreakRef.current >= 3 ? "explore" : "stable");
+  };
+
+  const ensureQueueBuffer = async ({ force = false, baseSong = current } = {}) => {
+    if (!userId || prefetchLockRef.current) return null;
+    const targetDepth = playModeRef.current === "explore" ? 5 : 2;
+    const upcoming = getUpcomingQueue(baseSong, songsRef.current || []);
+    if (!force && upcoming.length >= targetDepth) return null;
+    prefetchLockRef.current = true;
+    try {
+      return await generate({ prefetch: true, silent: true, preferLatest: false });
+    } finally {
+      prefetchLockRef.current = false;
+    }
+  };
 
   const loadPlaylists = async (uid) => {
     if (!uid) return [];
@@ -1275,7 +1320,7 @@ export default function App() {
 
   const generate = async (options = {}) => {
     const { prefetch = false, silent = false, preferLatest = !prefetch, onSongResolved = null } = options;
-    if (!userId || generationLoading) return songs;
+    if (!userId || (generationLoading && !prefetch)) return songs;
     const beforeSongs = [...(songsRef.current || [])];
     const beforeIds = new Set(beforeSongs.map((item) => songIdentityOf(item)).filter(Boolean));
     if (!prefetch) setGenerationLoading(true);
@@ -1283,7 +1328,14 @@ export default function App() {
       const res = await fetch(`${API_BASE}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, instrumental: true, prefetch })
+        body: JSON.stringify({
+          user_id: userId,
+          instrumental: true,
+          prefetch,
+          play_mode: playModeRef.current,
+          skip_streak: skipStreakRef.current,
+          queue_depth: getUpcomingQueue(current, songsRef.current || []).length
+        })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -1297,9 +1349,9 @@ export default function App() {
           const matched = list.find((item) => Number(item?.id || 0) === hintedId);
           if (matched) return matched;
         }
-        const fresh = list.find((item) => !beforeIds.has(songIdentityOf(item)));
+        const fresh = list.find((item) => !beforeIds.has(songIdentityOf(item)) && item?.is_hidden !== true);
         if (fresh) return fresh;
-        return list[list.length - 1] || null;
+        return getVisibleQueue(list)[getVisibleQueue(list).length - 1] || list[list.length - 1] || null;
       };
 
       const jobId = Number(data.job_id || 0);
@@ -1310,8 +1362,8 @@ export default function App() {
         return refreshed;
       }
 
-      const start = Date.now();
-      while (Date.now() - start < 180000) {
+      const startAt = Date.now();
+      while (Date.now() - startAt < 180000) {
         const jobRes = await fetch(`${API_BASE}/generation-jobs/${jobId}`);
         const jobData = await jobRes.json().catch(() => ({}));
         if (!jobRes.ok) {
@@ -1341,17 +1393,19 @@ export default function App() {
   };
 
   const getNextSongFromList = (baseSong, list) => {
-    if (!baseSong || !Array.isArray(list) || list.length === 0) return null;
-    const index = list.findIndex((item) => queueKeyOf(item) === queueKeyOf(baseSong));
-    if (index >= 0 && index < list.length - 1) return list[index + 1];
+    const visible = getVisibleQueue(list);
+    if (!baseSong || visible.length === 0) return null;
+    const index = visible.findIndex((item) => queueKeyOf(item) === queueKeyOf(baseSong));
+    if (index >= 0 && index < visible.length - 1) return visible[index + 1];
     return null;
   };
 
   const resolveIncomingNextSong = (baseSong, list) => {
-    const directNext = getNextSongFromList(baseSong, list);
+    const visible = getVisibleQueue(list);
+    const directNext = getNextSongFromList(baseSong, visible);
     if (directNext) return directNext;
     const currentKey = queueKeyOf(baseSong);
-    const tail = (list || [])[list.length - 1] || null;
+    const tail = visible[visible.length - 1] || null;
     if (tail && queueKeyOf(tail) !== currentKey) return tail;
     return null;
   };
@@ -1416,8 +1470,12 @@ export default function App() {
     if (!userId) return null;
     setAssignmentLoading(true);
     try {
-      const items = await refreshSongs(userId, { preferLatest: true });
-      const target = items[items.length - 1] || null;
+      let items = await refreshSongs(userId, { preferLatest: true });
+      let target = getVisibleQueue(items)[getVisibleQueue(items).length - 1] || null;
+      if (!target) {
+        items = await generate({ silent: true, preferLatest: true });
+        target = getVisibleQueue(items)[getVisibleQueue(items).length - 1] || null;
+      }
       if (autoplay && target) await play(target);
       return target;
     } finally {
@@ -1429,6 +1487,7 @@ export default function App() {
     if (!userId) return null;
     setAssignmentLoading(true);
     try {
+      ensureQueueBuffer({ force: true, baseSong }).catch(() => {});
       const startedAt = Date.now();
       while (Date.now() - startedAt < 45000) {
         const fresh = await refreshSongs(userId, { preferLatest: false });
@@ -1461,6 +1520,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: userId, song_id: current.id, action, played_seconds: Math.floor((playbackRef.current.position || 0) / 1000) })
       });
+      applyFeedbackMode(action);
     } catch {}
   };
 
@@ -1473,8 +1533,10 @@ export default function App() {
       const next = resolveIncomingNextSong(baseSong, queueSnapshot);
       if (next) {
         await play(next);
+        ensureQueueBuffer({ baseSong: next }).catch(() => {});
         return;
       }
+      await ensureQueueBuffer({ force: true, baseSong });
       const assignedNext = await waitForAssignedNextSong(baseSong);
       if (assignedNext) await play(assignedNext);
     } finally {
@@ -1486,9 +1548,28 @@ export default function App() {
     if (!current) return requestAssignedSong({ autoplay: true });
     const queueSnapshot = songsRef.current || [];
     const next = getNextSongFromList(current, queueSnapshot);
-    if (next) return play(next);
+    if (next) {
+      await play(next);
+      ensureQueueBuffer({ baseSong: next }).catch(() => {});
+      return;
+    }
     await handleAutoNext("skip", current);
   };
+
+  useEffect(() => {
+    if (!userId) return;
+    const visible = getVisibleQueue(songs);
+    const targetDepth = playMode === "explore" ? 5 : 2;
+    if (!current) {
+      if (visible.length < 1) ensureQueueBuffer({ force: true, baseSong: null }).catch(() => {});
+      return;
+    }
+    const remaining = Math.max(0, Number(playback.duration || 0) - Number(playback.position || 0));
+    const upcoming = getUpcomingQueue(current, songs);
+    if (upcoming.length < targetDepth && (remaining <= 20000 || upcoming.length === 0)) {
+      ensureQueueBuffer({ force: remaining <= 20000 || upcoming.length === 0, baseSong: current }).catch(() => {});
+    }
+  }, [current, songs, playback.position, playback.duration, playMode, userId]);
 
   const createPlaylist = async () => {
     if (!userId || !newPlaylistName.trim()) return;
