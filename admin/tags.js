@@ -1,4 +1,4 @@
-const tokenInput = document.getElementById("token");
+﻿const tokenInput = document.getElementById("token");
 const tagGroups = document.getElementById("tagGroups");
 const tagTypeSummary = document.getElementById("tagTypeSummary");
 const blacklistList = document.getElementById("blacklistList");
@@ -10,7 +10,7 @@ function getToken() {
 }
 
 function updateSelectionHint() {
-  tagSelectionHint.textContent = `${selectedTagIds.size} tags selected`;
+  tagSelectionHint.textContent = `已选择 ${selectedTagIds.size} 个标签`;
 }
 
 async function saveTag() {
@@ -40,11 +40,11 @@ async function patchTag(id, payload) {
 async function batchDeleteTags(options = {}) {
   const ids = [...selectedTagIds];
   if (!ids.length) {
-    alert("Select tags first.");
+    alert("请先选择标签。");
     return;
   }
-  const actionText = options.addToBlacklist ? "delete and blacklist" : options.softDelete ? "disable" : "delete";
-  if (!confirm(`Confirm ${actionText} for ${ids.length} selected tags?`)) return;
+  const actionText = options.addToBlacklist ? "删除并加入黑名单" : options.softDelete ? "停用" : "删除";
+  if (!confirm(`确认对 ${ids.length} 个标签执行${actionText}？`)) return;
   const res = await fetch("/admin/tags/batch-delete", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-admin-token": getToken() },
@@ -52,11 +52,11 @@ async function batchDeleteTags(options = {}) {
       ids,
       soft_delete: options.softDelete === true,
       add_to_blacklist: options.addToBlacklist === true,
-      blacklist_reason: options.addToBlacklist ? "Batch moderation from admin" : null
+      blacklist_reason: options.addToBlacklist ? "管理员批量审核" : null
     })
   });
   if (!res.ok) {
-    alert("Batch action failed.");
+    alert("批量操作失败。");
     return;
   }
   selectedTagIds.clear();
@@ -73,7 +73,7 @@ function renderSummary(items) {
     grouped.set(item.type, next);
   }
   tagTypeSummary.innerHTML = "";
-  Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0], "en")).forEach(([type, data]) => {
+  Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0], "zh-CN")).forEach(([type, data]) => {
     const card = document.createElement("div");
     card.className = "stat-card";
     card.innerHTML = `<div class="stat-label">${type}</div><div class="stat-value">${data.active}/${data.total}</div>`;
@@ -85,7 +85,7 @@ async function loadTags() {
   const res = await fetch("/admin/tags", { headers: { "x-admin-token": getToken() } });
   if (!res.ok) {
     tagTypeSummary.innerHTML = "";
-    tagGroups.innerHTML = "<div class='item'>Unauthorized or service unavailable</div>";
+    tagGroups.innerHTML = "<div class='item'>未授权或服务不可用</div>";
     return;
   }
   const data = await res.json();
@@ -103,11 +103,11 @@ async function loadTags() {
   }, {});
 
   tagGroups.innerHTML = "";
-  Object.keys(groups).sort((a, b) => a.localeCompare(b, "en")).forEach((type) => {
+  Object.keys(groups).sort((a, b) => a.localeCompare(b, "zh-CN")).forEach((type) => {
     const section = document.createElement("div");
     section.className = "card inner-card";
     section.innerHTML = `<h3>${type}</h3>`;
-    groups[type].sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || a.name.localeCompare(b.name, "en"));
+    groups[type].sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || a.name.localeCompare(b.name, "zh-CN"));
     groups[type].forEach((tag) => {
       const div = document.createElement("div");
       div.className = "item stacked-item";
@@ -117,13 +117,13 @@ async function loadTags() {
           <input type="checkbox" data-select="${tag.id}" ${checked} />
         </div>
         <div class="stack-grow">
-          <div><strong>${tag.name}</strong> ${tag.is_system === false ? "<small>(custom)</small>" : "<small>(system)</small>"}</div>
-          <small>${tag.description || "No description"}</small>
-          <div class="muted">Sort: ${Number(tag.sort_order || 0)} �� Status: ${tag.is_active === false ? "disabled" : "active"}</div>
+          <div><strong>${tag.name}</strong> ${tag.is_system === false ? "<small>(自定义)</small>" : "<small>(系统)</small>"}</div>
+          <small>${tag.description || "暂无说明"}</small>
+          <div class="muted">排序：${Number(tag.sort_order || 0)} · 状态：${tag.is_active === false ? "停用" : "启用"}</div>
         </div>
         <div class="row compact-row">
-          <button class="ghost-btn" data-toggle="${tag.id}">${tag.is_active === false ? "Enable" : "Disable"}</button>
-          <button class="danger-btn" data-delete="${tag.id}">Delete</button>
+          <button class="ghost-btn" data-toggle="${tag.id}">${tag.is_active === false ? "启用" : "停用"}</button>
+          <button class="danger-btn" data-delete="${tag.id}">删除</button>
         </div>
       `;
       div.querySelector(`[data-select="${tag.id}"]`).addEventListener("change", (event) => {
@@ -154,14 +154,14 @@ async function loadTags() {
 async function loadBlacklist() {
   const res = await fetch("/admin/tag-blacklist", { headers: { "x-admin-token": getToken() } });
   if (!res.ok) {
-    blacklistList.innerHTML = "<div class='item'>Unauthorized or service unavailable</div>";
+    blacklistList.innerHTML = "<div class='item'>未授权或服务不可用</div>";
     return;
   }
   const data = await res.json();
   const items = data.items || [];
   blacklistList.innerHTML = "";
   if (!items.length) {
-    blacklistList.innerHTML = "<div class='item'>No blacklist entries</div>";
+    blacklistList.innerHTML = "<div class='item'>暂无黑名单条目</div>";
     return;
   }
   items.forEach((item) => {
@@ -170,10 +170,10 @@ async function loadBlacklist() {
     div.innerHTML = `
       <div class="stack-grow">
         <div><strong>${item.word}</strong></div>
-        <small>${item.reason || "No reason"}</small>
+        <small>${item.reason || "无原因"}</small>
       </div>
       <div class="row compact-row">
-        <button class="danger-btn" data-delete-blacklist="${item.id}">Remove</button>
+        <button class="danger-btn" data-delete-blacklist="${item.id}">移除</button>
       </div>
     `;
     div.querySelector(`[data-delete-blacklist="${item.id}"]`).addEventListener("click", async () => {
@@ -208,7 +208,7 @@ async function addBlacklistBulk() {
     body: JSON.stringify({ text, reason })
   });
   if (!res.ok) {
-    alert("Bulk insert failed.");
+    alert("批量写入失败。");
     return;
   }
   document.getElementById("blacklistBulkText").value = "";
