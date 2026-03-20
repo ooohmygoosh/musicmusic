@@ -1,8 +1,9 @@
-﻿:root {
+:root {
   --bg: #f6f3ee;
   --card: #ffffff;
   --text: #2b2b2b;
   --accent: #2e5d4b;
+  --danger: #a64535;
 }
 
 * { box-sizing: border-box; }
@@ -12,7 +13,7 @@ body {
   color: var(--text);
   background: radial-gradient(circle at 10% 20%, #efe7dd 0%, var(--bg) 45%, #e9efe7 100%);
 }
-.page { max-width: 1100px; margin: 0 auto; padding: 32px 20px 60px; }
+.page { max-width: 1160px; margin: 0 auto; padding: 32px 20px 60px; }
 header { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
 header h1 { margin: 0; font-size: 28px; }
 .nav { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -32,12 +33,24 @@ header h1 { margin: 0; font-size: 28px; }
 }
 .token { display: flex; gap: 8px; }
 input,
-select {
+select,
+textarea {
   padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid #d5d0c8;
   min-width: 220px;
   background: #fff;
+  color: var(--text);
+}
+textarea {
+  width: 100%;
+  resize: vertical;
+}
+input[type="checkbox"] {
+  min-width: auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
 }
 button {
   padding: 10px 14px;
@@ -67,7 +80,6 @@ button {
   background: #faf9f6;
 }
 .item small { color: #666; }
-
 .quick-links {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -90,7 +102,6 @@ button {
 }
 .quick-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
 .quick-sub { font-size: 12px; color: #666; }
-
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -118,7 +129,6 @@ button {
 .bar-fill { height: 8px; background: var(--accent); }
 .bar-value { font-size: 12px; color: #666; }
 .muted { color: #777; font-size: 12px; }
-
 .table table {
   width: 100%;
   border-collapse: collapse;
@@ -129,6 +139,7 @@ button {
   padding: 10px;
   border-bottom: 1px solid #eee;
   font-size: 12px;
+  vertical-align: top;
 }
 .table th { background: #faf9f6; }
 .link {
@@ -139,13 +150,21 @@ button {
   font-weight: 600;
   padding: 0;
 }
-
 .toolbar { margin-bottom: 16px; }
-.library-item { align-items: stretch; }
+.selection-bar {
+  padding: 10px 0;
+  border-top: 1px solid #eee3d6;
+  border-bottom: 1px solid #eee3d6;
+  margin-bottom: 12px;
+}
+.library-item { align-items: flex-start; gap: 12px; }
+.library-select {
+  padding-top: 4px;
+}
 .library-main { width: 100%; }
 .library-head { justify-content: space-between; align-items: flex-start; }
 .library-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
-.library-prompt { margin: 8px 0 10px; line-height: 1.5; }
+.library-prompt { margin: 8px 0 10px; line-height: 1.5; white-space: pre-wrap; }
 .cover-thumb {
   width: 64px;
   height: 64px;
@@ -179,7 +198,8 @@ button {
   font-size: 12px;
 }
 .link-button,
-.ghost-btn {
+.ghost-btn,
+.danger-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -197,16 +217,12 @@ button {
   color: var(--accent);
   border: 1px solid #cfc4b6;
 }
-
+.danger-btn {
+  background: var(--danger);
+  color: #fff;
+}
 .spacer { height: 16px; }
 .card h3 { margin: 6px 0 10px; font-size: 15px; }
-
-@media (max-width: 640px) {
-  header { flex-direction: column; align-items: flex-start; }
-  input, select { min-width: 0; width: 100%; }
-  .table table { font-size: 11px; }
-  .library-head { flex-direction: column; }
-}
 .account-detail {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -221,6 +237,9 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 18px;
 }
+.detail-grid-triple {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
 .inner-card {
   margin-top: 0;
   padding: 16px;
@@ -232,3 +251,28 @@ button {
 .compact-row {
   margin-bottom: 0;
 }
+.checkbox-cell {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  min-width: 24px;
+  padding-top: 2px;
+}
+.stack-grow {
+  flex: 1;
+  min-width: 0;
+}
+.bulk-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+@media (max-width: 640px) {
+  header { flex-direction: column; align-items: flex-start; }
+  input, select, textarea { min-width: 0; width: 100%; }
+  .table table { font-size: 11px; }
+  .library-head { flex-direction: column; }
+  .library-item { flex-direction: column; }
+  .selection-bar { align-items: flex-start; }
+}
+

@@ -1,10 +1,16 @@
-ï»¿const tokenInput = document.getElementById("token");
+const tokenInput = document.getElementById("token");
 const tagGroups = document.getElementById("tagGroups");
 const tagTypeSummary = document.getElementById("tagTypeSummary");
 const blacklistList = document.getElementById("blacklistList");
+const tagSelectionHint = document.getElementById("tagSelectionHint");
+const selectedTagIds = new Set();
 
 function getToken() {
   return localStorage.getItem("adminToken") || "";
+}
+
+function updateSelectionHint() {
+  tagSelectionHint.textContent = `ÒÑÑ¡ ${selectedTagIds.size} ¸ö±êÇ©`;
 }
 
 async function saveTag() {
@@ -31,6 +37,33 @@ async function patchTag(id, payload) {
   });
 }
 
+async function batchDeleteTags(options = {}) {
+  const ids = [...selectedTagIds];
+  if (!ids.length) {
+    alert("ÇëÏÈÑ¡Ôñ±êÇ©");
+    return;
+  }
+  const actionText = options.addToBlacklist ? "É¾³ı²¢¼ÓÈëºÚÃûµ¥" : options.softDelete ? "Í£ÓÃ" : "É¾³ı";
+  if (!confirm(`È·ÈÏ${actionText}Ñ¡ÖĞµÄ ${ids.length} ¸ö±êÇ©£¿`)) return;
+  const res = await fetch("/admin/tags/batch-delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-token": getToken() },
+    body: JSON.stringify({
+      ids,
+      soft_delete: options.softDelete === true,
+      add_to_blacklist: options.addToBlacklist === true,
+      blacklist_reason: options.addToBlacklist ? "¹ÜÀíÔ±ÅúÁ¿É¾³ı±êÇ©Ê±¼ÓÈëºÚÃûµ¥" : null
+    })
+  });
+  if (!res.ok) {
+    alert("ÅúÁ¿²Ù×÷Ê§°Ü£¬ÇëÈ·ÈÏ Token »ò·şÎñ×´Ì¬");
+    return;
+  }
+  selectedTagIds.clear();
+  updateSelectionHint();
+  await Promise.all([loadTags(), loadBlacklist()]);
+}
+
 function renderSummary(items) {
   const grouped = new Map();
   for (const item of items) {
@@ -52,12 +85,17 @@ async function loadTags() {
   const res = await fetch("/admin/tags", { headers: { "x-admin-token": getToken() } });
   if (!res.ok) {
     tagTypeSummary.innerHTML = "";
-    tagGroups.innerHTML = "<div class='item'>æœªæˆæƒæˆ–æœåŠ¡æœªå¯åŠ¨</div>";
+    tagGroups.innerHTML = "<div class='item'>Î´ÊÚÈ¨»ò·şÎñÎ´Æô¶¯</div>";
     return;
   }
   const data = await res.json();
   const items = data.items || [];
   renderSummary(items);
+
+  const liveIds = new Set(items.map((item) => Number(item.id)));
+  [...selectedTagIds].forEach((id) => {
+    if (!liveIds.has(id)) selectedTagIds.delete(id);
+  });
 
   const groups = items.reduce((acc, item) => {
     (acc[item.type] ||= []).push(item);
@@ -73,63 +111,69 @@ async function loadTags() {
     groups[type].forEach((tag) => {
       const div = document.createElement("div");
       div.className = "item stacked-item";
+      const checked = selectedTagIds.has(Number(tag.id)) ? "checked" : "";
       div.innerHTML = `
-        <div>
-          <div><strong>${tag.name}</strong> ${tag.is_system === false ? "<small>(è‡ªå®šä¹‰)</small>" : "<small>(ç³»ç»Ÿ)</small>"}</div>
-          <small>${tag.description || "æš‚æ— è¯´æ˜"}</small>
+        <div class="checkbox-cell">
+          <input type="checkbox" data-select="${tag.id}" ${checked} />
+        </div>
+        <div class="stack-grow">
+          <div><strong>${tag.name}</strong> ${tag.is_system === false ? "<small>(×Ô¶¨Òå)</small>" : "<small>(ÏµÍ³)</small>"}</div>
+          <small>${tag.description || "ÔİÎŞËµÃ÷"}</small>
+          <div class="muted">ÅÅĞò£º${Number(tag.sort_order || 0)} ¡¤ ×´Ì¬£º${tag.is_active === false ? "Í£ÓÃ" : "ÆôÓÃ"}</div>
         </div>
         <div class="row compact-row">
-          <button class="ghost-btn" data-toggle="${tag.id}">${tag.is_active === false ? "å¯ç”¨" : "åœç”¨"}</button>
-          <button data-delete="${tag.id}">åˆ é™¤</button>
+          <button class="ghost-btn" data-toggle="${tag.id}">${tag.is_active === false ? "ÆôÓÃ" : "Í£ÓÃ"}</button>
+          <button class="danger-btn" data-delete="${tag.id}">É¾³ı</button>
         </div>
       `;
+      div.querySelector(`[data-select="${tag.id}"]`).addEventListener("change", (event) => {
+        if (event.target.checked) {
+          selectedTagIds.add(Number(tag.id));
+        } else {
+          selectedTagIds.delete(Number(tag.id));
+        }
+        updateSelectionHint();
+      });
       div.querySelector(`[data-toggle="${tag.id}"]`).addEventListener("click", async () => {
         await patchTag(tag.id, { is_active: !(tag.is_active !== false) });
         loadTags();
       });
       div.querySelector(`[data-delete="${tag.id}"]`).addEventListener("click", async () => {
         await fetch(`/admin/tags/${tag.id}`, { method: "DELETE", headers: { "x-admin-token": getToken() } });
+        selectedTagIds.delete(Number(tag.id));
         loadTags();
       });
       section.appendChild(div);
     });
     tagGroups.appendChild(section);
   });
+
+  updateSelectionHint();
 }
-
-document.getElementById("saveToken").addEventListener("click", () => {
-  localStorage.setItem("adminToken", tokenInput.value.trim());
-  loadTags();
-});
-document.getElementById("addTag").addEventListener("click", saveTag);
-document.getElementById("refreshTags").addEventListener("click", loadTags);
-
-tokenInput.value = getToken();
-loadTags();
 
 async function loadBlacklist() {
   const res = await fetch("/admin/tag-blacklist", { headers: { "x-admin-token": getToken() } });
   if (!res.ok) {
-    blacklistList.innerHTML = "<div class='item'>æœªæˆæƒæˆ–æœåŠ¡æœªå¯åŠ¨</div>";
+    blacklistList.innerHTML = "<div class='item'>Î´ÊÚÈ¨»ò·şÎñÎ´Æô¶¯</div>";
     return;
   }
   const data = await res.json();
   const items = data.items || [];
   blacklistList.innerHTML = "";
   if (!items.length) {
-    blacklistList.innerHTML = "<div class='item'>è¿˜æ²¡æœ‰å±è”½è¯</div>";
+    blacklistList.innerHTML = "<div class='item'>»¹Ã»ÓĞÆÁ±Î´Ê</div>";
     return;
   }
   items.forEach((item) => {
     const div = document.createElement("div");
     div.className = "item stacked-item";
     div.innerHTML = `
-      <div>
+      <div class="stack-grow">
         <div><strong>${item.word}</strong></div>
-        <small>${item.reason || "æ— å¤‡æ³¨"}</small>
+        <small>${item.reason || "ÎŞ±¸×¢"}</small>
       </div>
       <div class="row compact-row">
-        <button data-delete-blacklist="${item.id}">ç§»é™¤</button>
+        <button class="danger-btn" data-delete-blacklist="${item.id}">ÒÆ³ı</button>
       </div>
     `;
     div.querySelector(`[data-delete-blacklist="${item.id}"]`).addEventListener("click", async () => {
@@ -153,3 +197,45 @@ async function addBlacklist() {
   document.getElementById("blacklistReason").value = "";
   loadBlacklist();
 }
+
+async function addBlacklistBulk() {
+  const text = document.getElementById("blacklistBulkText").value.trim();
+  const reason = document.getElementById("blacklistBulkReason").value.trim();
+  if (!text) return;
+  const res = await fetch("/admin/tag-blacklist/batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-token": getToken() },
+    body: JSON.stringify({ text, reason })
+  });
+  if (!res.ok) {
+    alert("ÅúÁ¿Ğ´ÈëÆÁ±Î´ÊÊ§°Ü");
+    return;
+  }
+  document.getElementById("blacklistBulkText").value = "";
+  document.getElementById("blacklistBulkReason").value = "";
+  loadBlacklist();
+}
+
+document.getElementById("saveToken").addEventListener("click", () => {
+  localStorage.setItem("adminToken", tokenInput.value.trim());
+  loadTags();
+  loadBlacklist();
+});
+document.getElementById("addTag").addEventListener("click", saveTag);
+document.getElementById("refreshTags").addEventListener("click", loadTags);
+document.getElementById("refreshBlacklist").addEventListener("click", loadBlacklist);
+document.getElementById("addBlacklist").addEventListener("click", addBlacklist);
+document.getElementById("addBlacklistBulk").addEventListener("click", addBlacklistBulk);
+document.getElementById("clearTagSelection").addEventListener("click", () => {
+  selectedTagIds.clear();
+  updateSelectionHint();
+  loadTags();
+});
+document.getElementById("disableSelectedTags").addEventListener("click", () => batchDeleteTags({ softDelete: true }));
+document.getElementById("deleteSelectedTags").addEventListener("click", () => batchDeleteTags({ softDelete: false }));
+document.getElementById("deleteAndBlacklistTags").addEventListener("click", () => batchDeleteTags({ softDelete: false, addToBlacklist: true }));
+
+tokenInput.value = getToken();
+updateSelectionHint();
+loadTags();
+loadBlacklist();

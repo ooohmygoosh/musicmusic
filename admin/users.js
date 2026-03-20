@@ -1,9 +1,11 @@
-ï»¿const tokenInput = document.getElementById("token");
+const tokenInput = document.getElementById("token");
 const userSummaryCards = document.getElementById("userSummaryCards");
 const userTable = document.getElementById("userTable");
 const userInfo = document.getElementById("userInfo");
+const userMetrics = document.getElementById("userMetrics");
 const userFavorites = document.getElementById("userFavorites");
 const userSongs = document.getElementById("userSongs");
+const userCreatedSongs = document.getElementById("userCreatedSongs");
 const userTags = document.getElementById("userTags");
 const userDetailTitle = document.getElementById("userDetailTitle");
 
@@ -15,7 +17,7 @@ function getToken() {
 
 function renderTable(container, headers, rows) {
   if (!rows || rows.length === 0) {
-    container.innerHTML = "<div class='muted'>æš‚æ— æ•°æ®</div>";
+    container.innerHTML = "<div class='muted'>ÔİÎŞÊı¾İ</div>";
     return;
   }
   const table = document.createElement("table");
@@ -31,13 +33,15 @@ function renderSummary(items) {
   const total = items.length;
   const active = items.filter((item) => item.is_active !== false).length;
   const withTags = items.filter((item) => Number(item.active_tag_count || 0) > 0).length;
-  const withQueues = items.reduce((sum, item) => sum + Number(item.queued_songs || 0), 0);
+  const creators = items.filter((item) => Number(item.created_song_count || 0) > 0).length;
+  const estimatedIncome = items.reduce((sum, item) => sum + Number(item.estimated_income || 0), 0).toFixed(2);
   userSummaryCards.innerHTML = "";
   [
-    ["è´¦æˆ·æ€»æ•°", total],
-    ["å¯ç”¨è´¦æˆ·", active],
-    ["å·²å½¢æˆç”»åƒ", withTags],
-    ["å¾…æ’­æ”¾é˜Ÿåˆ—", withQueues]
+    ["ÕË»§×ÜÊı", total],
+    ["ÆôÓÃÕË»§", active],
+    ["ÒÑĞÎ³É»­Ïñ", withTags],
+    ["ÓĞ×÷Æ·ÓÃ»§", creators],
+    ["Ô¤¹ÀÊÕÒæ", estimatedIncome]
   ].forEach(([label, value]) => {
     const card = document.createElement("div");
     card.className = "stat-card";
@@ -46,34 +50,56 @@ function renderSummary(items) {
   });
 }
 
+function renderMetricCards(metrics) {
+  userMetrics.innerHTML = "";
+  [
+    ["¶ÓÁĞ¸èÇú", metrics.queued_song_count || 0],
+    ["¸èµ¥Êı", metrics.playlist_count || 0],
+    ["ÓÃ»§µãÔŞ", metrics.like_count || 0],
+    ["ÓÃ»§Ìø¹ı", metrics.skip_count || 0],
+    ["»­Ïñ±êÇ©", metrics.active_tag_count || 0],
+    ["Éú³ÉÈÎÎñ", metrics.generation_job_count || 0],
+    ["´´½¨¸èÇú", metrics.created_song_count || 0],
+    ["×÷Æ··Ö·¢", metrics.creator_delivery_count || 0],
+    ["×÷Æ·»ñÔŞ", metrics.creator_like_count || 0],
+    ["Ô¤¹ÀÊÕÒæ", Number(metrics.estimated_income || 0).toFixed(2)]
+  ].forEach(([label, value]) => {
+    const card = document.createElement("div");
+    card.className = "stat-card";
+    card.innerHTML = `<div class="stat-label">${label}</div><div class="stat-value">${value}</div>`;
+    userMetrics.appendChild(card);
+  });
+}
+
 async function loadUsers() {
   const res = await fetch("/admin/user-summary", { headers: { "x-admin-token": getToken() } });
   if (!res.ok) {
     userSummaryCards.innerHTML = "";
-    userTable.innerHTML = "<div class='muted'>æœªæˆæƒæˆ–æœåŠ¡æœªå¯åŠ¨</div>";
+    userTable.innerHTML = "<div class='muted'>Î´ÊÚÈ¨»ò·şÎñÎ´Æô¶¯</div>";
     return;
   }
   const data = await res.json();
   const items = data.items || [];
   renderSummary(items);
   const rows = items.map((user) => [
-    `<button class='link' data-user='${user.id}'>${user.display_name || user.device_id || `ç”¨æˆ· ${user.id}`}</button>`,
+    `<button class='link' data-user='${user.id}'>${user.display_name || user.account_id || user.device_id || `ÓÃ»§ ${user.id}`}</button>`,
+    user.account_id || "-",
     user.device_id || "-",
+    user.has_password ? "ÒÑÉèÖÃ" : "Î´ÉèÖÃ",
     new Date(user.created_at).toLocaleString(),
     user.last_seen_at ? new Date(user.last_seen_at).toLocaleString() : "-",
     Number(user.active_tag_count || 0),
-    Number(user.playlist_count || 0),
-    Number(user.like_count || 0),
-    Number(user.skip_count || 0),
-    Number(user.queued_songs || 0),
-    user.is_active === false ? "å·²åœç”¨" : "æ­£å¸¸"
+    Number(user.created_song_count || 0),
+    Number(user.creator_like_count || 0),
+    Number(user.estimated_income || 0).toFixed(2),
+    user.is_active === false ? "ÒÑÍ£ÓÃ" : "Õı³£"
   ]);
-  renderTable(userTable, ["è´¦æˆ·", "è®¾å¤‡ID", "æ³¨å†Œæ—¶é—´", "æœ€è¿‘æ´»è·ƒ", "ç”»åƒæ ‡ç­¾", "æ­Œå•", "æ”¶è—", "è·³è¿‡", "é˜Ÿåˆ—", "çŠ¶æ€"], rows);
+  renderTable(userTable, ["ÕË»§", "ÕËºÅID", "Éè±¸ID", "ÃÜÂë", "×¢²áÊ±¼ä", "×î½ü»îÔ¾", "»­Ïñ±êÇ©", "´´½¨¸èÇú", "×÷Æ·»ñÔŞ", "Ô¤¹ÀÊÕÒæ", "×´Ì¬"], rows);
 
   userTable.querySelectorAll("button[data-user]").forEach((btn) => {
     btn.addEventListener("click", () => {
       selectedUserId = btn.dataset.user;
-      userDetailTitle.textContent = `è´¦æˆ· ${btn.textContent} è¯¦æƒ…`;
+      userDetailTitle.textContent = `ÕË»§ ${btn.textContent} ÏêÇé`;
       loadUserDetail(selectedUserId);
     });
   });
@@ -82,61 +108,61 @@ async function loadUsers() {
 async function loadUserDetail(userId) {
   const res = await fetch(`/admin/user-detail?user_id=${userId}`, { headers: { "x-admin-token": getToken() } });
   if (!res.ok) {
-    userInfo.innerHTML = "<div class='muted'>æœªæˆæƒæˆ–æœåŠ¡æœªå¯åŠ¨</div>";
+    userInfo.innerHTML = "<div class='muted'>Î´ÊÚÈ¨»ò·şÎñÎ´Æô¶¯</div>";
+    userMetrics.innerHTML = "";
     userFavorites.innerHTML = "";
     userSongs.innerHTML = "";
+    userCreatedSongs.innerHTML = "";
     userTags.innerHTML = "";
     return;
   }
   const data = await res.json();
   const user = data.user || {};
+  const metrics = data.metrics || {};
 
   userInfo.innerHTML = `
-    <div class="stat-card"><div class="stat-label">æ˜¾ç¤ºåç§°</div><div class="stat-value small">${user.display_name || user.device_id || `ç”¨æˆ· ${user.id}`}</div></div>
-    <div class="stat-card"><div class="stat-label">è´¦æˆ· ID</div><div class="stat-value small">${user.device_id || "-"}</div></div>
-    <div class="stat-card"><div class="stat-label">æ³¨å†Œæ—¶é—´</div><div class="stat-value small">${user.created_at ? new Date(user.created_at).toLocaleString() : "-"}</div></div>
-    <div class="stat-card"><div class="stat-label">æœ€è¿‘æ´»è·ƒ</div><div class="stat-value small">${user.last_seen_at ? new Date(user.last_seen_at).toLocaleString() : "-"}</div></div>
-    <div class="stat-card"><div class="stat-label">çŠ¶æ€</div><div class="stat-value small">${user.is_active === false ? "å·²åœç”¨" : "æ­£å¸¸"}</div></div>
+    <div class="stat-card"><div class="stat-label">ÏÔÊ¾Ãû³Æ</div><div class="stat-value small">${user.display_name || user.account_id || user.device_id || `ÓÃ»§ ${user.id}`}</div></div>
+    <div class="stat-card"><div class="stat-label">ÕËºÅ ID</div><div class="stat-value small">${user.account_id || "-"}</div></div>
+    <div class="stat-card"><div class="stat-label">Éè±¸ ID</div><div class="stat-value small">${user.device_id || "-"}</div></div>
+    <div class="stat-card"><div class="stat-label">Í·Ïñ</div><div class="stat-value small">${user.avatar || "-"}</div></div>
+    <div class="stat-card"><div class="stat-label">ÃÜÂë×´Ì¬</div><div class="stat-value small">${user.has_password ? "ÒÑÉèÖÃ" : "Î´ÉèÖÃ"}</div></div>
+    <div class="stat-card"><div class="stat-label">×¢²áÊ±¼ä</div><div class="stat-value small">${user.created_at ? new Date(user.created_at).toLocaleString() : "-"}</div></div>
+    <div class="stat-card"><div class="stat-label">×î½ü»îÔ¾</div><div class="stat-value small">${user.last_seen_at ? new Date(user.last_seen_at).toLocaleString() : "-"}</div></div>
+    <div class="stat-card"><div class="stat-label">×´Ì¬</div><div class="stat-value small">${user.is_active === false ? "ÒÑÍ£ÓÃ" : "Õı³£"}</div></div>
   `;
 
+  renderMetricCards(metrics);
+
   const favoriteRows = (data.favorites || []).map((item) => [
-    item.title || `æ­Œæ›² ${item.song_id}`,
+    item.title || `¸èÇú ${item.song_id}`,
     (item.playlists || []).join(" / ") || "-",
     (item.tags || []).join(" / ") || "-"
   ]);
-  renderTable(userFavorites, ["æ­Œæ›²åç§°", "æ­Œå•", "æ ‡ç­¾"], favoriteRows);
+  renderTable(userFavorites, ["¸èÇúÃû³Æ", "¸èµ¥", "±êÇ©"], favoriteRows);
 
-  const songRows = (data.songs || []).map((item) => [
-    item.title || `æ­Œæ›² ${item.song_id}`,
+  const songRows = (data.queue_history || data.songs || []).map((item) => [
+    item.title || `¸èÇú ${item.song_id}`,
     item.source || "generated",
     (item.tags || []).join(" / ") || "-"
   ]);
-  renderTable(userSongs, ["æ­Œæ›²åç§°", "æ¥æº", "æ ‡ç­¾"], songRows);
+  renderTable(userSongs, ["¸èÇúÃû³Æ", "À´Ô´", "±êÇ©"], songRows);
 
-  let detailTagWeights = data.tag_weights || data.tagWeights || [];
-  if (!Array.isArray(detailTagWeights) || detailTagWeights.length === 0) {
-    try {
-      const fallbackRes = await fetch(`/user-tags?user_id=${userId}`);
-      if (fallbackRes.ok) {
-        const fallbackData = await fallbackRes.json();
-        detailTagWeights = (fallbackData.items || []).map((item) => ({
-          name: item.name,
-          type: item.type,
-          weight: item.weight
-        }));
-      }
-    } catch (_) {
-      // ignore fallback errors and keep empty table state
-    }
-  }
+  const createdSongRows = (data.created_songs || []).map((item) => [
+    item.title || `¸èÇú ${item.id}`,
+    Number(item.deliveries || 0),
+    Number(item.likes || 0),
+    (item.tags || []).join(" / ") || "-"
+  ]);
+  renderTable(userCreatedSongs, ["¸èÇúÃû³Æ", "·Ö·¢´ÎÊı", "»ñÔŞ´ÎÊı", "±êÇ©"], createdSongRows);
 
+  const detailTagWeights = data.tag_weights || [];
   const tagRows = detailTagWeights.map((item) => [
     item.name || "-",
     item.type || "-",
-    Number(item.weight || 0).toFixed(6)
+    Number(item.weight || 0).toFixed(6),
+    item.last_updated ? new Date(item.last_updated).toLocaleString() : "-"
   ]);
-  renderTable(userTags, ["æ ‡ç­¾", "åˆ†ç±»", "æƒé‡"], tagRows);
-
+  renderTable(userTags, ["±êÇ©", "·ÖÀà", "È¨ÖØ", "¸üĞÂÊ±¼ä"], tagRows);
 }
 
 document.getElementById("saveToken").addEventListener("click", () => {
@@ -151,5 +177,3 @@ document.getElementById("refreshUserDetail").addEventListener("click", () => {
 
 tokenInput.value = getToken();
 loadUsers();
-
-

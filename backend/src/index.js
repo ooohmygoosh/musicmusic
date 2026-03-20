@@ -1,7 +1,7 @@
-ï»¿import "dotenv/config";
+import "dotenv/config";
 import crypto from "crypto";
 import Fastify from "fastify";
-import { query } from "./db.js";
+import { query, withTransaction } from "./db.js";
 
 const app = Fastify({ logger: true });
 
@@ -17,6 +17,8 @@ const COVER_IMAGE_BASE_URL = (process.env.COVER_IMAGE_BASE_URL || "https://ark.c
 const COVER_IMAGE_MODEL = process.env.COVER_IMAGE_MODEL || "doubao-seedream-4-0-250828";
 const COVER_IMAGE_SIZE = process.env.COVER_IMAGE_SIZE || "1024x1024";
 const COVER_IMAGE_ENABLED = process.env.COVER_IMAGE_ENABLED === "true";
+const CREATOR_EARNING_PER_DELIVERY = Number(process.env.CREATOR_EARNING_PER_DELIVERY || 0.02);
+const CREATOR_EARNING_PER_LIKE = Number(process.env.CREATOR_EARNING_PER_LIKE || 0.2);
 
 const DEFAULT_TAG_WEIGHT = 0.3;
 const SELECTED_TAG_WEIGHT = 0.7;
@@ -105,22 +107,141 @@ app.get("/tags", async () => {
   return { items: rows };
 });
 
+function normalizeIdList(values) {
+  if (!Array.isArray(values)) return [];
+  return [...new Set(values.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0))];
+}
+
+function normalizeWordList(values) {
+  const raw = Array.isArray(values)
+    ? values
+    : String(values || "")
+      .split(/[\n,£¬;£»]+/)
+      .map((value) => value.trim());
+  return [...new Set(raw.map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+function estimateCreatorIncome(deliveries = 0, likes = 0) {
+  return Number((Number(deliveries || 0) * CREATOR_EARNING_PER_DELIVERY + Number(likes || 0) * CREATOR_EARNING_PER_LIKE).toFixed(2));
+}
+
+async function getUserCreatedSongs(userId, options = {}) {
+  const limit = Math.max(1, Math.min(Number(options.limit || 100), 200));
+  const search = options.search ? `%${String(options.search).trim()}%` : null;
+  const { rows } = await query(
+    `SELECT lib.id,
+      lib.user_id,
+      lib.created_at,
+      lib.title,
+      lib.cover_url,
+      lib.prompt,
+      lib.base_prompt,
+      lib.cover_hint,
+      lib.model,
+      lib.duration,
+      lib.style,
+      lib.generation_mode,
+      lib.is_available,
+      COUNT(DISTINCT delivered.id)::int AS copies,
+      COUNT(DISTINCT q.id)::int AS deliveries,
+      COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS likes,
+      COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skips,
+      COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags,
+      COALESCE(array_remove(array_agg(DISTINCT t.type), NULL), '{}') AS tag_types,
+      sa.audio_url
+    FROM songs lib
+    LEFT JOIN songs delivered ON COALESCE(delivered.source_song_id, delivered.id) = lib.id
+    LEFT JOIN feedback f ON f.song_id = delivered.id
+    LEFT JOIN user_song_queue q ON q.song_id = delivered.id
+    LEFT JOIN song_tags st ON st.song_id = lib.id
+    LEFT JOIN tags t ON t.id = st.tag_id
+    LEFT JOIN LATERAL (
+      SELECT audio_url FROM song_assets WHERE song_id = lib.id ORDER BY id DESC LIMIT 1
+    ) sa ON true
+    WHERE lib.user_id = $1
+      AND lib.source_song_id IS NULL
+      AND ($2::text IS NULL OR lib.title ILIKE $2 OR lib.prompt ILIKE $2 OR lib.base_prompt ILIKE $2)
+    GROUP BY lib.id, sa.audio_url
+    ORDER BY lib.created_at DESC
+    LIMIT $3`,
+    [Number(userId), search, limit]
+  );
+  return rows;
+}
+
+async function getUserAdminMetrics(userId) {
+  const { rows } = await query(
+    `SELECT
+      COALESCE((SELECT COUNT(*) FROM feedback WHERE user_id = $1), 0)::int AS feedback_count,
+      COALESCE((SELECT COUNT(*) FROM feedback WHERE user_id = $1 AND action = 'like'), 0)::int AS like_count,
+      COALESCE((SELECT COUNT(*) FROM feedback WHERE user_id = $1 AND action = 'skip'), 0)::int AS skip_count,
+      COALESCE((SELECT COUNT(*) FROM user_song_queue WHERE user_id = $1 AND COALESCE(is_hidden, false) = false), 0)::int AS queued_song_count,
+      COALESCE((SELECT COUNT(*) FROM playlists WHERE user_id = $1), 0)::int AS playlist_count,
+      COALESCE((SELECT COUNT(*) FROM user_tags WHERE user_id = $1 AND COALESCE(is_active, true) = true), 0)::int AS active_tag_count,
+      COALESCE((SELECT COUNT(*) FROM generation_jobs WHERE user_id = $1), 0)::int AS generation_job_count,
+      COALESCE((SELECT COUNT(*) FROM songs s WHERE s.user_id = $1 AND s.source_song_id IS NULL), 0)::int AS created_song_count,
+      COALESCE((SELECT COUNT(*) FROM user_song_queue q JOIN songs delivered ON delivered.id = q.song_id JOIN songs root ON root.id = COALESCE(delivered.source_song_id, delivered.id) WHERE root.user_id = $1 AND root.source_song_id IS NULL), 0)::int AS creator_delivery_count,
+      COALESCE((SELECT COUNT(*) FROM feedback f JOIN songs delivered ON delivered.id = f.song_id JOIN songs root ON root.id = COALESCE(delivered.source_song_id, delivered.id) WHERE root.user_id = $1 AND root.source_song_id IS NULL AND f.action = 'like'), 0)::int AS creator_like_count,
+      COALESCE((SELECT COUNT(*) FROM feedback f JOIN songs delivered ON delivered.id = f.song_id JOIN songs root ON root.id = COALESCE(delivered.source_song_id, delivered.id) WHERE root.user_id = $1 AND root.source_song_id IS NULL AND f.action = 'skip'), 0)::int AS creator_skip_count`,
+    [Number(userId)]
+  );
+  const metrics = rows[0] || {};
+  return {
+    ...metrics,
+    estimated_income: estimateCreatorIncome(metrics.creator_delivery_count, metrics.creator_like_count)
+  };
+}
+
+async function deleteLibrarySongs(rootSongIds) {
+  return withTransaction(async (client) => {
+    const roots = await client.query(
+      `SELECT id
+       FROM songs
+       WHERE id = ANY($1::int[])
+         AND source_song_id IS NULL`,
+      [rootSongIds]
+    );
+    const existingRootIds = roots.rows.map((row) => Number(row.id)).filter(Boolean);
+    if (existingRootIds.length === 0) {
+      return { deleted_root_ids: [], deleted_song_ids: [] };
+    }
+
+    const related = await client.query(
+      `SELECT id
+       FROM songs
+       WHERE COALESCE(source_song_id, id) = ANY($1::int[])`,
+      [existingRootIds]
+    );
+    const deletedSongIds = related.rows.map((row) => Number(row.id)).filter(Boolean);
+    if (deletedSongIds.length > 0) {
+      await client.query(`DELETE FROM songs WHERE id = ANY($1::int[])`, [deletedSongIds]);
+    }
+
+    return {
+      deleted_root_ids: existingRootIds,
+      deleted_song_ids: deletedSongIds
+    };
+  });
+}
+
 app.get("/admin/tags", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
-  const { rows } = await query("SELECT * FROM tags ORDER BY id");
+  const { rows } = await query("SELECT * FROM tags ORDER BY type ASC, sort_order ASC, id ASC");
   return { items: rows };
 });
 
 app.post("/admin/tags", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
   const { name, type, description, sort_order, is_active } = request.body || {};
-  if (!name || !type) {
+  const cleanName = String(name || "").trim();
+  const cleanType = String(type || "").trim();
+  if (!cleanName || !cleanType) {
     reply.code(400).send({ error: "name and type required" });
     return;
   }
   const { rows } = await query(
     "INSERT INTO tags (name, type, description, sort_order, is_active) VALUES ($1, $2, $3, COALESCE($4, 0), COALESCE($5, true)) RETURNING *",
-    [name, type, description || null, sort_order ?? 0, is_active]
+    [cleanName, cleanType, description ? String(description).trim() : null, sort_order ?? 0, is_active]
   );
   return { item: rows[0] };
 });
@@ -130,17 +251,69 @@ app.patch("/admin/tags/:id", async (request, reply) => {
   const { id } = request.params;
   const { name, type, is_active, description, sort_order } = request.body || {};
   const { rows } = await query(
-    "UPDATE tags SET name = COALESCE($1, name), type = COALESCE($2, type), is_active = COALESCE($3, is_active), description = COALESCE($4, description), sort_order = COALESCE($5, sort_order) WHERE id = $6 RETURNING *",
+    "UPDATE tags SET name = COALESCE(NULLIF($1, ''), name), type = COALESCE(NULLIF($2, ''), type), is_active = COALESCE($3, is_active), description = COALESCE($4, description), sort_order = COALESCE($5, sort_order) WHERE id = $6 RETURNING *",
     [name, type, is_active, description, sort_order, id]
   );
-  return { item: rows[0] };
+  return { item: rows[0] || null };
 });
 
 app.delete("/admin/tags/:id", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
   const { id } = request.params;
-  await query("DELETE FROM tags WHERE id = $1", [id]);
+  await query("DELETE FROM tags WHERE id = $1", [Number(id)]);
   return { ok: true };
+});
+
+app.post("/admin/tags/batch-delete", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const ids = normalizeIdList(request.body?.ids || request.body?.tag_ids);
+  const addToBlacklist = request.body?.add_to_blacklist === true;
+  const softDelete = request.body?.soft_delete === true;
+  const blacklistReason = String(request.body?.blacklist_reason || request.body?.reason || "").trim() || null;
+  if (ids.length === 0) {
+    reply.code(400).send({ error: "ids required" });
+    return;
+  }
+
+  const result = await withTransaction(async (client) => {
+    const tagLookup = await client.query(
+      "SELECT id, name FROM tags WHERE id = ANY($1::int[])",
+      [ids]
+    );
+    const items = tagLookup.rows || [];
+    if (items.length === 0) {
+      return { deleted_count: 0, ids: [], blacklisted_words: [] };
+    }
+
+    if (addToBlacklist) {
+      for (const item of items) {
+        await client.query(
+          "INSERT INTO tag_blacklist (word, reason) VALUES ($1, $2) ON CONFLICT (word) DO UPDATE SET reason = COALESCE(EXCLUDED.reason, tag_blacklist.reason)",
+          [item.name, blacklistReason]
+        );
+      }
+    }
+
+    if (softDelete) {
+      await client.query(
+        "UPDATE tags SET is_active = false WHERE id = ANY($1::int[])",
+        [items.map((item) => Number(item.id))]
+      );
+    } else {
+      await client.query(
+        "DELETE FROM tags WHERE id = ANY($1::int[])",
+        [items.map((item) => Number(item.id))]
+      );
+    }
+
+    return {
+      deleted_count: items.length,
+      ids: items.map((item) => Number(item.id)),
+      blacklisted_words: addToBlacklist ? items.map((item) => item.name) : []
+    };
+  });
+
+  return { ok: true, ...result };
 });
 
 app.get("/admin/tag-blacklist", async (request, reply) => {
@@ -164,15 +337,36 @@ app.post("/admin/tag-blacklist", async (request, reply) => {
   return { item: rows[0] };
 });
 
+app.post("/admin/tag-blacklist/batch", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const words = normalizeWordList(request.body?.words || request.body?.text);
+  const reason = String(request.body?.reason || "").trim() || null;
+  if (words.length === 0) {
+    reply.code(400).send({ error: "words required" });
+    return;
+  }
+
+  const items = [];
+  for (const word of words) {
+    const { rows } = await query(
+      "INSERT INTO tag_blacklist (word, reason) VALUES ($1, $2) ON CONFLICT (word) DO UPDATE SET reason = COALESCE(EXCLUDED.reason, tag_blacklist.reason) RETURNING *",
+      [word, reason]
+    );
+    if (rows[0]) items.push(rows[0]);
+  }
+  return { ok: true, count: items.length, items };
+});
+
 app.delete("/admin/tag-blacklist/:id", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
   const { id } = request.params;
   await query("DELETE FROM tag_blacklist WHERE id = $1", [Number(id)]);
   return { ok: true };
 });
+
 app.get("/admin/users", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
-  const { rows } = await query("SELECT id, device_id, account_id, display_name, avatar, created_at, last_seen_at, is_active FROM users ORDER BY created_at DESC");
+  const { rows } = await query("SELECT id, device_id, account_id, display_name, avatar, created_at, last_seen_at, is_active, (password_hash IS NOT NULL AND password_hash <> '') AS has_password FROM users ORDER BY created_at DESC");
   return { items: rows };
 });
 
@@ -181,7 +375,7 @@ app.patch("/admin/users/:id", async (request, reply) => {
   const { id } = request.params;
   const { display_name, is_active } = request.body || {};
   const { rows } = await query(
-    "UPDATE users SET display_name = COALESCE(NULLIF($1, ''), display_name), is_active = COALESCE($2, is_active), last_seen_at = COALESCE(last_seen_at, NOW()) WHERE id = $3 RETURNING id, device_id, account_id, display_name, avatar, created_at, last_seen_at, is_active",
+    "UPDATE users SET display_name = COALESCE(NULLIF($1, ''), display_name), is_active = COALESCE($2, is_active), last_seen_at = COALESCE(last_seen_at, NOW()) WHERE id = $3 RETURNING id, device_id, account_id, display_name, avatar, created_at, last_seen_at, is_active, (password_hash IS NOT NULL AND password_hash <> '') AS has_password",
     [display_name, is_active, Number(id)]
   );
   return { item: rows[0] || null };
@@ -190,9 +384,34 @@ app.patch("/admin/users/:id", async (request, reply) => {
 app.get("/admin/user-summary", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
   const { rows } = await query(
-    "SELECT u.id, u.device_id, u.account_id, u.avatar, COALESCE(u.display_name, u.account_id, u.device_id) AS display_name, u.created_at, u.last_seen_at, u.is_active, COUNT(DISTINCT f.id)::int AS feedback_count, COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS like_count, COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skip_count, COUNT(DISTINCT q.song_id)::int AS queued_songs, COUNT(DISTINCT p.id)::int AS playlist_count, COUNT(DISTINCT ut.tag_id) FILTER (WHERE COALESCE(ut.is_active, true) = true)::int AS active_tag_count FROM users u LEFT JOIN feedback f ON f.user_id = u.id LEFT JOIN user_song_queue q ON q.user_id = u.id LEFT JOIN playlists p ON p.user_id = u.id LEFT JOIN user_tags ut ON ut.user_id = u.id GROUP BY u.id ORDER BY COALESCE(u.last_seen_at, u.created_at) DESC, u.created_at DESC"
+    `SELECT
+      u.id,
+      u.device_id,
+      u.account_id,
+      u.avatar,
+      COALESCE(u.display_name, u.account_id, u.device_id) AS display_name,
+      u.created_at,
+      u.last_seen_at,
+      u.is_active,
+      (u.password_hash IS NOT NULL AND u.password_hash <> '') AS has_password,
+      COALESCE((SELECT COUNT(*) FROM feedback WHERE user_id = u.id), 0)::int AS feedback_count,
+      COALESCE((SELECT COUNT(*) FROM feedback WHERE user_id = u.id AND action = 'like'), 0)::int AS like_count,
+      COALESCE((SELECT COUNT(*) FROM feedback WHERE user_id = u.id AND action = 'skip'), 0)::int AS skip_count,
+      COALESCE((SELECT COUNT(*) FROM user_song_queue WHERE user_id = u.id AND COALESCE(is_hidden, false) = false), 0)::int AS queued_songs,
+      COALESCE((SELECT COUNT(*) FROM playlists WHERE user_id = u.id), 0)::int AS playlist_count,
+      COALESCE((SELECT COUNT(*) FROM user_tags WHERE user_id = u.id AND COALESCE(is_active, true) = true), 0)::int AS active_tag_count,
+      COALESCE((SELECT COUNT(*) FROM songs s WHERE s.user_id = u.id AND s.source_song_id IS NULL), 0)::int AS created_song_count,
+      COALESCE((SELECT COUNT(*) FROM user_song_queue q JOIN songs delivered ON delivered.id = q.song_id JOIN songs root ON root.id = COALESCE(delivered.source_song_id, delivered.id) WHERE root.user_id = u.id AND root.source_song_id IS NULL), 0)::int AS creator_delivery_count,
+      COALESCE((SELECT COUNT(*) FROM feedback f JOIN songs delivered ON delivered.id = f.song_id JOIN songs root ON root.id = COALESCE(delivered.source_song_id, delivered.id) WHERE root.user_id = u.id AND root.source_song_id IS NULL AND f.action = 'like'), 0)::int AS creator_like_count
+    FROM users u
+    ORDER BY COALESCE(u.last_seen_at, u.created_at) DESC, u.created_at DESC`
   );
-  return { items: rows };
+  return {
+    items: rows.map((row) => ({
+      ...row,
+      estimated_income: estimateCreatorIncome(row.creator_delivery_count, row.creator_like_count)
+    }))
+  };
 });
 
 app.get("/admin/user-feedback", async (request, reply) => {
@@ -218,27 +437,31 @@ app.get("/admin/user-detail", async (request, reply) => {
   }
   const userId = Number(user_id);
 
-  const user = await query("SELECT id, device_id, account_id, display_name, avatar, created_at, last_seen_at, is_active FROM users WHERE id = $1", [userId]);
-
-  const favorites = await query(
-    "SELECT f.created_at, s.id AS song_id, COALESCE(qm.display_title, s.title) AS title, COALESCE(qm.display_cover_url, s.cover_url) AS cover_url, s.prompt, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, COALESCE(array_remove(array_agg(DISTINCT p.name), NULL), '{}') AS playlists FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN LATERAL (SELECT display_title, display_cover_url FROM user_song_queue q WHERE q.user_id = f.user_id AND q.song_id = s.id AND (q.display_title IS NOT NULL OR q.display_cover_url IS NOT NULL) ORDER BY q.created_at DESC, q.id DESC LIMIT 1) qm ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN playlist_songs ps ON ps.song_id = s.id LEFT JOIN playlists p ON p.id = ps.playlist_id AND p.user_id = f.user_id WHERE f.user_id = $1 AND f.action = 'like' GROUP BY f.id, s.id, qm.display_title, qm.display_cover_url ORDER BY f.created_at DESC LIMIT 100",
-    [userId]
-  );
-
-  const songs = await query(
-    "SELECT x.song_id, x.title, x.cover_url, x.prompt, x.created_at, x.source, x.tags FROM (SELECT DISTINCT ON (q.id) s.id AS song_id, COALESCE(q.display_title, s.title) AS title, COALESCE(q.display_cover_url, s.cover_url) AS cover_url, s.prompt, q.created_at, q.source, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 GROUP BY q.id, s.id, q.display_title, q.display_cover_url, q.created_at, q.source ORDER BY q.id, q.created_at DESC) x ORDER BY x.created_at DESC LIMIT 100",
-    [userId]
-  );
-
-  const tagWeights = await query(
-    "SELECT t.name, t.type, ut.weight FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND COALESCE(ut.is_active, true) = true ORDER BY ut.weight DESC",
-    [userId]
-  );
+  const [user, metrics, favorites, queueHistory, createdSongs, tagWeights] = await Promise.all([
+    query("SELECT id, device_id, account_id, display_name, avatar, created_at, last_seen_at, is_active, (password_hash IS NOT NULL AND password_hash <> '') AS has_password FROM users WHERE id = $1", [userId]),
+    getUserAdminMetrics(userId),
+    query(
+      "SELECT f.created_at, s.id AS song_id, COALESCE(qm.display_title, s.title) AS title, COALESCE(qm.display_cover_url, s.cover_url) AS cover_url, s.prompt, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, COALESCE(array_remove(array_agg(DISTINCT p.name), NULL), '{}') AS playlists FROM feedback f JOIN songs s ON s.id = f.song_id LEFT JOIN LATERAL (SELECT display_title, display_cover_url FROM user_song_queue q WHERE q.user_id = f.user_id AND q.song_id = s.id AND (q.display_title IS NOT NULL OR q.display_cover_url IS NOT NULL) ORDER BY q.created_at DESC, q.id DESC LIMIT 1) qm ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN playlist_songs ps ON ps.song_id = s.id LEFT JOIN playlists p ON p.id = ps.playlist_id AND p.user_id = f.user_id WHERE f.user_id = $1 AND f.action = 'like' GROUP BY f.id, s.id, qm.display_title, qm.display_cover_url ORDER BY f.created_at DESC LIMIT 100",
+      [userId]
+    ),
+    query(
+      "SELECT x.song_id, x.title, x.cover_url, x.prompt, x.created_at, x.source, x.tags FROM (SELECT DISTINCT ON (q.id) s.id AS song_id, COALESCE(q.display_title, s.title) AS title, COALESCE(q.display_cover_url, s.cover_url) AS cover_url, s.prompt, q.created_at, q.source, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 GROUP BY q.id, s.id, q.display_title, q.display_cover_url, q.created_at, q.source ORDER BY q.id, q.created_at DESC) x ORDER BY x.created_at DESC LIMIT 100",
+      [userId]
+    ),
+    getUserCreatedSongs(userId, { limit: 100 }),
+    query(
+      "SELECT t.id AS tag_id, t.name, t.type, ut.weight, ut.last_updated FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND COALESCE(ut.is_active, true) = true ORDER BY ut.weight DESC",
+      [userId]
+    )
+  ]);
 
   return {
     user: user.rows[0] || { id: userId },
+    metrics,
     favorites: favorites.rows || [],
-    songs: songs.rows || [],
+    songs: queueHistory.rows || [],
+    queue_history: queueHistory.rows || [],
+    created_songs: createdSongs || [],
     tag_weights: tagWeights.rows || []
   };
 });
@@ -301,15 +524,54 @@ app.get("/admin/favorites", async (request, reply) => {
 
 app.get("/admin/library-songs", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
-  const { q, available, type } = request.query || {};
+  const { q, available, type, creator_user_id } = request.query || {};
   const search = q ? `%${String(q).trim()}%` : null;
   const availableFilter =
     available === "true" ? true : available === "false" ? false : null;
   const typeFilter = type ? String(type).trim() : null;
+  const creatorUserId = creator_user_id ? Number(creator_user_id) : null;
 
   const { rows } = await query(
-    "SELECT lib.id, lib.title, lib.cover_url, lib.prompt, lib.base_prompt, lib.cover_hint, lib.model, lib.duration, lib.style, lib.is_available, lib.reuse_count, COUNT(DISTINCT all_s.id)::int AS copies, COUNT(DISTINCT qd.id)::int AS deliveries, COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS likes, COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skips, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, COALESCE(array_remove(array_agg(DISTINCT t.type), NULL), '{}') AS tag_types, COALESCE((array_remove(array_agg(DISTINCT t.type), NULL))[1], 'Uncategorized') AS primary_type, sa.audio_url FROM songs lib LEFT JOIN songs all_s ON COALESCE(all_s.source_song_id, all_s.id) = lib.id LEFT JOIN feedback f ON f.song_id = all_s.id LEFT JOIN user_song_queue qd ON qd.song_id = all_s.id LEFT JOIN song_tags st ON st.song_id = lib.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = lib.id ORDER BY id DESC LIMIT 1) sa ON true WHERE lib.source_song_id IS NULL AND ($1::text IS NULL OR lib.title ILIKE $1 OR lib.prompt ILIKE $1 OR lib.base_prompt ILIKE $1 OR EXISTS (SELECT 1 FROM song_tags st2 JOIN tags t2 ON t2.id = st2.tag_id WHERE st2.song_id = lib.id AND (t2.name ILIKE $1 OR t2.type ILIKE $1))) AND ($2::boolean IS NULL OR lib.is_available = $2) AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM song_tags st3 JOIN tags t3 ON t3.id = st3.tag_id WHERE st3.song_id = lib.id AND t3.type = $3)) GROUP BY lib.id, sa.audio_url ORDER BY likes DESC, lib.reuse_count DESC, deliveries DESC, lib.created_at DESC LIMIT 300",
-    [search, availableFilter, typeFilter]
+    `SELECT lib.id,
+      lib.user_id AS creator_user_id,
+      COALESCE(u.display_name, u.account_id, u.device_id) AS creator_name,
+      lib.created_at,
+      lib.generation_mode,
+      lib.title,
+      lib.cover_url,
+      lib.prompt,
+      lib.base_prompt,
+      lib.cover_hint,
+      lib.model,
+      lib.duration,
+      lib.style,
+      lib.is_available,
+      lib.reuse_count,
+      COUNT(DISTINCT all_s.id)::int AS copies,
+      COUNT(DISTINCT qd.id)::int AS deliveries,
+      COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS likes,
+      COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skips,
+      COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags,
+      COALESCE(array_remove(array_agg(DISTINCT t.type), NULL), '{}') AS tag_types,
+      COALESCE((array_remove(array_agg(DISTINCT t.type), NULL))[1], 'Uncategorized') AS primary_type,
+      sa.audio_url
+    FROM songs lib
+    LEFT JOIN users u ON u.id = lib.user_id
+    LEFT JOIN songs all_s ON COALESCE(all_s.source_song_id, all_s.id) = lib.id
+    LEFT JOIN feedback f ON f.song_id = all_s.id
+    LEFT JOIN user_song_queue qd ON qd.song_id = all_s.id
+    LEFT JOIN song_tags st ON st.song_id = lib.id
+    LEFT JOIN tags t ON t.id = st.tag_id
+    LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = lib.id ORDER BY id DESC LIMIT 1) sa ON true
+    WHERE lib.source_song_id IS NULL
+      AND ($1::text IS NULL OR lib.title ILIKE $1 OR lib.prompt ILIKE $1 OR lib.base_prompt ILIKE $1 OR COALESCE(u.display_name, u.account_id, u.device_id) ILIKE $1 OR EXISTS (SELECT 1 FROM song_tags st2 JOIN tags t2 ON t2.id = st2.tag_id WHERE st2.song_id = lib.id AND (t2.name ILIKE $1 OR t2.type ILIKE $1)))
+      AND ($2::boolean IS NULL OR lib.is_available = $2)
+      AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM song_tags st3 JOIN tags t3 ON t3.id = st3.tag_id WHERE st3.song_id = lib.id AND t3.type = $3))
+      AND ($4::int IS NULL OR lib.user_id = $4)
+    GROUP BY lib.id, u.display_name, u.account_id, u.device_id, sa.audio_url
+    ORDER BY likes DESC, lib.reuse_count DESC, deliveries DESC, lib.created_at DESC
+    LIMIT 300`,
+    [search, availableFilter, typeFilter, creatorUserId]
   );
   return { items: rows };
 });
@@ -328,7 +590,23 @@ app.patch("/admin/library-songs/:id", async (request, reply) => {
   );
   return { item: rows[0] || null };
 });
-app.post("/auth/register", async (request, reply) => {
+
+app.post("/admin/library-songs/batch-delete", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const ids = normalizeIdList(request.body?.ids || request.body?.song_ids);
+  if (ids.length === 0) {
+    reply.code(400).send({ error: "ids required" });
+    return;
+  }
+  const result = await deleteLibrarySongs(ids);
+  return {
+    ok: true,
+    deleted_root_count: result.deleted_root_ids.length,
+    deleted_song_count: result.deleted_song_ids.length,
+    deleted_root_ids: result.deleted_root_ids,
+    deleted_song_ids: result.deleted_song_ids
+  };
+});app.post("/auth/register", async (request, reply) => {
   const { account_id, password, display_name, avatar } = request.body || {};
   const accountId = normalizeAccountId(account_id);
   const cleanName = String(display_name || "").trim();
@@ -536,6 +814,15 @@ app.post("/user-tags/weight", async (request, reply) => {
   return { ok: true, item: rows[0] };
 });
 
+app.get("/my-created-songs", async (request, reply) => {
+  const { user_id, limit, q } = request.query || {};
+  if (!user_id) {
+    reply.code(400).send({ error: "user_id required" });
+    return;
+  }
+  const items = await getUserCreatedSongs(Number(user_id), { limit, search: q });
+  return { items };
+});
 app.get("/favorites", async (request, reply) => {
   const { user_id } = request.query || {};
   if (!user_id) {
@@ -864,10 +1151,10 @@ function normalizeTitle(title, fallback = null) {
 function buildCoverPrompt({ title, coverHint, prompt }) {
   const parts = [
     String(coverHint || "").trim(),
-    title ? "å•æ›²åï¼šã€Š" + title + "ã€‹ã€‚" : "",
-    "è¯·ç”Ÿæˆä¸€å¼ æ­£æ–¹å½¢éŸ³ä¹å°é¢æ’å›¾ï¼Œä¸è¦ä»»ä½•æ–‡å­—ã€logoã€æ°´å°æˆ–æ’ç‰ˆã€‚",
-    "åªä¿ç•™ä¸€ä¸ªæ˜ç¡®ä¸»ä½“ä¸æ°›å›´èƒŒæ™¯ï¼Œçªå‡ºè‰²å½©ã€å…‰æ„Ÿã€å±‚æ¬¡å’Œæƒ…ç»ªï¼Œé€‚åˆéŸ³ä¹æµåª’ä½“å°é¢ã€‚",
-    prompt ? "éŸ³ä¹æ°”è´¨å‚è€ƒï¼š" + String(prompt).trim() : ""
+    title ? "µ¥ÇúÃû£º¡¶" + title + "¡·¡£" : "",
+    "ÇëÉú³ÉÒ»ÕÅÕı·½ĞÎÒôÀÖ·âÃæ²åÍ¼£¬²»ÒªÈÎºÎÎÄ×Ö¡¢logo¡¢Ë®Ó¡»òÅÅ°æ¡£",
+    "Ö»±£ÁôÒ»¸öÃ÷È·Ö÷ÌåÓë·ÕÎ§±³¾°£¬Í»³öÉ«²Ê¡¢¹â¸Ğ¡¢²ã´ÎºÍÇéĞ÷£¬ÊÊºÏÒôÀÖÁ÷Ã½Ìå·âÃæ¡£",
+    prompt ? "ÒôÀÖÆøÖÊ²Î¿¼£º" + String(prompt).trim() : ""
   ];
   return parts.filter(Boolean).join(" ");
 }
@@ -1346,5 +1633,6 @@ const port = Number(process.env.PORT || 8080);
 
 await ensureRuntimeSchema();
 app.listen({ port, host: "0.0.0.0" });
+
 
 

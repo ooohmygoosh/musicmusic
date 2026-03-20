@@ -1,21 +1,27 @@
-ï»¿const tokenInput = document.getElementById("token");
+const tokenInput = document.getElementById("token");
 const list = document.getElementById("songList");
 const searchInput = document.getElementById("searchInput");
 const availabilityFilter = document.getElementById("availabilityFilter");
 const typeFilter = document.getElementById("typeFilter");
+const songSelectionHint = document.getElementById("songSelectionHint");
+const selectedSongIds = new Set();
 
 function getToken() {
   return localStorage.getItem("adminToken") || "";
 }
 
-document.getElementById("saveToken").addEventListener("click", () => {
-  localStorage.setItem("adminToken", tokenInput.value.trim());
-  loadSongs();
-});
-document.getElementById("refreshSongs").addEventListener("click", loadSongs);
-searchInput.addEventListener("input", loadSongs);
-availabilityFilter.addEventListener("change", loadSongs);
-typeFilter.addEventListener("change", loadSongs);
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function updateSelectionHint() {
+  songSelectionHint.textContent = `ÒÑÑ¡ ${selectedSongIds.size} Ê×¸èÇú`;
+}
 
 async function toggleAvailability(songId, isAvailable) {
   const res = await fetch(`/admin/library-songs/${songId}`, {
@@ -24,59 +30,102 @@ async function toggleAvailability(songId, isAvailable) {
     body: JSON.stringify({ is_available: !isAvailable })
   });
   if (!res.ok) {
-    alert("æ›´æ–°å¤±è´¥ï¼Œè¯·ç¡®è®¤ Token æˆ–æœåŠ¡çŠ¶æ€");
+    alert("¸üĞÂÊ§°Ü£¬ÇëÈ·ÈÏ Token »ò·şÎñ×´Ì¬");
     return;
   }
+  await loadSongs();
+}
+
+async function deleteSelectedSongs() {
+  const ids = [...selectedSongIds];
+  if (!ids.length) {
+    alert("ÇëÏÈÑ¡ÔñÒªÉ¾³ıµÄ¸èÇú");
+    return;
+  }
+  if (!confirm(`È·ÈÏÉ¾³ıÑ¡ÖĞµÄ ${ids.length} Ê×¸èÇú£¿´Ë²Ù×÷»áÍ¬Ê±É¾³ıËüÃÇµÄ·Ö·¢¼ÇÂ¼¡£`)) return;
+  const res = await fetch("/admin/library-songs/batch-delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-token": getToken() },
+    body: JSON.stringify({ ids })
+  });
+  if (!res.ok) {
+    alert("ÅúÁ¿É¾³ıÊ§°Ü£¬ÇëÈ·ÈÏ Token »ò·şÎñ×´Ì¬");
+    return;
+  }
+  selectedSongIds.clear();
+  updateSelectionHint();
   await loadSongs();
 }
 
 function renderSongs(items) {
   list.innerHTML = "";
   if (!items || items.length === 0) {
-    list.innerHTML = "<div class='muted'>æš‚æ— åº“å­˜æ­Œæ›²</div>";
+    list.innerHTML = "<div class='muted'>ÔİÎŞ¿â´æ¸èÇú</div>";
+    updateSelectionHint();
     return;
   }
+
+  const liveIds = new Set(items.map((item) => Number(item.id)));
+  [...selectedSongIds].forEach((id) => {
+    if (!liveIds.has(id)) selectedSongIds.delete(id);
+  });
 
   for (const item of items) {
     const card = document.createElement("div");
     card.className = "item library-item";
-    const tags = (item.tags || []).map((tag) => `<span class="pill">${tag}</span>`).join("");
-    const types = (item.tag_types || []).map((tag) => `<span class="pill">${tag}</span>`).join("");
+    const checked = selectedSongIds.has(Number(item.id)) ? "checked" : "";
+    const tags = (item.tags || []).map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("");
+    const types = (item.tag_types || []).map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("");
     card.innerHTML = `
+      <div class="library-select">
+        <input type="checkbox" data-select="${item.id}" ${checked} />
+      </div>
       <div class="library-main">
         <div class="row library-head">
           <div>
-            <div class="library-title">${item.title || "æœªå‘½åæ­Œæ›²"}</div>
-            <div class="muted">${item.model || "æœªçŸ¥æ¨¡å‹"} Â· ${item.duration || 0}s Â· ${item.primary_type || "æœªåˆ†ç±»"} Â· ${item.is_available ? "å¯ç”¨ä¸­" : "å·²åœç”¨"}</div>
+            <div class="library-title">${escapeHtml(item.title || "Î´ÃüÃû¸èÇú")}</div>
+            <div class="muted">${escapeHtml(item.model || "Î´ÖªÄ£ĞÍ")} ¡¤ ${Number(item.duration || 0)}s ¡¤ ${escapeHtml(item.primary_type || "Î´·ÖÀà")} ¡¤ ${item.is_available ? "ÆôÓÃÖĞ" : "ÒÑÍ£ÓÃ"}</div>
+            <div class="muted">´´½¨Õß£º${escapeHtml(item.creator_name || `ÓÃ»§ ${item.creator_user_id || "-"}`)} ¡¤ ${item.created_at ? new Date(item.created_at).toLocaleString() : "-"} ¡¤ ${escapeHtml(item.generation_mode || "generated")}</div>
           </div>
-          ${item.cover_url ? `<img class="cover-thumb" src="${item.cover_url}" alt="cover" />` : ""}
+          ${item.cover_url ? `<img class="cover-thumb" src="${escapeHtml(item.cover_url)}" alt="cover" />` : ""}
         </div>
         <div class="library-prompts">
           <div class="library-prompt-block">
-            <div class="library-prompt-label">å‘ç»™å¤©è°±ä¹çš„ Prompt</div>
-            <div class="muted library-prompt">${item.prompt || "æ— æç¤ºè¯"}</div>
+            <div class="library-prompt-label">·¢¸øÌìÆ×ÀÖµÄ Prompt</div>
+            <div class="muted library-prompt">${escapeHtml(item.prompt || "ÎŞÌáÊ¾´Ê")}</div>
           </div>
           <div class="library-prompt-block">
-            <div class="library-prompt-label">åŸå§‹æ ‡ç­¾ Prompt</div>
-            <div class="muted library-prompt">${item.base_prompt || item.prompt || "æ— åŸå§‹æç¤ºè¯"}</div>
+            <div class="library-prompt-label">Ô­Ê¼±êÇ© Prompt</div>
+            <div class="muted library-prompt">${escapeHtml(item.base_prompt || item.prompt || "ÎŞÔ­Ê¼ÌáÊ¾´Ê")}</div>
           </div>
         </div>
-        <div class="pill-row">${types}${tags || "<span class='muted'>æš‚æ— æ ‡ç­¾</span>"}</div>
+        <div class="pill-row">${types}${tags || "<span class='muted'>ÔİÎŞ±êÇ©</span>"}</div>
         <div class="meta-grid">
-          <div><strong>åˆ†å‘æ¬¡æ•°</strong><span>${item.deliveries || 0}</span></div>
-          <div><strong>å¤ç”¨æ¬¡æ•°</strong><span>${item.reuse_count || 0}</span></div>
-          <div><strong>æ”¶è—æ¬¡æ•°</strong><span>${item.likes || 0}</span></div>
-          <div><strong>è·³è¿‡æ¬¡æ•°</strong><span>${item.skips || 0}</span></div>
+          <div><strong>·Ö·¢´ÎÊı</strong><span>${Number(item.deliveries || 0)}</span></div>
+          <div><strong>¸´ÓÃ´ÎÊı</strong><span>${Number(item.reuse_count || 0)}</span></div>
+          <div><strong>ÊÕ²Ø´ÎÊı</strong><span>${Number(item.likes || 0)}</span></div>
+          <div><strong>Ìø¹ı´ÎÊı</strong><span>${Number(item.skips || 0)}</span></div>
+          <div><strong>¸±±¾ÊıÁ¿</strong><span>${Number(item.copies || 0)}</span></div>
         </div>
         <div class="row">
-          ${item.audio_url ? `<a class="link-button" href="${item.audio_url}" target="_blank" rel="noreferrer">è¯•å¬éŸ³é¢‘</a>` : ""}
-          <button class="ghost-btn">${item.is_available ? "åœç”¨å¤ç”¨" : "é‡æ–°å¯ç”¨"}</button>
+          ${item.audio_url ? `<a class="link-button" href="${escapeHtml(item.audio_url)}" target="_blank" rel="noreferrer">ÊÔÌıÒôÆµ</a>` : ""}
+          <button class="ghost-btn" data-toggle="${item.id}">${item.is_available ? "Í£ÓÃ¸´ÓÃ" : "ÖØĞÂÆôÓÃ"}</button>
         </div>
       </div>
     `;
-    card.querySelector(".ghost-btn").addEventListener("click", () => toggleAvailability(item.id, item.is_available));
+    card.querySelector(`[data-toggle="${item.id}"]`).addEventListener("click", () => toggleAvailability(item.id, item.is_available));
+    card.querySelector(`[data-select="${item.id}"]`).addEventListener("change", (event) => {
+      if (event.target.checked) {
+        selectedSongIds.add(Number(item.id));
+      } else {
+        selectedSongIds.delete(Number(item.id));
+      }
+      updateSelectionHint();
+    });
     list.appendChild(card);
   }
+
+  updateSelectionHint();
 }
 
 async function loadSongs() {
@@ -87,13 +136,28 @@ async function loadSongs() {
   const query = params.toString();
   const res = await fetch(`/admin/library-songs${query ? `?${query}` : ""}`, { headers: { "x-admin-token": getToken() } });
   if (!res.ok) {
-    list.innerHTML = "<div class='muted'>æœªæˆæƒæˆ–æœåŠ¡æœªå¯åŠ¨</div>";
+    list.innerHTML = "<div class='muted'>Î´ÊÚÈ¨»ò·şÎñÎ´Æô¶¯</div>";
     return;
   }
   const data = await res.json();
   renderSongs(data.items || []);
 }
 
-tokenInput.value = getToken();
-loadSongs();
+document.getElementById("saveToken").addEventListener("click", () => {
+  localStorage.setItem("adminToken", tokenInput.value.trim());
+  loadSongs();
+});
+document.getElementById("refreshSongs").addEventListener("click", loadSongs);
+document.getElementById("deleteSelected").addEventListener("click", deleteSelectedSongs);
+document.getElementById("clearSelection").addEventListener("click", () => {
+  selectedSongIds.clear();
+  updateSelectionHint();
+  loadSongs();
+});
+searchInput.addEventListener("input", loadSongs);
+availabilityFilter.addEventListener("change", loadSongs);
+typeFilter.addEventListener("change", loadSongs);
 
+tokenInput.value = getToken();
+updateSelectionHint();
+loadSongs();
