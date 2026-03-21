@@ -1,6 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Audio } from "expo-av";
-import { FALLBACK_TRACKS } from "./fallbackTracks";
 
 const AUDIO_LOAD_TIMEOUT_MS = 9000;
 const FETCH_TIMEOUT_MS = 10000;
@@ -68,43 +67,6 @@ function isAudioUrlLikelyExpired(url) {
   return false;
 }
 
-function isSongPlayable(song) {
-  if (!song) return false;
-  if (song.local_asset) return true;
-  if (!song.audio_url) return false;
-  if (isAudioUrlLikelyExpired(song.audio_url)) return false;
-  return true;
-}
-
-function normalizeTags(tags) {
-  return (tags || []).map((t) => String(t || "").trim().toLowerCase()).filter(Boolean);
-}
-
-function buildFallbackQueue(contextSong = null, count = 3) {
-  const contextTags = new Set(normalizeTags(contextSong?.tags));
-  const scored = FALLBACK_TRACKS.map((track, idx) => {
-    const tags = normalizeTags(track.tags);
-    let score = 0;
-    for (const tag of tags) {
-      if (contextTags.has(tag)) score += 1;
-    }
-    return { track, score, idx };
-  }).sort((a, b) => b.score - a.score || a.idx - b.idx);
-
-  const now = Date.now();
-  return scored.slice(0, Math.max(1, Math.min(10, count))).map((item, i) => ({
-    id: `local-${item.track.id}`,
-    queue_id: `local-${now}-${i}`,
-    title: item.track.title,
-    cover_url: null,
-    prompt: "local fallback track",
-    audio_url: null,
-    local_asset: item.track.asset,
-    created_at: new Date().toISOString(),
-    source: "local_fallback",
-    tags: item.track.tags || []
-  }));
-}
 function isBlockedKey(failedMap, key) {
   if (!key || !failedMap?.has(key)) return false;
   const failedAt = Number(failedMap.get(key) || 0);
@@ -123,8 +85,8 @@ function normalizeQueueSongs(list, failedMap) {
   const seen = new Set();
   const items = [];
   for (const raw of list || []) {
-    if (!raw || !isSongPlayable(raw)) continue;
-
+    if (!raw || !raw.audio_url) continue;
+    if (isAudioUrlLikelyExpired(raw.audio_url)) continue;
     const key = queueKeyOf(raw);
     if (!key || seen.has(key)) continue;
     if (isBlockedKey(failedMap, key)) continue;
@@ -136,8 +98,8 @@ function normalizeQueueSongs(list, failedMap) {
 
 function firstPlayable(items, failedMap) {
   for (const song of items || []) {
-    if (!isSongPlayable(song)) continue;
-
+    if (!song?.audio_url) continue;
+    if (isAudioUrlLikelyExpired(song.audio_url)) continue;
     const key = queueKeyOf(song);
     if (!key || isBlockedKey(failedMap, key)) continue;
     return song;
@@ -156,8 +118,8 @@ function getNextFromQueue(current, queue, failedMap) {
   for (let i = index + 1; i < queue.length; i += 1) {
     const song = queue[i];
     const key = queueKeyOf(song);
-    if (!isSongPlayable(song) || !key) continue;
-    if (isBlockedKey(failedMap, key)) continue;
+    if (!song?.audio_url || !key) continue;
+    if (isAudioUrlLikelyExpired(song.audio_url) || isBlockedKey(failedMap, key)) continue;
     return song;
   }
 
@@ -176,8 +138,8 @@ function firstPlayableAfterCursor(items, cursorSong, failedMap) {
   for (const song of items || []) {
     const q = getQueueOrder(song);
     if (!Number.isFinite(q) || q <= cursor) continue;
-    if (!isSongPlayable(song)) continue;
-
+    if (!song?.audio_url) continue;
+    if (isAudioUrlLikelyExpired(song.audio_url)) continue;
     const key = queueKeyOf(song);
     if (!key || isBlockedKey(failedMap, key)) continue;
     return song;
@@ -317,18 +279,7 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
     setStatus("empty");
 
     const refreshed = await requestRecommendations({ buffer: 8 }).catch(() => []);
-    if (refreshed.length > 0) return true;
-
-    const fallback = buildFallbackQueue(currentRef.current, 3);
-    if (fallback.length > 0) {
-      setQueue(fallback);
-      setCurrent(fallback[0]);
-      setRecommendation((prev) => ({ ...prev, needsGeneration: false }));
-      setStatus("ready");
-      return true;
-    }
-
-    return false;
+    return refreshed.length > 0;
   }, [requestRecommendations, unloadCurrentSound]);
 
   const markSongFailed = useCallback((song) => {
@@ -339,8 +290,8 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
   }, []);
 
   const playSongInternal = useCallback(async (song, options = {}) => {
-    if (!isSongPlayable(song)) return false;
-    if (!song.local_asset && isAudioUrlLikelyExpired(song.audio_url)) {
+    if (!song?.audio_url) return false;
+    if (isAudioUrlLikelyExpired(song.audio_url)) {
       markSongFailed(song);
       return false;
     }
@@ -356,7 +307,7 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
     try {
       const created = await withTimeout(
         Audio.Sound.createAsync(
-          song.local_asset ? song.local_asset : { uri: song.audio_url },
+          { uri: song.audio_url },
           { shouldPlay: false, progressUpdateIntervalMillis: 250 },
           (soundStatus) => {
             if (!mountedRef.current || !soundStatus?.isLoaded) return;
@@ -603,7 +554,4 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
     togglePlay
   ]);
 }
-
-
-
 
