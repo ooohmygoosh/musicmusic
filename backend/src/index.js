@@ -1,4 +1,4 @@
-锘縤mport "dotenv/config";
+import "dotenv/config";
 import crypto from "crypto";
 import Fastify from "fastify";
 import fs from "fs/promises";
@@ -12,8 +12,10 @@ const TPY_BASE_URL = process.env.TPY_BASE_URL || "https://api.tianpuyue.cn";
 const TPY_API_KEY = process.env.TPY_API_KEY || "";
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "DeepSeek-V3.2-Exp";
-const DEEPSEEK_ENABLED = process.env.DEEPSEEK_ENABLED === "true";
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+const DEEPSEEK_ENABLED = (process.env.DEEPSEEK_ENABLED
+  ? process.env.DEEPSEEK_ENABLED === "true"
+  : Boolean(DEEPSEEK_API_KEY));
 const COVER_IMAGE_API_KEY = process.env.COVER_IMAGE_API_KEY || "";
 const COVER_IMAGE_BASE_URL = (process.env.COVER_IMAGE_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3").replace(/\/$/, "");
 const COVER_IMAGE_MODEL = process.env.COVER_IMAGE_MODEL || "doubao-seedream-4-0-250828";
@@ -29,6 +31,11 @@ const COEF_COMPLETE = 0.05;
 const NORMALIZE_EVERY = 10;
 const MAX_TAGS_TOTAL = 6;
 const MAX_PER_TYPE = 2;
+const PROMPT_ANCHOR_MIN_WEIGHT = Number(process.env.PROMPT_ANCHOR_MIN_WEIGHT || 0.3);
+const PROMPT_CORE_MIN_WEIGHT = Number(process.env.PROMPT_CORE_MIN_WEIGHT || 0.15);
+const PROMPT_WEAK_MAX_WEIGHT = Number(process.env.PROMPT_WEAK_MAX_WEIGHT || 0.1);
+const PROMPT_CORE_MAX_COUNT = Number(process.env.PROMPT_CORE_MAX_COUNT || 3);
+const PROMPT_WEAK_MAX_COUNT = Number(process.env.PROMPT_WEAK_MAX_COUNT || 4);
 const REUSE_SIMILARITY_MIN = Number(process.env.REUSE_SIMILARITY_MIN || 0.38);
 const PREFETCH_REUSE_SIMILARITY_MIN = Number(process.env.PREFETCH_REUSE_SIMILARITY_MIN || 0.28);
 const INIT_REUSE_SIMILARITY_MIN = Number(process.env.INIT_REUSE_SIMILARITY_MIN || 0.3);
@@ -851,6 +858,133 @@ async function normalizeUserWeights(userId) {
   }
 }
 
+function choosePrimaryAnchor(sortedTags) {
+  if (!Array.isArray(sortedTags) || sortedTags.length === 0) return null;
+
+  const sceneTags = sortedTags.filter((tag) => String(tag.type || "") === "场景");
+  const strongScene = sceneTags.find((tag) => Number(tag.weight || 0) >= PROMPT_ANCHOR_MIN_WEIGHT);
+  if (strongScene) return strongScene;
+  if (sceneTags.length > 0) return sceneTags[0];
+
+  const strongAny = sortedTags.find((tag) => Number(tag.weight || 0) >= PROMPT_ANCHOR_MIN_WEIGHT);
+  return strongAny || sortedTags[0] || null;
+}
+
+function pickCoreConstraintTags(sortedTags, anchorTag, selectedIds) {
+  const core = [];
+  const usedTypes = new Set(anchorTag?.type ? [String(anchorTag.type)] : []);
+  const targetCount = Math.min(
+    PROMPT_CORE_MAX_COUNT,
+    Math.max(1, Math.min(3, (sortedTags || []).length - (anchorTag ? 1 : 0)))
+  );
+
+  const candidates = (sortedTags || []).filter((tag) => !selectedIds.has(Number(tag.id)));
+  const primary = candidates.filter((tag) => Number(tag.weight || 0) >= PROMPT_CORE_MIN_WEIGHT);
+  const fallback = candidates.filter((tag) => Number(tag.weight || 0) < PROMPT_CORE_MIN_WEIGHT);
+
+  const take = (pool) => {
+    for (const tag of pool) {
+      if (core.length >= targetCount) break;
+      const type = String(tag.type || "");
+      if (!type || usedTypes.has(type)) continue;
+      core.push(tag);
+      usedTypes.add(type);
+      selectedIds.add(Number(tag.id));
+    }
+  };
+
+  take(primary);
+  if (core.length < targetCount) take(fallback);
+  return core;
+}
+
+function pickWeakSupplementTags(sortedTags, selectedIds) {
+  const rest = (sortedTags || []).filter((tag) => !selectedIds.has(Number(tag.id)));
+  if (rest.length === 0) return [];
+
+  const weakFirst = rest
+    .filter((tag) => Number(tag.weight || 0) <= PROMPT_WEAK_MAX_WEIGHT)
+    .sort((a, b) => Number(a.weight || 0) - Number(b.weight || 0));
+
+  const fallback = rest
+    .filter((tag) => Number(tag.weight || 0) > PROMPT_WEAK_MAX_WEIGHT)
+    .sort((a, b) => Number(a.weight || 0) - Number(b.weight || 0));
+
+  const picked = [];
+  for (const tag of [...weakFirst, ...fallback]) {
+    if (picked.length >= PROMPT_WEAK_MAX_COUNT) break;
+    picked.push(tag);
+    selectedIds.add(Number(tag.id));
+  }
+
+  return picked;
+}
+
+function buildCoreConstraintPhrase(tag) {
+  const name = String(tag?.name || "").trim();
+  const type = String(tag?.type || "").trim();
+  if (!name) return "";
+
+  if (type === "风格") return `风格为${name}`;
+  if (type === "情绪") return `情绪是${name}`;
+  if (type === "乐器") return `主要使用${name}`;
+  if (type === "节奏") return `节奏控制在${name}`;
+  if (type === "场景") return `场景延展到${name}`;
+  return `重点突出${name}`;
+}
+
+function buildWeakSupplementPhrase(tag) {
+  const name = String(tag?.name || "").trim();
+  const type = String(tag?.type || "").trim();
+  if (!name) return "";
+
+  if (type === "乐器") return `可以尝试用${name}做轻度点缀`;
+  if (type === "情绪") return `可以尝试加入${name}的细微情绪变化`;
+  if (type === "节奏") return `可以尝试在局部使用${name}的律动变化`;
+  return `可以尝试加入${name}作为弱补充`;
+}
+
+function buildNaturalLanguagePrompt({ anchorTag, coreTags, weakTags }) {
+  const anchorName = String(anchorTag?.name || "").trim();
+  const anchorType = String(anchorTag?.type || "").trim();
+
+  const anchorSentence = anchorType === "场景"
+    ? `必须是一首适合${anchorName}场景的背景音乐，全程保持统一氛围，绝对核心不能偏离${anchorName}，结尾再次强调${anchorName}场景。`
+    : `必须围绕${anchorName}展开，全程保持一致表达，绝对核心不能偏离${anchorName}，结尾再次强调${anchorName}。`;
+
+  const coreParts = (coreTags || []).map(buildCoreConstraintPhrase).filter(Boolean);
+  const coreSentence = coreParts.length > 0
+    ? `核心约束：${coreParts.join("，")}。`
+    : "核心约束：保持结构完整、旋律清晰、听感耐听。";
+
+  const weakParts = (weakTags || []).map(buildWeakSupplementPhrase).filter(Boolean);
+  const weakSentence = weakParts.length > 0
+    ? `弱补充：${weakParts.join("，")}。`
+    : "弱补充：可以少量加入细节点缀，但不要破坏主锚与核心约束。";
+
+  return [anchorSentence, coreSentence, weakSentence].join("\n");
+}
+
+function buildFallbackTitleHint(anchorTag, coreTags) {
+  const anchorName = String(anchorTag?.name || "").trim();
+  const firstCore = String((coreTags || [])[0]?.name || "").trim();
+  const secondCore = String((coreTags || [])[1]?.name || "").trim();
+  const parts = [anchorName, firstCore || secondCore].filter(Boolean);
+  const title = parts.join("·");
+  return (title || "新作品").slice(0, 24);
+}
+
+function buildFallbackCoverHint(anchorTag, coreTags, weakTags) {
+  const anchorName = String(anchorTag?.name || "").trim();
+  const coreNames = (coreTags || []).map((tag) => String(tag.name || "").trim()).filter(Boolean);
+  const weakNames = (weakTags || []).map((tag) => String(tag.name || "").trim()).filter(Boolean);
+  return [
+    `以${anchorName || "音乐氛围"}为核心主体`,
+    coreNames.length > 0 ? `主元素包含${coreNames.join("、")}` : "突出主旋律与空间感",
+    weakNames.length > 0 ? `背景可点缀${weakNames.join("、")}` : "背景克制，避免复杂元素"
+  ].join("，");
+}
+
 async function buildPrompt(userId) {
   await ensureUserTagWeights(userId);
   const { rows } = await query(
@@ -867,70 +1001,78 @@ async function buildPrompt(userId) {
     };
   }
 
-  const recentTagIds = await getRecentTagIds(userId, 6);
-  const sorted = [...rows].sort((a, b) => b.weight - a.weight);
-  const fresh = sorted.filter((tag) => !recentTagIds.has(tag.id));
-  const recent = sorted.filter((tag) => recentTagIds.has(tag.id));
-  const chosen = [];
-  const byType = new Map();
-  const tryPick = (list) => {
-    for (const tag of list) {
-      const count = byType.get(tag.type) || 0;
-      if (count >= MAX_PER_TYPE) continue;
-      if (chosen.length >= MAX_TAGS_TOTAL) break;
-      chosen.push(tag);
-      byType.set(tag.type, count + 1);
-    }
-  };
-
-  tryPick(fresh);
-  if (chosen.length < MAX_TAGS_TOTAL) {
-    tryPick(recent);
+  const sorted = [...rows].sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0));
+  const anchorTag = choosePrimaryAnchor(sorted);
+  if (!anchorTag) {
+    return {
+      prompt: "",
+      tagIds: [],
+      base_prompt: "",
+      title_hint: "",
+      cover_hint: ""
+    };
   }
 
-  const remaining = sorted.filter((tag) => !chosen.find((c) => c.id === tag.id));
-  if (chosen.length < Math.min(MAX_TAGS_TOTAL, sorted.length) && remaining.length > 0) {
-    const need = Math.min(MAX_TAGS_TOTAL - chosen.length, remaining.length);
-    const explorePool = remaining.map((tag) => ({
-      ...tag,
-      exploreWeight: Math.max(0.05, 1 - Number(tag.weight || 0))
-    }));
-    const explore = pickTagsWeighted(explorePool, need, "exploreWeight");
-    for (const tag of explore) {
-      if (chosen.length >= MAX_TAGS_TOTAL) break;
-      const count = byType.get(tag.type) || 0;
-      if (count >= MAX_PER_TYPE) continue;
-      chosen.push(tag);
-      byType.set(tag.type, count + 1);
-    }
-  }
+  const selectedIds = new Set([Number(anchorTag.id)]);
+  const coreTags = pickCoreConstraintTags(sorted, anchorTag, selectedIds);
+  const weakTags = pickWeakSupplementTags(sorted, selectedIds);
+  const chosen = [anchorTag, ...coreTags, ...weakTags];
+  const tagIds = chosen.map((tag) => Number(tag.id));
 
-  const grouped = new Map();
-  for (const tag of chosen) {
-    const list = grouped.get(tag.type) || [];
-    list.push(tag.name);
-    grouped.set(tag.type, list);
-  }
+  const basePrompt = buildNaturalLanguagePrompt({
+    anchorTag,
+    coreTags,
+    weakTags
+  });
+  const fallbackTitleHint = buildFallbackTitleHint(anchorTag, coreTags);
+  const fallbackCoverHint = buildFallbackCoverHint(anchorTag, coreTags, weakTags);
 
-  const parts = [];
-  for (const [type, list] of grouped.entries()) {
-    parts.push(`${type}: ${list.join(", ")}`);
-  }
-  const tagIds = chosen.map((tag) => tag.id);
-  const basePrompt = parts.join(", ");
-  const optimized = await optimizePromptWithDeepSeek(chosen, basePrompt);
+  const optimized = await optimizePromptWithDeepSeek({
+    chosenTags: chosen,
+    basePrompt,
+    anchorTag,
+    coreTags,
+    weakTags,
+    fallbackTitleHint,
+    fallbackCoverHint
+  });
+
   return {
     prompt: optimized.prompt || basePrompt,
     tagIds,
     base_prompt: basePrompt,
-    title_hint: optimized.title_hint || "",
-    cover_hint: optimized.cover_hint || ""
+    title_hint: optimized.title_hint || fallbackTitleHint,
+    cover_hint: optimized.cover_hint || fallbackCoverHint
   };
 }
 
-async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
-  if (!DEEPSEEK_ENABLED || !DEEPSEEK_API_KEY || !Array.isArray(chosenTags) || chosenTags.length === 0) {
-    return { prompt: basePrompt, title_hint: "", cover_hint: "" };
+async function optimizePromptWithDeepSeek({
+  chosenTags,
+  basePrompt,
+  anchorTag,
+  coreTags,
+  weakTags,
+  fallbackTitleHint,
+  fallbackCoverHint
+}) {
+  const fallback = {
+    prompt: basePrompt,
+    title_hint: fallbackTitleHint || "",
+    cover_hint: fallbackCoverHint || ""
+  };
+
+  if (!Array.isArray(chosenTags) || chosenTags.length === 0) {
+    return fallback;
+  }
+
+  if (!DEEPSEEK_ENABLED) {
+    app.log.info("deepseek skipped: DEEPSEEK_ENABLED is false");
+    return fallback;
+  }
+
+  if (!DEEPSEEK_API_KEY) {
+    app.log.warn("deepseek skipped: DEEPSEEK_API_KEY missing");
+    return fallback;
   }
 
   const tagSummary = chosenTags.map((tag) => ({
@@ -951,6 +1093,25 @@ async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
     usage: PROMPT_GUIDE[type] || "Add only music-generation-relevant details"
   }));
 
+  const parseJsonObject = (raw) => {
+    const clean = String(raw || "").trim();
+    if (!clean) return null;
+    try {
+      return JSON.parse(clean);
+    } catch {
+      const start = clean.indexOf("{");
+      const end = clean.lastIndexOf("}");
+      if (start >= 0 && end > start) {
+        try {
+          return JSON.parse(clean.slice(start, end + 1));
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    }
+  };
+
   try {
     app.log.info(
       {
@@ -969,32 +1130,38 @@ async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
       },
       body: JSON.stringify({
         model: DEEPSEEK_MODEL,
-        temperature: 0.7,
-        response_format: { type: "json_object" },
+        temperature: 0.4,
         messages: [
           {
             role: "system",
             content:
-              "\u4f60\u662f\u97f3\u4e50\u751f\u6210\u63d0\u793a\u8bcd\u4f18\u5316\u52a9\u624b\u3002\u4f60\u7684\u4efb\u52a1\u662f\u6839\u636e\u7528\u6237\u6807\u7b7e\u548c\u4ea7\u54c1\u9700\u6c42\uff0c\u628a\u6807\u7b7e\u6574\u7406\u6210\u66f4\u9002\u5408\u76f4\u63a5\u53d1\u9001\u7ed9\u5929\u8c31\u4e50\u7684\u4e2d\u6587\u97f3\u4e50\u751f\u6210\u63d0\u793a\u8bcd\u3002\u4e0d\u8981\u89e3\u91ca\uff0c\u4e0d\u8981\u8f93\u51fa Markdown\uff0c\u53ea\u8fd4\u56de JSON\u3002"
+              "你是音乐生成提示词优化助手。请严格返回 JSON 对象，不要解释，不要 Markdown，不要代码块。"
           },
           {
             role: "user",
             content: JSON.stringify({
-              task: "\u6839\u636e\u4ea7\u54c1\u9700\u6c42\u548c\u7528\u6237\u6807\u7b7e\uff0c\u751f\u6210\u66f4\u9002\u5408\u53d1\u9001\u7ed9\u5929\u8c31\u4e50\u7684\u4e2d\u6587\u97f3\u4e50 prompt",
+              task: "按三层话语权生成自然语言音乐提示词，并给出标题和封面描述",
               product_requirements: DEEPSEEK_PRODUCT_REQUIREMENTS,
               base_prompt: basePrompt,
+              anchor_rule: "主锚标签放第一句并在结尾再次强调，使用必须是、全程保持、绝对核心等强约束词",
+              core_rule: "核心约束放第二句，2-3 个标签，使用风格为、情绪是、主要使用等明确词",
+              weak_rule: "弱补充放最后一句，使用可以尝试、点缀等软约束词",
+              anchor_tag: anchorTag
+                ? { type: anchorTag.type, name: anchorTag.name, weight: Number(anchorTag.weight || 0) }
+                : null,
+              core_tags: (coreTags || []).map((tag) => ({ type: tag.type, name: tag.name, weight: Number(tag.weight || 0) })),
+              weak_tags: (weakTags || []).map((tag) => ({ type: tag.type, name: tag.name, weight: Number(tag.weight || 0) })),
               tags: tagSummary,
               grouped_tags: groupedGuide,
               output_schema: {
-                prompt: "1-3 \u53e5\u4e2d\u6587\u97f3\u4e50\u751f\u6210\u63d0\u793a\u8bcd\uff0c\u76f4\u63a5\u53d1\u9001\u7ed9\u5929\u8c31\u4e50",
-                title_hint: "\u7b80\u77ed\u81ea\u7136\u7684\u4e2d\u6587\u6b4c\u540d\u5efa\u8bae",
-                cover_hint: "\u9002\u5408\u4f5c\u4e3a\u6b4c\u66f2\u5c01\u9762\u7684\u4e2d\u6587\u753b\u9762\u63cf\u8ff0"
+                prompt: "三句话中文提示词，主锚在第一句，核心约束在第二句，弱补充在第三句",
+                title_hint: "简短自然的中文歌名",
+                cover_hint: "适合封面图生成的中文画面描述"
               },
               constraints: [
-                "\u4fdd\u7559\u6807\u7b7e\u6838\u5fc3\u542b\u4e49\u5e76\u81ea\u7136\u878d\u5165 prompt",
-                "\u8865\u5145\u5408\u7406\u7684\u66f2\u98ce\u3001\u8282\u594f\u3001\u7f16\u66f2\u5c42\u6b21\u3001\u60c5\u7eea\u8d70\u5411\u3001\u6c1b\u56f4\u548c\u573a\u666f",
-                "\u4e0d\u8981\u8f93\u51fa\u5217\u8868\uff0c\u4e0d\u8981\u89e3\u91ca",
-                "\u63d0\u793a\u8bcd\u63a7\u5236\u5728 180 \u4e2a\u4e2d\u6587\u5b57\u7b26\u4ee5\u5185"
+                "必须保留标签核心语义",
+                "不要输出列表，不要解释",
+                "严格输出 JSON 对象，字段包含 prompt、title_hint、cover_hint"
               ]
             })
           }
@@ -1003,32 +1170,36 @@ async function optimizePromptWithDeepSeek(chosenTags, basePrompt) {
     });
 
     if (!response.ok) {
-      app.log.warn({ status: response.status }, "deepseek prompt optimization failed");
-      return { prompt: basePrompt, title_hint: "", cover_hint: "" };
+      const failText = await response.text().catch(() => "");
+      app.log.warn(
+        {
+          status: response.status,
+          body: String(failText || "").slice(0, 800)
+        },
+        "deepseek prompt optimization failed"
+      );
+      return fallback;
     }
 
-    const data = await response.json();
+    const data = await response.json().catch(() => null);
     const content = data?.choices?.[0]?.message?.content;
-    if (!content) return { prompt: basePrompt, title_hint: "", cover_hint: "" };
-
-    let parsed = null;
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      return { prompt: basePrompt, title_hint: "", cover_hint: "" };
+    const parsed = parseJsonObject(content);
+    if (!parsed) {
+      app.log.warn({ content: String(content || "").slice(0, 800) }, "deepseek prompt parse failed");
+      return fallback;
     }
 
     const result = {
       prompt: String(parsed?.prompt || "").trim() || basePrompt,
-      title_hint: String(parsed?.title_hint || "").trim(),
-      cover_hint: String(parsed?.cover_hint || "").trim()
+      title_hint: String(parsed?.title_hint || "").trim() || fallback.title_hint,
+      cover_hint: String(parsed?.cover_hint || "").trim() || fallback.cover_hint
     };
 
     app.log.info({ model: DEEPSEEK_MODEL, result }, "deepseek prompt optimization succeeded");
     return result;
   } catch (error) {
     app.log.warn({ err: String(error) }, "deepseek prompt optimization error");
-    return { prompt: basePrompt, title_hint: "", cover_hint: "" };
+    return fallback;
   }
 }
 
