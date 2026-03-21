@@ -1768,7 +1768,7 @@ app.post("/callback/tpy", async (request, reply) => {
     }
 
     const { rows } = await query(
-      "UPDATE generation_jobs SET status = 'done' WHERE $1 = ANY(item_ids) AND status IN ('pending', 'submitted') RETURNING id, user_id, prompt, base_prompt, title_hint, cover_hint, tag_ids",
+      "UPDATE generation_jobs SET status = 'processing' WHERE $1 = ANY(item_ids) AND status IN ('pending', 'submitted') RETURNING id, user_id, prompt, base_prompt, title_hint, cover_hint, tag_ids",
       [itemId]
     );
 
@@ -1822,6 +1822,11 @@ app.post("/callback/tpy", async (request, reply) => {
       displayTitle,
       displayCoverUrl: coverUrl
     });
+
+    await query(
+      "UPDATE generation_jobs SET status = 'done', error = NULL WHERE id = $1 AND status IN ('processing', 'pending', 'submitted')",
+      [Number(job.id)]
+    );
   }
 
   reply.send("success");
