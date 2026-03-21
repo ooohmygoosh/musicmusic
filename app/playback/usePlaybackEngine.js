@@ -126,6 +126,28 @@ function getNextFromQueue(current, queue, failedMap) {
   return null;
 }
 
+function getQueueOrder(song) {
+  const value = Number(song?.queue_id);
+  return Number.isFinite(value) ? value : null;
+}
+
+function firstPlayableAfterCursor(items, cursorSong, failedMap) {
+  const cursor = getQueueOrder(cursorSong);
+  if (!Number.isFinite(cursor)) return firstPlayable(items, failedMap);
+
+  for (const song of items || []) {
+    const q = getQueueOrder(song);
+    if (!Number.isFinite(q) || q <= cursor) continue;
+    if (!song?.audio_url) continue;
+    if (isAudioUrlLikelyExpired(song.audio_url)) continue;
+    const key = queueKeyOf(song);
+    if (!key || isBlockedKey(failedMap, key)) continue;
+    return song;
+  }
+
+  return null;
+}
+
 export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
   const [queue, setQueue] = useState([]);
   const [current, setCurrent] = useState(null);
@@ -337,7 +359,7 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
         cursorQueueId: song.queue_id || null,
         buffer: 8
       }).catch(() => []);
-      const remoteNext = firstPlayable(refreshed, failedQueueKeyAtRef.current);
+      const remoteNext = firstPlayableAfterCursor(refreshed, song, failedQueueKeyAtRef.current);
       if (remoteNext) {
         return playSongInternalRef.current(remoteNext, {
           recoverDepth: recoverDepth + 1,
@@ -410,7 +432,7 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
         cursorQueueId: song.queue_id || null,
         buffer: 8
       }).catch(() => []);
-      const remoteNext = firstPlayable(refreshed, failedQueueKeyAtRef.current);
+      const remoteNext = firstPlayableAfterCursor(refreshed, song, failedQueueKeyAtRef.current);
       if (remoteNext) {
         return playSongInternalRef.current(remoteNext, { allowRecover: true, recoverDepth: 0 });
       }
@@ -532,3 +554,4 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
     togglePlay
   ]);
 }
+

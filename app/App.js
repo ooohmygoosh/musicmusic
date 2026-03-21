@@ -601,13 +601,16 @@ export default function App() {
   const songsRef = useRef(songs);
   const profileTagsRef = useRef(profileTags);
   const prefetchLockRef = useRef(false);
+  const autoGenerateRef = useRef(async () => false);
   const userId = session?.userId || null;
   const userIdRef = useRef(userId);
   const displayName = session?.name || session?.accountId || session?.deviceId || "\u8bbf\u5ba2";
   const playbackEngine = usePlaybackEngine({
     apiBase: API_BASE,
     userId,
-    onNeedsGeneration: () => {}
+    onNeedsGeneration: () => {
+      autoGenerateRef.current().catch(() => {});
+    }
   });
   const effectiveStageSize = portraitStageSize.width > 20 && portraitStageSize.height > 20 ? portraitStageSize : { width, height: Math.max(620, height - 28) };
 
@@ -1134,6 +1137,7 @@ export default function App() {
     await submitNamedTag(pendingTagName, selectedCategory);
   };
 
+
   const generate = async (options = {}) => {
     const { prefetch = false, silent = false, preferLatest = !prefetch } = options;
     if (!userId || generationLoading) return songs;
@@ -1180,6 +1184,21 @@ export default function App() {
       if (!prefetch) setGenerationLoading(false);
     }
   };
+
+
+  useEffect(() => {
+    autoGenerateRef.current = async () => {
+      if (!userId || prefetchLockRef.current) return false;
+      prefetchLockRef.current = true;
+      try {
+        await generate({ prefetch: true, silent: true, preferLatest: true });
+        await playbackEngine.refresh({ buffer: 8 }).catch(() => []);
+        return true;
+      } finally {
+        prefetchLockRef.current = false;
+      }
+    };
+  }, [generate, playbackEngine, userId]);
 
   const getNextSongFromList = (baseSong, list) => {
     if (!baseSong || !Array.isArray(list) || list.length === 0) return null;
@@ -2042,6 +2061,8 @@ const styles = StyleSheet.create({
   rowGap: { flexDirection: "row", gap: 10 },
   flex: { flex: 1 }
 });
+
+
 
 
 
