@@ -12,3 +12,8 @@ app/package-lock.json
 app/assets/
 backend/node_modules/
 backend/package-lock.json
+
+backend/storage/
+
+app/release/
+

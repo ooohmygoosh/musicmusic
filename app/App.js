@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -16,6 +16,7 @@ import {
 import { Audio } from "expo-av";
 import { BlurMask, Canvas, Circle, Group } from "@shopify/react-native-skia";
 import { API_BASE } from "./config";
+import { usePlaybackEngine } from "./playback/usePlaybackEngine";
 
 const TABS = [
   { key: "player", label: "\u6b4c\u66f2", icon: "\u25c9" },
@@ -603,6 +604,11 @@ export default function App() {
   const userId = session?.userId || null;
   const userIdRef = useRef(userId);
   const displayName = session?.name || session?.accountId || session?.deviceId || "\u8bbf\u5ba2";
+  const playbackEngine = usePlaybackEngine({
+    apiBase: API_BASE,
+    userId,
+    onNeedsGeneration: () => {}
+  });
   const effectiveStageSize = portraitStageSize.width > 20 && portraitStageSize.height > 20 ? portraitStageSize : { width, height: Math.max(620, height - 28) };
 
   const groupedTags = useMemo(() => {
@@ -760,7 +766,7 @@ export default function App() {
   const bootstrapUser = async (user, nameOverride) => {
     setSession({ userId: user.id, deviceId: user.device_id, accountId: user.account_id || user.device_id, name: nameOverride || user.display_name || accountName.trim() || user.account_id || user.device_id, avatar: user.avatar || selectedAvatar });
     const profile = await loadProfileTags(user.id);
-    await Promise.all([refreshSongs(user.id, { preferLatest: true }), refreshFavorites(user.id), loadPlaylists(user.id)]);
+    await Promise.all([playbackEngine.refresh({ buffer: 8 }), refreshFavorites(user.id), loadPlaylists(user.id)]);
     const active = (profile || []).filter((item) => item.is_active !== false);
     setNeedsOnboarding(active.length === 0);
     setOnboardingStep(0);
@@ -1206,43 +1212,21 @@ export default function App() {
   };
 
   const play = async (song) => {
-    if (!song?.audio_url) return;
-    if (soundRef.current) await soundRef.current.unloadAsync().catch(() => {});
-    completeSentFor.current = null;
-    setIsSeeking(false);
-    seekingRef.current = false;
-    setSeekPreviewPosition(null);
-    const created = await Audio.Sound.createAsync({ uri: song.audio_url }, { shouldPlay: true, progressUpdateIntervalMillis: 250 }, attachStatus);
-    setSound(created.sound);
-    setCurrent(song);
-    setCurrentSoundId(queueKeyOf(song));
-    ensureNextSongReady(song).catch(() => {});
+    await playbackEngine.playSong(song);
   };
 
   const togglePlay = async () => {
-    if (!current) {
-      const fresh = await refreshSongs(userId, { buffer: 8 }).catch(() => []);
-      if (fresh.length > 0) return play(fresh[0]);
-      if (recommendationState.needsGeneration) {
-        Alert.alert("No playable songs", "Please go to Portrait and generate songs first.");
-        setActiveTab("galaxy");
-      }
-      return;
-    }
-    if (!soundRef.current || currentSoundId !== queueKeyOf(current)) return play(current);
-    if (playbackRef.current.isPlaying) await soundRef.current.pauseAsync();
-    else await soundRef.current.playAsync();
+    await playbackEngine.togglePlay();
   };
 
   const feedback = async (action) => {
-    if (!userId || !current) return;
-    try {
-      await fetch(`${API_BASE}/feedback`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, song_id: current.id, queue_id: current.queue_id || null, action, played_seconds: Math.floor((playbackRef.current.position || 0) / 1000) })
-      });
-    } catch {}
+    if (action === "like") {
+      await playbackEngine.likeCurrent();
+      return;
+    }
+    if (action === "skip" || action === "complete") {
+      await playbackEngine.next(action);
+    }
   };
 
   const handleQueueExhausted = async () => {
@@ -1269,41 +1253,11 @@ export default function App() {
   };
 
   const handleAutoNext = async (action) => {
-    if (!userId || autoNextLock.current) return;
-    autoNextLock.current = true;
-    try {
-      await feedback(action);
-      const index = current ? songs.findIndex((item) => queueKeyOf(item) === queueKeyOf(current)) : -1;
-      if (index >= 0 && index < songs.length - 1) return play(songs[index + 1]);
-
-      const fresh = await refreshSongs(userId, {
-        cursorQueueId: current ? queueKeyOf(current) : undefined,
-        buffer: 8
-      });
-      const next = fresh.length > 0 ? fresh[0] : null;
-      if (next) {
-        await play(next);
-      } else {
-        await handleQueueExhausted();
-      }
-    } finally {
-      autoNextLock.current = false;
-    }
+    await playbackEngine.next(action === "complete" ? "complete" : "skip");
   };
 
   const handleNext = async () => {
-    if (!current) {
-      const fresh = await refreshSongs(userId, { buffer: 8 }).catch(() => []);
-      if (fresh.length > 0) return play(fresh[0]);
-      if (recommendationState.needsGeneration) {
-        Alert.alert("No playable songs", "Please generate songs in Portrait first.");
-        setActiveTab("galaxy");
-      }
-      return;
-    }
-    const index = songs.findIndex((item) => queueKeyOf(item) === queueKeyOf(current));
-    if (index >= 0 && index < songs.length - 1) return play(songs[index + 1]);
-    await handleAutoNext("skip");
+    await playbackEngine.next("skip");
   };
 
   const createPlaylist = async () => {
@@ -1317,7 +1271,7 @@ export default function App() {
     await loadPlaylists(userId);
   };
 
-  const addSongToPlaylist = async (playlistId, song = current) => {
+  const addSongToPlaylist = async (playlistId, song = playbackEngine.current) => {
     if (!song || !playlistId) return;
     await fetch(`${API_BASE}/playlists/${playlistId}/add`, {
       method: "POST",
@@ -1327,15 +1281,11 @@ export default function App() {
   };
 
   const enqueueSongToTail = (song, source = "manual") => {
-    const clone = cloneQueueSong(song, source);
-    if (!clone) return;
-    setSongs((prev) => [...prev, clone]);
+    playbackEngine.appendQueue(song, source);
   };
 
   const enqueueSongsToTail = (list, source = "playlist") => {
-    const clones = (list || []).map((song) => cloneQueueSong(song, source)).filter(Boolean);
-    if (clones.length === 0) return;
-    setSongs((prev) => [...prev, ...clones]);
+    playbackEngine.appendQueue(list, source);
   };
 
   const testConnection = async () => {
@@ -1351,7 +1301,7 @@ export default function App() {
 
   const refreshAllData = async () => {
     if (!userId) return;
-    await Promise.all([loadTags(), loadProfileTags(userId), refreshSongs(userId), refreshFavorites(userId), loadPlaylists(userId)]);
+    await Promise.all([loadTags(), loadProfileTags(userId), playbackEngine.refresh({ buffer: 8 }), refreshFavorites(userId), loadPlaylists(userId)]);
     setHealth({ loading: false, ok: true, message: "\u6570\u636e\u5df2\u5237\u65b0" });
   };
 
@@ -1530,120 +1480,161 @@ export default function App() {
   );
 
   const renderPlayer = () => {
-    const displayedPosition = isSeeking ? (seekPreviewPosition ?? playback.position) : playback.position;
-    const progressPercent = Math.min(1, Math.max(0, (displayedPosition || 0) / Math.max(playback.duration || 1, 1)));
+    const playerCurrent = playbackEngine.current;
+    const playerQueue = playbackEngine.queue || [];
+    const playerPlayback = playbackEngine.playback || { position: 0, duration: 1, isPlaying: false };
+    const playerNeedsGeneration = Boolean(playbackEngine.recommendation?.needsGeneration);
+    const playerStatus = String(playbackEngine.status || "idle");
+    const playerError = String(playbackEngine.lastError || "");
+    const displayedPosition = playerPlayback.position || 0;
+    const progressPercent = Math.min(1, Math.max(0, (displayedPosition || 0) / Math.max(playerPlayback.duration || 1, 1)));
+
+    const statusText = playerStatus === "loading"
+      ? "Loading queue..."
+      : playerStatus === "error"
+        ? "Playback error"
+        : playerStatus === "empty"
+          ? "Queue empty"
+          : playerStatus === "paused"
+            ? "Paused"
+            : playerStatus === "playing"
+              ? "Playing"
+              : "Ready";
 
     return (
-    <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow={"Hi, " + displayName} title="Songs" subtitle="Play, favorite and manage your queue." />
-      <View style={styles.playerCard}>
-        <View style={styles.coverWrap}>
-          <SongArtwork uri={current?.cover_url} size={228} radius={34} label={current?.title || "TPY"} />
-        </View>
-        <Text style={styles.playerTitle}>{current?.title || "No song yet"}</Text>
-        <Text style={styles.playerSub} numberOfLines={2}>{songTagText(current)}</Text>
-        {!current && recommendationState.needsGeneration ? (
-          <TouchableOpacity style={styles.secondarySoft} onPress={() => setActiveTab("galaxy")}>
-            <Text style={styles.secondaryText}>No playable songs. Go to Portrait to generate.</Text>
+      <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
+        <ScreenTitle eyebrow={"Hi, " + displayName} title="Songs" subtitle="Play, favorite and manage your queue." />
+
+        <View style={styles.playerStatusRow}>
+          <View style={[styles.playerStatusPill, playerStatus === "error" && styles.playerStatusPillError]}>
+            <Text style={styles.playerStatusText}>{statusText}</Text>
+          </View>
+          <TouchableOpacity style={styles.playerStatusAction} onPress={() => playbackEngine.refresh({ buffer: 8 })}>
+            <Text style={styles.playerStatusActionText}>Reload</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={styles.playerStatusAction} onPress={() => playbackEngine.hardReset()}>
+            <Text style={styles.playerStatusActionText}>Reset</Text>
+          </TouchableOpacity>
+        </View>
+
+        {playerStatus === "error" && playerError ? (
+          <View style={styles.playerErrorBox}>
+            <Text style={styles.playerErrorText} numberOfLines={2}>{playerError}</Text>
+          </View>
         ) : null}
-        <View style={styles.progressWrap}>
-          <View
-            ref={progressTrackRef}
-            style={styles.progressTrackShell}
-            onLayout={() => measureProgressTrack()}
-            {...progressResponder.panHandlers}
-          >
-            <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: String(progressPercent * 100) + "%" }]} />
-              <View style={[
-                styles.progressThumb,
-                { left: String(progressPercent * 100) + "%", transform: [{ translateX: -10 }, { scale: isSeeking ? 1.08 : 1 }] }
-              ]} />
+
+        <View style={styles.playerCard}>
+          <View style={styles.coverWrap}>
+            <SongArtwork uri={playerCurrent?.cover_url} size={228} radius={34} label={playerCurrent?.title || "TPY"} />
+          </View>
+          <Text style={styles.playerTitle}>{playerCurrent?.title || "No song yet"}</Text>
+          <Text style={styles.playerSub} numberOfLines={2}>{songTagText(playerCurrent)}</Text>
+          {!playerCurrent && playerNeedsGeneration ? (
+            <TouchableOpacity style={styles.secondarySoft} onPress={() => setActiveTab("galaxy")}>
+              <Text style={styles.secondaryText}>No playable songs. Go to Portrait to generate.</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          <View style={styles.progressWrap}>
+            <View style={styles.progressTrackShell}>
+              <View style={styles.progressTrack}>
+                <View style={[styles.progressFill, { width: String(progressPercent * 100) + "%" }]} />
+              </View>
+            </View>
+            <View style={styles.progressTimeRow}>
+              <Text style={styles.progressText}>{formatTime(displayedPosition)}</Text>
+              <Text style={styles.progressText}>{formatTime(playerPlayback.duration)}</Text>
             </View>
           </View>
-          <View style={styles.progressTimeRow}>
-            <Text style={styles.progressText}>{formatTime(displayedPosition)}</Text>
-            <Text style={styles.progressText}>{formatTime(playback.duration)}</Text>
-          </View>
-        </View>
-        <View style={styles.controlsRow}>
-          <TouchableOpacity
-            style={styles.controlBtn}
-            onPress={async () => {
-              if (!current) return;
-              await feedback("like");
-              const list = await loadPlaylists(userId);
-              if (list.length === 0) {
-                Alert.alert("No playlist", "Create one in Favorites first.");
-                setActiveTab("favorites");
-                return;
-              }
-              setShowPlaylistPicker(true);
-            }}
-          >
-            <Text style={styles.controlText}>Favorite</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.playBtn} onPress={togglePlay}>
-            <Text style={styles.playText}>{current ? (playback.isPlaying ? "Pause" : "Play") : "Refresh"}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.controlBtn} onPress={handleNext}>
-            <Text style={styles.controlText}>Next</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
 
-      {showPlaylistPicker ? (
-        <View style={styles.groupCard}>
-          <Text style={styles.groupTitle}>Save to playlist</Text>
-          {playlists.map((playlist) => (
+          <View style={styles.controlsRow}>
             <TouchableOpacity
-              key={playlist.id}
-              style={styles.listItem}
+              style={styles.controlBtn}
               onPress={async () => {
-                await addSongToPlaylist(playlist.id);
-                if (selectedPlaylistId === playlist.id) await loadPlaylistSongs(playlist.id);
-                setShowPlaylistPicker(false);
+                if (!playerCurrent) return;
+                await playbackEngine.likeCurrent();
+                const list = await loadPlaylists(userId);
+                if (list.length === 0) {
+                  Alert.alert("No playlist", "Create one in Favorites first.");
+                  setActiveTab("favorites");
+                  return;
+                }
+                setShowPlaylistPicker(true);
               }}
             >
-              <View>
-                <Text style={styles.listTitle}>{playlist.name}</Text>
-                <Text style={styles.listSub}>{"Songs " + (playlist.song_count || 0)}</Text>
-              </View>
-              <Text style={styles.chevron}>></Text>
+              <Text style={styles.controlText}>Favorite</Text>
             </TouchableOpacity>
-          ))}
-          <TouchableOpacity style={styles.secondarySoft} onPress={() => setShowPlaylistPicker(false)}>
-            <Text style={styles.secondaryText}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
-
-      <View style={styles.section}>
-        <TouchableOpacity style={styles.queueToggle} onPress={() => setShowQueue((prev) => !prev)}>
-          <View>
-            <Text style={styles.queueLabel}>Queue</Text>
-            <Text style={styles.queueHint}>Tap an item to switch playback</Text>
+            <TouchableOpacity style={styles.playBtn} onPress={togglePlay}>
+              <Text style={styles.playText}>{playerCurrent ? (playerPlayback.isPlaying ? "Pause" : "Play") : "Refresh"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.controlBtn} onPress={handleNext}>
+              <Text style={styles.controlText}>Next</Text>
+            </TouchableOpacity>
           </View>
-          <Text style={styles.queueAction}>{showQueue ? "Hide" : "Show"}</Text>
-        </TouchableOpacity>
-        {showQueue ? songs.map((item, index) => (
-          <TouchableOpacity key={String(queueKeyOf(item))} style={[styles.listItem, queueKeyOf(current) === queueKeyOf(item) && styles.currentQueueItem]} onPress={() => play(item)}>
-            <View style={styles.songListMain}>
-              <SongArtwork uri={item.cover_url} size={56} radius={18} label={item.title || "TPY"} />
-              <View style={styles.songListText}>
-                <Text style={styles.listTitle}>{String(index + 1) + ". " + (item.title || "Untitled")}</Text>
-                <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
-              </View>
-            </View>
-            <Text style={styles.chevron}>></Text>
-          </TouchableOpacity>
-        )) : null}
-      </View>
-    </ScrollView>
-  );
-  };
+        </View>
 
+        {showPlaylistPicker ? (
+          <View style={styles.groupCard}>
+            <Text style={styles.groupTitle}>Save to playlist</Text>
+            {playlists.map((playlist) => (
+              <TouchableOpacity
+                key={playlist.id}
+                style={styles.listItem}
+                onPress={async () => {
+                  await addSongToPlaylist(playlist.id, playbackEngine.current);
+                  if (selectedPlaylistId === playlist.id) await loadPlaylistSongs(playlist.id);
+                  setShowPlaylistPicker(false);
+                }}
+              >
+                <View>
+                  <Text style={styles.listTitle}>{playlist.name}</Text>
+                  <Text style={styles.listSub}>{"Songs " + (playlist.song_count || 0)}</Text>
+                </View>
+                <Text style={styles.chevron}>{">"}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={styles.secondarySoft} onPress={() => setShowPlaylistPicker(false)}>
+              <Text style={styles.secondaryText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        <View style={styles.section}>
+          <TouchableOpacity style={styles.queueToggle} onPress={() => setShowQueue((prev) => !prev)}>
+            <View>
+              <Text style={styles.queueLabel}>Queue</Text>
+              <Text style={styles.queueHint}>Tap an item to switch playback</Text>
+            </View>
+            <Text style={styles.queueAction}>{showQueue ? "Hide" : "Show"}</Text>
+          </TouchableOpacity>
+          {showQueue ? (
+            playerQueue.length > 0 ? (
+              playerQueue.map((item, index) => (
+                <TouchableOpacity
+                  key={String(queueKeyOf(item))}
+                  style={[styles.listItem, queueKeyOf(playerCurrent) === queueKeyOf(item) && styles.currentQueueItem]}
+                  onPress={() => play(item)}
+                >
+                  <View style={styles.songListMain}>
+                    <SongArtwork uri={item.cover_url} size={56} radius={18} label={item.title || "TPY"} />
+                    <View style={styles.songListText}>
+                      <Text style={styles.listTitle}>{String(index + 1) + ". " + (item.title || "Untitled")}</Text>
+                      <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.chevron}>{">"}</Text>
+                </TouchableOpacity>
+              ))
+            ) : (
+              <View style={styles.queueEmptyBox}>
+                <Text style={styles.placeholder}>Queue is empty. Tap Reload or generate songs in Portrait.</Text>
+              </View>
+            )
+          ) : null}
+        </View>
+      </ScrollView>
+    );
+  };
   const renderFavorites = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
       <ScreenTitle eyebrow="Favorites" title="Playlists and songs" subtitle="Expand playlist, append single song, or append whole playlist by +." />
@@ -1802,7 +1793,7 @@ export default function App() {
                 style={styles.secondarySoft}
                 onPress={async () => {
                   await generate({ prefetch: false, silent: false, preferLatest: true });
-                  await refreshSongs(userId, { buffer: 8 });
+                  await playbackEngine.refresh({ buffer: 8 });
                   setActiveTab("player");
                 }}
               >
@@ -1958,6 +1949,14 @@ const styles = StyleSheet.create({
   artworkLabel: { color: "#FFFFFF", fontWeight: "800", letterSpacing: 0.8 },
   playerTitle: { color: "#FFFFFF", fontSize: 30, fontWeight: "800", textAlign: "center", letterSpacing: -0.8 },
   playerSub: { color: "rgba(236,240,246,0.7)", fontSize: 15, lineHeight: 22, textAlign: "center", marginTop: 8 },
+  playerStatusRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
+  playerStatusPill: { flex: 1, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 999, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  playerStatusPillError: { backgroundColor: "rgba(255,103,103,0.18)", borderColor: "rgba(255,130,130,0.28)" },
+  playerStatusText: { color: "#FFFFFF", fontSize: 12, fontWeight: "700" },
+  playerStatusAction: { marginLeft: 8, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  playerStatusActionText: { color: "rgba(255,255,255,0.9)", fontSize: 12, fontWeight: "700" },
+  playerErrorBox: { backgroundColor: "rgba(255,103,103,0.14)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(255,130,130,0.25)", paddingVertical: 9, paddingHorizontal: 12, marginBottom: 12 },
+  playerErrorText: { color: "rgba(255,232,232,0.95)", fontSize: 12, lineHeight: 16 },
   progressWrap: { marginTop: 22 },
   progressTrackShell: { marginHorizontal: -4, paddingVertical: 10 },
   progressTrack: { height: 8, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.12)", overflow: "visible", position: "relative" },
@@ -1977,6 +1976,7 @@ const styles = StyleSheet.create({
   queueAction: { color: "rgba(255,255,255,0.82)", fontSize: 14, fontWeight: "700" },
   listItem: { backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   currentQueueItem: { borderColor: "rgba(255,255,255,0.28)" },
+  queueEmptyBox: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", padding: 14 },
   songListMain: { flexDirection: "row", alignItems: "center", flex: 1 },
   songListText: { flex: 1, marginLeft: 12 },
   playlistBox: { borderRadius: 20, backgroundColor: "rgba(255,255,255,0.08)", padding: 12, marginBottom: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
@@ -2042,6 +2042,7 @@ const styles = StyleSheet.create({
   rowGap: { flexDirection: "row", gap: 10 },
   flex: { flex: 1 }
 });
+
 
 
 

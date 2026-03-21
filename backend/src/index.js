@@ -1,6 +1,8 @@
 import "dotenv/config";
 import crypto from "crypto";
 import Fastify from "fastify";
+import fs from "fs/promises";
+import path from "path";
 import { query } from "./db.js";
 
 const app = Fastify({ logger: true });
@@ -31,6 +33,10 @@ const REUSE_SIMILARITY_MIN = Number(process.env.REUSE_SIMILARITY_MIN || 0.38);
 const PREFETCH_REUSE_SIMILARITY_MIN = Number(process.env.PREFETCH_REUSE_SIMILARITY_MIN || 0.28);
 const INIT_REUSE_SIMILARITY_MIN = Number(process.env.INIT_REUSE_SIMILARITY_MIN || 0.3);
 const ACTIVE_JOB_STALE_MS = Number(process.env.ACTIVE_JOB_STALE_MS || 10 * 60 * 1000);
+const ASSET_STORAGE_DIR = process.env.ASSET_STORAGE_DIR || "/app/storage";
+const CALLBACK_BASE = (process.env.CALLBACK_BASE || "").replace(/\/$/, "");
+const ASSET_PUBLIC_BASE = (process.env.ASSET_PUBLIC_BASE || (CALLBACK_BASE ? `${CALLBACK_BASE}/api/assets` : "/assets")).replace(/\/$/, "");
+const ASSET_DOWNLOAD_TIMEOUT_MS = Number(process.env.ASSET_DOWNLOAD_TIMEOUT_MS || 20 * 1000);
 
 const PROMPT_GUIDE = {
   "\u60c5\u7eea": "Describe the emotional tone and energy arc.",
@@ -72,6 +78,145 @@ function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(a, b);
 }
 
+function isAudioUrlLikelyExpired(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return true;
+  try {
+    const parsed = new URL(raw);
+    const authKey = parsed.searchParams.get("auth_key");
+    if (authKey) {
+      const expiresAt = Number(String(authKey).split("-")[0] || 0);
+      if (Number.isFinite(expiresAt) && expiresAt > 0) {
+        return Math.floor(Date.now() / 1000) >= expiresAt;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function safeAssetExt(kind, sourceUrl, contentType) {
+  const normalizedKind = kind === "cover" ? "cover" : "audio";
+  const byType = {
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/ogg": ".ogg",
+    "audio/aac": ".aac",
+    "audio/flac": ".flac",
+    "audio/mp4": ".m4a",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp"
+  };
+  const cleanType = String(contentType || "").split(";")[0].trim().toLowerCase();
+  if (byType[cleanType]) return byType[cleanType];
+
+  try {
+    const pathname = new URL(String(sourceUrl || "")).pathname || "";
+    const ext = path.extname(pathname || "").toLowerCase();
+    if (/^\.[a-z0-9]{1,8}$/.test(ext)) return ext;
+  } catch {
+    // ignore invalid URL
+  }
+
+  return normalizedKind === "cover" ? ".jpg" : ".mp3";
+}
+
+function guessContentTypeByExt(fileName) {
+  const ext = String(path.extname(fileName || "")).toLowerCase();
+  if (ext === ".mp3") return "audio/mpeg";
+  if (ext === ".wav") return "audio/wav";
+  if (ext === ".ogg") return "audio/ogg";
+  if (ext === ".aac") return "audio/aac";
+  if (ext === ".flac") return "audio/flac";
+  if (ext === ".m4a") return "audio/mp4";
+  if (ext === ".png") return "image/png";
+  if (ext === ".webp") return "image/webp";
+  return "image/jpeg";
+}
+
+function isHttpUrl(url) {
+  return /^https?:\/\//i.test(String(url || "").trim());
+}
+
+function decodeDataUri(dataUri) {
+  const raw = String(dataUri || "").trim();
+  const matched = raw.match(/^data:([^;,]+);base64,(.+)$/i);
+  if (!matched) return null;
+  const contentType = matched[1] || "application/octet-stream";
+  const b64 = matched[2] || "";
+  if (!b64) return null;
+  try {
+    return { contentType, buffer: Buffer.from(b64, "base64") };
+  } catch {
+    return null;
+  }
+}
+
+async function ensureAssetStorageDirs() {
+  await fs.mkdir(path.join(ASSET_STORAGE_DIR, "audio"), { recursive: true });
+  await fs.mkdir(path.join(ASSET_STORAGE_DIR, "cover"), { recursive: true });
+}
+
+function assetPublicUrl(kind, fileName) {
+  return `${ASSET_PUBLIC_BASE}/${kind}/${fileName}`;
+}
+
+async function fetchRemoteBinary(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ASSET_DOWNLOAD_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`asset download failed: ${res.status}`);
+    }
+    const arr = await res.arrayBuffer();
+    return {
+      buffer: Buffer.from(arr),
+      contentType: res.headers.get("content-type") || ""
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function persistBinaryAsset(kind, buffer, sourceUrl, contentType) {
+  if (!buffer || buffer.length === 0) {
+    throw new Error("asset buffer is empty");
+  }
+  const safeKind = kind === "cover" ? "cover" : "audio";
+  const ext = safeAssetExt(safeKind, sourceUrl, contentType);
+  const digest = crypto.createHash("sha1").update(buffer).digest("hex").slice(0, 20);
+  const fileName = `${Date.now()}_${digest}${ext}`;
+  const dir = path.join(ASSET_STORAGE_DIR, safeKind);
+  const filePath = path.join(dir, fileName);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(filePath, buffer);
+  return assetPublicUrl(safeKind, fileName);
+}
+
+async function persistRemoteAsset(url, kind) {
+  const raw = String(url || "").trim();
+  if (!raw) return null;
+  if (!isHttpUrl(raw)) return raw;
+  const downloaded = await fetchRemoteBinary(raw);
+  return persistBinaryAsset(kind, downloaded.buffer, raw, downloaded.contentType);
+}
+
+async function persistCoverAsset(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return null;
+  if (/^data:/i.test(raw)) {
+    const parsed = decodeDataUri(raw);
+    if (!parsed) return raw;
+    return persistBinaryAsset("cover", parsed.buffer, "inline-data-uri", parsed.contentType);
+  }
+  return persistRemoteAsset(raw, "cover");
+}
 async function ensureRuntimeSchema() {
   await query(`
     ALTER TABLE users
@@ -100,6 +245,37 @@ function requireAdmin(request, reply) {
 }
 
 app.get("/health", async () => ({ ok: true }));
+
+app.get("/assets/:kind/:name", async (request, reply) => {
+  const { kind, name } = request.params || {};
+  const safeKind = String(kind || "").toLowerCase();
+  if (!["audio", "cover"].includes(safeKind)) {
+    reply.code(404).send({ error: "asset kind not found" });
+    return;
+  }
+
+  const safeName = String(name || "").trim();
+  if (!/^[a-zA-Z0-9._-]+$/.test(safeName)) {
+    reply.code(400).send({ error: "invalid asset name" });
+    return;
+  }
+
+  const baseDir = path.resolve(path.join(ASSET_STORAGE_DIR, safeKind));
+  const filePath = path.resolve(path.join(baseDir, safeName));
+  if (!filePath.startsWith(baseDir + path.sep) && filePath !== baseDir) {
+    reply.code(400).send({ error: "invalid asset path" });
+    return;
+  }
+
+  try {
+    const binary = await fs.readFile(filePath);
+    reply.header("Cache-Control", "public, max-age=31536000, immutable");
+    reply.type(guessContentTypeByExt(safeName));
+    return reply.send(binary);
+  } catch {
+    reply.code(404).send({ error: "asset not found" });
+  }
+});
 
 app.get("/tags", async () => {
   const { rows } = await query("SELECT id, name, type FROM tags WHERE is_active = true ORDER BY id");
@@ -990,7 +1166,10 @@ async function reuseSongForUser(job, librarySong) {
     coverHint: job.cover_hint || librarySong.cover_hint || librarySong.prompt || job.prompt,
     prompt: job.prompt || librarySong.prompt || null
   });
-  const displayCoverUrl = generatedCover?.cover_url || librarySong.cover_url || null;
+  const rawDisplayCoverUrl = generatedCover?.cover_url || librarySong.cover_url || null;
+  const displayCoverUrl = rawDisplayCoverUrl
+    ? await persistCoverAsset(rawDisplayCoverUrl).catch(() => rawDisplayCoverUrl)
+    : null;
 
   await queueSongForUser(job.user_id, librarySong.id, job.id, 'reused', {
     displayTitle,
@@ -1207,6 +1386,7 @@ app.post("/callback/tpy", async (request, reply) => {
     }
 
     if (itemId && audioUrl) {
+      const persistedAudioUrl = await persistRemoteAsset(audioUrl, "audio").catch(() => audioUrl);
       const existingAsset = await query(
         "SELECT song_id FROM song_assets WHERE item_id = $1 LIMIT 1",
         [itemId]
@@ -1214,7 +1394,7 @@ app.post("/callback/tpy", async (request, reply) => {
       if (existingAsset.rows.length > 0) {
         await query(
           "UPDATE song_assets SET audio_url = COALESCE($1, audio_url) WHERE item_id = $2",
-          [audioUrl, itemId]
+          [persistedAudioUrl, itemId]
         );
         continue;
       }
@@ -1230,7 +1410,10 @@ app.post("/callback/tpy", async (request, reply) => {
           coverHint: job.cover_hint || job.prompt,
           prompt: job.prompt
         });
-        const coverUrl = generatedCover?.cover_url || s?.cover_url || s?.image_url || s?.cover || null;
+        const rawCoverUrl = generatedCover?.cover_url || s?.cover_url || s?.image_url || s?.cover || null;
+        const coverUrl = rawCoverUrl
+          ? await persistCoverAsset(rawCoverUrl).catch(() => rawCoverUrl)
+          : null;
         const song = await query(
           "INSERT INTO songs (user_id, prompt, base_prompt, title, cover_url, cover_hint, model, duration, style, generation_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'generated') RETURNING id",
           [
@@ -1256,7 +1439,7 @@ app.post("/callback/tpy", async (request, reply) => {
         }
         await query(
           "INSERT INTO song_assets (song_id, item_id, audio_url) VALUES ($1, $2, $3)",
-          [songId, itemId, audioUrl]
+          [songId, itemId, persistedAudioUrl]
         );
         await queueSongForUser(job.user_id, songId, job.id, 'generated', {
           displayTitle,
@@ -1371,7 +1554,7 @@ async function getPlayableQueue(userId) {
     "SELECT q.id AS queue_id, s.id, COALESCE(q.display_title, s.title) AS title, COALESCE(q.display_cover_url, s.cover_url) AS cover_url, s.prompt, sa.audio_url, q.created_at, q.source, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id AND audio_url IS NOT NULL ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 AND COALESCE(q.is_hidden, false) = false GROUP BY q.id, s.id, q.display_title, q.display_cover_url, s.prompt, sa.audio_url, q.created_at, q.source ORDER BY q.created_at ASC, q.id ASC",
     [Number(userId)]
   );
-  return rows;
+  return rows.filter((row) => row.audio_url && !isAudioUrlLikelyExpired(row.audio_url));
 }
 
 function rotateQueueFromCursor(items, cursorQueueId) {
@@ -1444,6 +1627,11 @@ app.get("/songs", async (request, reply) => {
 const port = Number(process.env.PORT || 8080);
 
 await ensureRuntimeSchema();
+await ensureAssetStorageDirs();
 app.listen({ port, host: "0.0.0.0" });
+
+
+
+
 
 
