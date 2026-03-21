@@ -198,11 +198,13 @@ async function persistBinaryAsset(kind, buffer, sourceUrl, contentType) {
   const safeKind = kind === "cover" ? "cover" : "audio";
   const ext = safeAssetExt(safeKind, sourceUrl, contentType);
   const digest = crypto.createHash("sha1").update(buffer).digest("hex").slice(0, 20);
-  const fileName = `${Date.now()}_${digest}${ext}`;
+  const fileName = `${digest}${ext}`;
   const dir = path.join(ASSET_STORAGE_DIR, safeKind);
   const filePath = path.join(dir, fileName);
   await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(filePath, buffer);
+  await fs.access(filePath).catch(async () => {
+    await fs.writeFile(filePath, buffer);
+  });
   return assetPublicUrl(safeKind, fileName);
 }
 
@@ -1556,68 +1558,109 @@ app.post("/callback/tpy", async (request, reply) => {
       );
     }
 
-    if (itemId && audioUrl) {
-      const persistedAudioUrl = await persistRemoteAsset(audioUrl, "audio").catch(() => audioUrl);
-      const existingAsset = await query(
-        "SELECT song_id FROM song_assets WHERE item_id = $1 LIMIT 1",
-        [itemId]
+    if (!(itemId && audioUrl)) continue;
+
+    const persistedAudioUrl = await persistRemoteAsset(audioUrl, "audio").catch(() => audioUrl);
+
+    const existingAsset = await query(
+      "SELECT song_id FROM song_assets WHERE item_id = $1 LIMIT 1",
+      [itemId]
+    );
+    if (existingAsset.rows.length > 0) {
+      await query(
+        "UPDATE song_assets SET audio_url = COALESCE($1, audio_url) WHERE item_id = $2",
+        [persistedAudioUrl, itemId]
       );
-      if (existingAsset.rows.length > 0) {
-        await query(
-          "UPDATE song_assets SET audio_url = COALESCE($1, audio_url) WHERE item_id = $2",
-          [persistedAudioUrl, itemId]
-        );
-        continue;
-      }
-      const { rows } = await query(
-        "UPDATE generation_jobs SET status = 'done' WHERE $1 = ANY(item_ids) RETURNING id, user_id, prompt, base_prompt, title_hint, cover_hint, tag_ids",
-        [itemId]
+      continue;
+    }
+
+    const existingByAudio = await query(
+      "SELECT sa.song_id, s.title, s.cover_url FROM song_assets sa JOIN songs s ON s.id = sa.song_id WHERE sa.audio_url = $1 ORDER BY sa.id ASC LIMIT 1",
+      [persistedAudioUrl]
+    );
+
+    if (existingByAudio.rows.length > 0) {
+      const existingSong = existingByAudio.rows[0];
+      await query(
+        "INSERT INTO song_assets (song_id, item_id, audio_url) VALUES ($1, $2, $3)",
+        [Number(existingSong.song_id), itemId, persistedAudioUrl]
       );
-      if (rows.length > 0) {
-        const job = rows[0];
-        const displayTitle = normalizeTitle(job.title_hint || s?.title || null, s?.title || null);
-        const generatedCover = await generateCoverImage({
-          title: displayTitle,
-          coverHint: job.cover_hint || job.prompt,
-          prompt: job.prompt
-        });
-        const rawCoverUrl = generatedCover?.cover_url || s?.cover_url || s?.image_url || s?.cover || null;
-        const coverUrl = rawCoverUrl
-          ? await persistCoverAsset(rawCoverUrl).catch(() => rawCoverUrl)
-          : null;
-        const song = await query(
-          "INSERT INTO songs (user_id, prompt, base_prompt, title, cover_url, cover_hint, model, duration, style, generation_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'generated') RETURNING id",
-          [
-            job.user_id,
-            job.prompt,
-            job.base_prompt || job.prompt,
-            displayTitle,
-            coverUrl,
-            job.cover_hint || null,
-            generatedCover?.provider_model || s?.model || null,
-            Number.isFinite(Number(s?.duration)) ? Number(s?.duration) : null,
-            s?.style || null
-          ]
-        );
-        const songId = song.rows[0].id;
-        if (Array.isArray(job.tag_ids) && job.tag_ids.length > 0) {
-          for (const tagId of job.tag_ids) {
-            await query(
-              "INSERT INTO song_tags (song_id, tag_id, relevance) VALUES ($1, $2, 1.0) ON CONFLICT DO NOTHING",
-              [songId, tagId]
-            );
-          }
-        }
-        await query(
-          "INSERT INTO song_assets (song_id, item_id, audio_url) VALUES ($1, $2, $3)",
-          [songId, itemId, persistedAudioUrl]
-        );
-        await queueSongForUser(job.user_id, songId, job.id, 'generated', {
+
+      const matchedJobs = await query(
+        "UPDATE generation_jobs SET status = 'reused', item_ids = $1 WHERE $2 = ANY(item_ids) AND status IN ('pending', 'submitted', 'done') RETURNING id, user_id, title_hint",
+        [[itemId], itemId]
+      );
+
+      for (const job of matchedJobs.rows) {
+        const displayTitle = normalizeTitle(job.title_hint || existingSong.title || null, existingSong.title || null);
+        await queueSongForUser(job.user_id, Number(existingSong.song_id), job.id, 'reused', {
           displayTitle,
-          displayCoverUrl: coverUrl
+          displayCoverUrl: existingSong.cover_url || null
         });
+        await query(
+          "UPDATE songs SET reuse_count = reuse_count + 1 WHERE id = $1",
+          [Number(existingSong.song_id)]
+        );
+      }
+
+      continue;
+    }
+
+    const { rows } = await query(
+      "UPDATE generation_jobs SET status = 'done' WHERE $1 = ANY(item_ids) RETURNING id, user_id, prompt, base_prompt, title_hint, cover_hint, tag_ids",
+      [itemId]
+    );
+
+    if (rows.length === 0) {
+      continue;
+    }
+
+    const job = rows[0];
+    const displayTitle = normalizeTitle(job.title_hint || s?.title || null, s?.title || null);
+    const generatedCover = await generateCoverImage({
+      title: displayTitle,
+      coverHint: job.cover_hint || job.prompt,
+      prompt: job.prompt
+    });
+    const rawCoverUrl = generatedCover?.cover_url || s?.cover_url || s?.image_url || s?.cover || null;
+    const coverUrl = rawCoverUrl
+      ? await persistCoverAsset(rawCoverUrl).catch(() => rawCoverUrl)
+      : null;
+
+    const song = await query(
+      "INSERT INTO songs (user_id, prompt, base_prompt, title, cover_url, cover_hint, model, duration, style, generation_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'generated') RETURNING id",
+      [
+        job.user_id,
+        job.prompt,
+        job.base_prompt || job.prompt,
+        displayTitle,
+        coverUrl,
+        job.cover_hint || null,
+        generatedCover?.provider_model || s?.model || null,
+        Number.isFinite(Number(s?.duration)) ? Number(s?.duration) : null,
+        s?.style || null
+      ]
+    );
+    const songId = Number(song.rows[0].id);
+
+    if (Array.isArray(job.tag_ids) && job.tag_ids.length > 0) {
+      for (const tagId of job.tag_ids) {
+        await query(
+          "INSERT INTO song_tags (song_id, tag_id, relevance) VALUES ($1, $2, 1.0) ON CONFLICT DO NOTHING",
+          [songId, tagId]
+        );
       }
     }
+
+    await query(
+      "INSERT INTO song_assets (song_id, item_id, audio_url) VALUES ($1, $2, $3)",
+      [songId, itemId, persistedAudioUrl]
+    );
+
+    await queueSongForUser(job.user_id, songId, job.id, 'generated', {
+      displayTitle,
+      displayCoverUrl: coverUrl
+    });
   }
 
   reply.send("success");
