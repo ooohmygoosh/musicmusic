@@ -11,7 +11,7 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 const TPY_BASE_URL = process.env.TPY_BASE_URL || "https://api.tianpuyue.cn";
 const TPY_API_KEY = process.env.TPY_API_KEY || "";
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
-const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
+const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/$/, "");
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-chat";
 const DEEPSEEK_ENABLED = (process.env.DEEPSEEK_ENABLED
   ? process.env.DEEPSEEK_ENABLED === "true"
@@ -1124,66 +1124,94 @@ async function optimizePromptWithDeepSeek({
       "deepseek prompt optimization started"
     );
 
-    const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${DEEPSEEK_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: DEEPSEEK_MODEL,
-        temperature: 0.4,
-        messages: [
-          {
-            role: "system",
-            content:
-              "你是音乐生成提示词优化助手。请严格返回 JSON 对象，不要解释，不要 Markdown，不要代码块。"
-          },
-          {
-            role: "user",
-            content: JSON.stringify({
-              task: "按三层话语权生成自然语言音乐提示词，并给出标题和封面描述",
-              product_requirements: DEEPSEEK_PRODUCT_REQUIREMENTS,
-              base_prompt: basePrompt,
-              anchor_rule: "主锚标签放第一句并在结尾再次强调，使用必须是、全程保持、绝对核心等强约束词",
-              core_rule: "核心约束放第二句，2-3 个标签，使用风格为、情绪是、主要使用等明确词",
-              weak_rule: "弱补充放最后一句，使用可以尝试、点缀等软约束词",
-              anchor_tag: anchorTag
-                ? { type: anchorTag.type, name: anchorTag.name, weight: Number(anchorTag.weight || 0) }
-                : null,
-              core_tags: (coreTags || []).map((tag) => ({ type: tag.type, name: tag.name, weight: Number(tag.weight || 0) })),
-              weak_tags: (weakTags || []).map((tag) => ({ type: tag.type, name: tag.name, weight: Number(tag.weight || 0) })),
-              tags: tagSummary,
-              grouped_tags: groupedGuide,
-              output_schema: {
-                prompt: "三句话中文提示词，主锚在第一句，核心约束在第二句，弱补充在第三句",
-                title_hint: "简短自然的中文歌名",
-                cover_hint: "适合封面图生成的中文画面描述"
-              },
-              constraints: [
-                "必须保留标签核心语义",
-                "不要输出列表，不要解释",
-                "严格输出 JSON 对象，字段包含 prompt、title_hint、cover_hint"
-              ]
-            })
-          }
-        ]
-      })
-    });
+    const requestPayload = {
+      temperature: 0.4,
+      messages: [
+        {
+          role: "system",
+          content:
+            "你是音乐生成提示词优化助手。请严格返回 JSON 对象，不要解释，不要 Markdown，不要代码块。"
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            task: "按三层话语权生成自然语言音乐提示词，并给出标题和封面描述",
+            product_requirements: DEEPSEEK_PRODUCT_REQUIREMENTS,
+            base_prompt: basePrompt,
+            anchor_rule: "主锚标签放第一句并在结尾再次强调，使用必须是、全程保持、绝对核心等强约束词",
+            core_rule: "核心约束放第二句，2-3 个标签，使用风格为、情绪是、主要使用等明确词",
+            weak_rule: "弱补充放最后一句，使用可以尝试、点缀等软约束词",
+            anchor_tag: anchorTag
+              ? { type: anchorTag.type, name: anchorTag.name, weight: Number(anchorTag.weight || 0) }
+              : null,
+            core_tags: (coreTags || []).map((tag) => ({ type: tag.type, name: tag.name, weight: Number(tag.weight || 0) })),
+            weak_tags: (weakTags || []).map((tag) => ({ type: tag.type, name: tag.name, weight: Number(tag.weight || 0) })),
+            tags: tagSummary,
+            grouped_tags: groupedGuide,
+            output_schema: {
+              prompt: "三句话中文提示词，主锚在第一句，核心约束在第二句，弱补充在第三句",
+              title_hint: "简短自然的中文歌名",
+              cover_hint: "适合封面图生成的中文画面描述"
+            },
+            constraints: [
+              "必须保留标签核心语义",
+              "不要输出列表，不要解释",
+              "严格输出 JSON 对象，字段包含 prompt、title_hint、cover_hint"
+            ]
+          })
+        }
+      ]
+    };
 
-    if (!response.ok) {
+    const modelCandidates = [...new Set([
+      String(DEEPSEEK_MODEL || "").trim(),
+      "deepseek-chat"
+    ].filter(Boolean))];
+
+    let data = null;
+    let usedModel = modelCandidates[0] || "deepseek-chat";
+
+    for (const modelName of modelCandidates) {
+      usedModel = modelName;
+      const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${DEEPSEEK_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: modelName,
+          ...requestPayload
+        })
+      });
+
+      if (response.ok) {
+        data = await response.json().catch(() => null);
+        break;
+      }
+
       const failText = await response.text().catch(() => "");
       app.log.warn(
         {
           status: response.status,
+          model: modelName,
           body: String(failText || "").slice(0, 800)
         },
         "deepseek prompt optimization failed"
       );
+
+      if (response.status !== 400) {
+        return fallback;
+      }
+    }
+
+    if (!data) {
       return fallback;
     }
 
-    const data = await response.json().catch(() => null);
+    if (usedModel !== DEEPSEEK_MODEL) {
+      app.log.info({ requested_model: DEEPSEEK_MODEL, used_model: usedModel }, "deepseek model fallback applied");
+    }
     const content = data?.choices?.[0]?.message?.content;
     const parsed = parseJsonObject(content);
     if (!parsed) {
@@ -1197,7 +1225,7 @@ async function optimizePromptWithDeepSeek({
       cover_hint: String(parsed?.cover_hint || "").trim() || fallback.cover_hint
     };
 
-    app.log.info({ model: DEEPSEEK_MODEL, result }, "deepseek prompt optimization succeeded");
+    app.log.info({ requested_model: DEEPSEEK_MODEL, used_model: usedModel, result }, "deepseek prompt optimization succeeded");
     return result;
   } catch (error) {
     app.log.warn({ err: String(error) }, "deepseek prompt optimization error");
