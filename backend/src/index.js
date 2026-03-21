@@ -1,4 +1,4 @@
-﻿import "dotenv/config";
+import "dotenv/config";
 import crypto from "crypto";
 import Fastify from "fastify";
 import { query } from "./db.js";
@@ -1326,6 +1326,73 @@ app.post("/feedback", async (request, reply) => {
   }
 
   return { ok: true };
+});
+
+async function getExploreState(userId) {
+  const { rows } = await query(
+    "SELECT action, created_at FROM feedback WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20",
+    [Number(userId)]
+  );
+
+  let skipStreak = 0;
+  for (const row of rows) {
+    if (String(row.action || "").toLowerCase() === "skip") {
+      skipStreak += 1;
+      continue;
+    }
+    break;
+  }
+
+  if (skipStreak >= 2) {
+    return { mode: "explore_deep", skip_streak: skipStreak };
+  }
+  return { mode: "stable", skip_streak: skipStreak };
+}
+
+async function getPlayableQueue(userId) {
+  const { rows } = await query(
+    "SELECT q.id AS queue_id, s.id, COALESCE(q.display_title, s.title) AS title, COALESCE(q.display_cover_url, s.cover_url) AS cover_url, s.prompt, sa.audio_url, q.created_at, q.source, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM user_song_queue q JOIN songs s ON s.id = q.song_id JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id AND audio_url IS NOT NULL ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE q.user_id = $1 AND COALESCE(q.is_hidden, false) = false GROUP BY q.id, s.id, q.display_title, q.display_cover_url, s.prompt, sa.audio_url, q.created_at, q.source ORDER BY q.created_at ASC, q.id ASC",
+    [Number(userId)]
+  );
+  return rows;
+}
+
+function rotateQueueFromCursor(items, cursorQueueId) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  if (!Number.isFinite(Number(cursorQueueId))) return items;
+
+  const cursor = Number(cursorQueueId);
+  const nextIndex = items.findIndex((item) => Number(item.queue_id) > cursor);
+  if (nextIndex < 0) return items;
+  return [...items.slice(nextIndex), ...items.slice(0, nextIndex)];
+}
+
+app.get("/recommend/next", async (request, reply) => {
+  const { user_id, cursor_queue_id, buffer } = request.query || {};
+  if (!user_id) {
+    reply.code(400).send({ error: "user_id required" });
+    return;
+  }
+
+  const queue = await getPlayableQueue(user_id);
+  const ordered = rotateQueueFromCursor(queue, cursor_queue_id);
+  const bufferSize = Math.max(1, Math.min(20, Number(buffer || 5)));
+
+  const pendingJob = await query(
+    "SELECT id FROM generation_jobs WHERE user_id = $1 AND status IN ('pending', 'submitted') ORDER BY id DESC LIMIT 1",
+    [Number(user_id)]
+  );
+  const explore = await getExploreState(user_id);
+
+  return {
+    mode: explore.mode,
+    skip_streak: explore.skip_streak,
+    next: ordered[0] || null,
+    buffer: ordered.slice(0, bufferSize),
+    playable_count: queue.length,
+    has_pending_generation: pendingJob.rows.length > 0,
+    needs_generation: queue.length < 2 && pendingJob.rows.length === 0
+  };
 });
 
 app.get("/songs", async (request, reply) => {
