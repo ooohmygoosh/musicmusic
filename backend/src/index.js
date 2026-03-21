@@ -285,6 +285,43 @@ app.get("/assets/:kind/:name", async (request, reply) => {
     reply.code(404).send({ error: "asset not found" });
   }
 });
+function resolveLocalAssetPathFromUrl(rawUrl) {
+  const input = String(rawUrl || "").trim();
+  if (!input) return null;
+
+  let pathname = "";
+  try {
+    pathname = new URL(input).pathname || "";
+  } catch {
+    if (input.startsWith("/")) pathname = input;
+  }
+
+  if (!pathname) return null;
+  const m = pathname.match(/\/assets\/(audio|cover)\/([A-Za-z0-9._-]+)$/i);
+  if (!m) return null;
+
+  const kind = String(m[1] || "").toLowerCase();
+  const fileName = String(m[2] || "");
+  if (!kind || !fileName) return null;
+
+  const baseDir = path.resolve(path.join(ASSET_STORAGE_DIR, kind));
+  const filePath = path.resolve(path.join(baseDir, fileName));
+  if (!filePath.startsWith(baseDir + path.sep) && filePath !== baseDir) return null;
+
+  return filePath;
+}
+
+async function deleteLocalAssetByUrl(rawUrl) {
+  const filePath = resolveLocalAssetPathFromUrl(rawUrl);
+  if (!filePath) return { deleted: false, reason: "not_local_asset" };
+  try {
+    await fs.unlink(filePath);
+    return { deleted: true };
+  } catch (error) {
+    if (error?.code === "ENOENT") return { deleted: false, reason: "not_found" };
+    return { deleted: false, reason: String(error) };
+  }
+}
 
 app.get("/tags", async () => {
   const { rows } = await query("SELECT id, name, type FROM tags WHERE is_active = true ORDER BY id");
@@ -513,6 +550,59 @@ app.patch("/admin/library-songs/:id", async (request, reply) => {
     [is_available, Number(id)]
   );
   return { item: rows[0] || null };
+});
+app.post("/admin/library-songs/bulk-delete", async (request, reply) => {
+  if (!requireAdmin(request, reply)) return;
+  const songIds = Array.isArray(request.body?.song_ids) ? request.body.song_ids : [];
+  const ids = [...new Set(songIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0))];
+  if (ids.length === 0) {
+    reply.code(400).send({ error: "song_ids required" });
+    return;
+  }
+
+  const { rows: songs } = await query(
+    "SELECT id, cover_url FROM songs WHERE source_song_id IS NULL AND id = ANY($1::int[])",
+    [ids]
+  );
+  const targetIds = songs.map((row) => Number(row.id));
+  if (targetIds.length === 0) {
+    return { ok: true, affected: 0, files_deleted: 0, files_failed: 0 };
+  }
+
+  const { rows: assets } = await query(
+    "SELECT song_id, audio_url FROM song_assets WHERE song_id = ANY($1::int[])",
+    [targetIds]
+  );
+
+  const candidateUrls = [];
+  for (const row of songs) {
+    if (row.cover_url) candidateUrls.push(String(row.cover_url));
+  }
+  for (const row of assets) {
+    if (row.audio_url) candidateUrls.push(String(row.audio_url));
+  }
+
+  let filesDeleted = 0;
+  let filesFailed = 0;
+  const seen = new Set();
+  for (const url of candidateUrls) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const result = await deleteLocalAssetByUrl(url);
+    if (result.deleted) filesDeleted += 1;
+    else if (result.reason && result.reason !== "not_local_asset" && result.reason !== "not_found") filesFailed += 1;
+  }
+
+  await query("UPDATE songs SET is_available = false WHERE id = ANY($1::int[])", [targetIds]);
+  await query("DELETE FROM song_assets WHERE song_id = ANY($1::int[])", [targetIds]);
+  await query("UPDATE user_song_queue SET is_hidden = true, acted_at = NOW() WHERE song_id = ANY($1::int[])", [targetIds]);
+
+  return {
+    ok: true,
+    affected: targetIds.length,
+    files_deleted: filesDeleted,
+    files_failed: filesFailed
+  };
 });
 app.post("/auth/register", async (request, reply) => {
   const { account_id, password, display_name, avatar } = request.body || {};
@@ -1353,13 +1443,25 @@ async function getUserExcludedSongIds(userId) {
 }
 
 async function queueSongForUser(userId, songId, jobId, source, options = {}) {
+  const numericUserId = Number(userId);
+  const numericSongId = Number(songId);
+  const numericJobId = jobId ? Number(jobId) : null;
   const { displayTitle = null, displayCoverUrl = null } = options;
+
+  if (numericJobId) {
+    const existing = await query(
+      "SELECT id FROM user_song_queue WHERE user_id = $1 AND song_id = $2 AND generation_job_id = $3 ORDER BY id DESC LIMIT 1",
+      [numericUserId, numericSongId, numericJobId]
+    );
+    if (existing.rows[0]) return existing.rows[0];
+  }
+
   const { rows } = await query(
     "INSERT INTO user_song_queue (user_id, song_id, generation_job_id, source, display_title, display_cover_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
     [
-      Number(userId),
-      Number(songId),
-      jobId ? Number(jobId) : null,
+      numericUserId,
+      numericSongId,
+      numericJobId,
       source,
       displayTitle || null,
       displayCoverUrl || null
@@ -1624,7 +1726,19 @@ app.post("/callback/tpy", async (request, reply) => {
 
     if (!(itemId && audioUrl)) continue;
 
-    const persistedAudioUrl = await persistRemoteAsset(audioUrl, "audio").catch(() => audioUrl);
+    let persistedAudioUrl = null;
+    try {
+      persistedAudioUrl = await persistRemoteAsset(audioUrl, "audio");
+    } catch (error) {
+      app.log.warn({ item_id: itemId, err: String(error) }, "audio persist failed");
+      if (itemId) {
+        await query(
+          "UPDATE generation_jobs SET status = 'failed', error = $1 WHERE $2 = ANY(item_ids)",
+          ["audio persist failed", itemId]
+        );
+      }
+      continue;
+    }
 
     const existingAsset = await query(
       "SELECT song_id FROM song_assets WHERE item_id = $1 LIMIT 1",

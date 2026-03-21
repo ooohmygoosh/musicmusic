@@ -1,8 +1,11 @@
-﻿const tokenInput = document.getElementById("token");
+const tokenInput = document.getElementById("token");
 const list = document.getElementById("songList");
 const searchInput = document.getElementById("searchInput");
 const availabilityFilter = document.getElementById("availabilityFilter");
 const typeFilter = document.getElementById("typeFilter");
+const bulkDeleteButton = document.getElementById("bulkDeleteSongs");
+
+const selectedSongIds = new Set();
 
 function getToken() {
   return localStorage.getItem("adminToken") || "";
@@ -17,6 +20,35 @@ searchInput.addEventListener("input", loadSongs);
 availabilityFilter.addEventListener("change", loadSongs);
 typeFilter.addEventListener("change", loadSongs);
 
+if (bulkDeleteButton) {
+  bulkDeleteButton.addEventListener("click", async () => {
+    const ids = [...selectedSongIds];
+    if (ids.length === 0) {
+      alert("Please select songs to delete first.");
+      return;
+    }
+    const ok = confirm(`Delete ${ids.length} songs? This will remove local audio/cover files and stop reuse.`);
+    if (!ok) return;
+
+    const res = await fetch("/admin/library-songs/bulk-delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-admin-token": getToken() },
+      body: JSON.stringify({ song_ids: ids })
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      alert(`Bulk delete failed: ${text || res.status}`);
+      return;
+    }
+
+    const data = await res.json().catch(() => ({}));
+    alert(`Done. songs=${data.affected || 0}, files_deleted=${data.files_deleted || 0}`);
+    selectedSongIds.clear();
+    await loadSongs();
+  });
+}
+
 async function toggleAvailability(songId, isAvailable) {
   const res = await fetch(`/admin/library-songs/${songId}`, {
     method: "PATCH",
@@ -24,7 +56,7 @@ async function toggleAvailability(songId, isAvailable) {
     body: JSON.stringify({ is_available: !isAvailable })
   });
   if (!res.ok) {
-    alert("更新失败，请确认 Token 或服务状态");
+    alert("Update failed. Check token/server status.");
     return;
   }
   await loadSongs();
@@ -33,48 +65,64 @@ async function toggleAvailability(songId, isAvailable) {
 function renderSongs(items) {
   list.innerHTML = "";
   if (!items || items.length === 0) {
-    list.innerHTML = "<div class='muted'>暂无库存歌曲</div>";
+    list.innerHTML = "<div class='muted'>No library songs</div>";
     return;
   }
 
   for (const item of items) {
+    const songId = Number(item.id);
     const card = document.createElement("div");
     card.className = "item library-item";
     const tags = (item.tags || []).map((tag) => `<span class="pill">${tag}</span>`).join("");
     const types = (item.tag_types || []).map((tag) => `<span class="pill">${tag}</span>`).join("");
+    const checked = selectedSongIds.has(songId) ? "checked" : "";
+
     card.innerHTML = `
       <div class="library-main">
+        <div class="row between">
+          <label class="row" style="gap:8px;align-items:center;cursor:pointer;">
+            <input type="checkbox" class="song-select" data-song-id="${songId}" ${checked} />
+            <span class="muted">Select</span>
+          </label>
+        </div>
         <div class="row library-head">
           <div>
-            <div class="library-title">${item.title || "未命名歌曲"}</div>
-            <div class="muted">${item.model || "未知模型"} · ${item.duration || 0}s · ${item.primary_type || "未分类"} · ${item.is_available ? "启用中" : "已停用"}</div>
+            <div class="library-title">${item.title || "Untitled"}</div>
+            <div class="muted">${item.model || "Unknown model"} �� ${item.duration || 0}s �� ${item.primary_type || "Uncategorized"} �� ${item.is_available ? "Enabled" : "Disabled"}</div>
           </div>
           ${item.cover_url ? `<img class="cover-thumb" src="${item.cover_url}" alt="cover" />` : ""}
         </div>
         <div class="library-prompts">
           <div class="library-prompt-block">
-            <div class="library-prompt-label">发给天谱乐的 Prompt</div>
-            <div class="muted library-prompt">${item.prompt || "无提示词"}</div>
+            <div class="library-prompt-label">TPY Prompt</div>
+            <div class="muted library-prompt">${item.prompt || "No prompt"}</div>
           </div>
           <div class="library-prompt-block">
-            <div class="library-prompt-label">原始标签 Prompt</div>
-            <div class="muted library-prompt">${item.base_prompt || item.prompt || "无原始提示词"}</div>
+            <div class="library-prompt-label">Base Prompt</div>
+            <div class="muted library-prompt">${item.base_prompt || item.prompt || "No base prompt"}</div>
           </div>
         </div>
-        <div class="pill-row">${types}${tags || "<span class='muted'>暂无标签</span>"}</div>
+        <div class="pill-row">${types}${tags || "<span class='muted'>No tags</span>"}</div>
         <div class="meta-grid">
-          <div><strong>分发次数</strong><span>${item.deliveries || 0}</span></div>
-          <div><strong>复用次数</strong><span>${item.reuse_count || 0}</span></div>
-          <div><strong>收藏次数</strong><span>${item.likes || 0}</span></div>
-          <div><strong>跳过次数</strong><span>${item.skips || 0}</span></div>
+          <div><strong>Deliveries</strong><span>${item.deliveries || 0}</span></div>
+          <div><strong>Reuse</strong><span>${item.reuse_count || 0}</span></div>
+          <div><strong>Likes</strong><span>${item.likes || 0}</span></div>
+          <div><strong>Skips</strong><span>${item.skips || 0}</span></div>
         </div>
         <div class="row">
-          ${item.audio_url ? `<a class="link-button" href="${item.audio_url}" target="_blank" rel="noreferrer">试听音频</a>` : ""}
-          <button class="ghost-btn">${item.is_available ? "停用复用" : "重新启用"}</button>
+          ${item.audio_url ? `<a class="link-button" href="${item.audio_url}" target="_blank" rel="noreferrer">Preview audio</a>` : ""}
+          <button class="ghost-btn">${item.is_available ? "Disable reuse" : "Enable reuse"}</button>
         </div>
       </div>
     `;
-    card.querySelector(".ghost-btn").addEventListener("click", () => toggleAvailability(item.id, item.is_available));
+
+    const checkbox = card.querySelector(".song-select");
+    checkbox.addEventListener("change", (event) => {
+      if (event.target.checked) selectedSongIds.add(songId);
+      else selectedSongIds.delete(songId);
+    });
+
+    card.querySelector(".ghost-btn").addEventListener("click", () => toggleAvailability(songId, item.is_available));
     list.appendChild(card);
   }
 }
@@ -85,15 +133,19 @@ async function loadSongs() {
   if (availabilityFilter.value) params.set("available", availabilityFilter.value);
   if (typeFilter.value) params.set("type", typeFilter.value);
   const query = params.toString();
-  const res = await fetch(`/admin/library-songs${query ? `?${query}` : ""}`, { headers: { "x-admin-token": getToken() } });
+
+  const res = await fetch(`/admin/library-songs${query ? `?${query}` : ""}`, {
+    headers: { "x-admin-token": getToken() }
+  });
+
   if (!res.ok) {
-    list.innerHTML = "<div class='muted'>未授权或服务未启动</div>";
+    list.innerHTML = "<div class='muted'>Unauthorized or service unavailable</div>";
     return;
   }
+
   const data = await res.json();
   renderSongs(data.items || []);
 }
 
 tokenInput.value = getToken();
 loadSongs();
-

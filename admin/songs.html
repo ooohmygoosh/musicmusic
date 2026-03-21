@@ -1,46 +1,49 @@
-﻿<!doctype html>
-<html lang="zh-CN">
+<!doctype html>
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>歌曲库 | 天谱乐 后台管理</title>
+    <title>Song Library | TPY Admin</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="page">
       <header>
-        <h1>歌曲库管理</h1>
+        <h1>Song Library</h1>
         <nav class="nav">
-          <a href="/" class="nav-link">概览</a>
-          <a href="/songs.html" class="nav-link is-active">歌曲库</a>
-          <a href="/users.html" class="nav-link">用户数据</a>
-          <a href="/tags.html" class="nav-link">标签管理</a>
+          <a href="/" class="nav-link">Overview</a>
+          <a href="/songs.html" class="nav-link is-active">Songs</a>
+          <a href="/users.html" class="nav-link">Users</a>
+          <a href="/tags.html" class="nav-link">Tags</a>
         </nav>
         <div class="token">
           <input id="token" type="password" placeholder="Admin Token" />
-          <button id="saveToken">保存</button>
+          <button id="saveToken">Save</button>
         </div>
       </header>
 
       <section class="card">
         <div class="row between">
-          <h2>库存歌曲</h2>
-          <button id="refreshSongs">刷新</button>
+          <h2>Library Songs</h2>
+          <div class="row">
+            <button id="refreshSongs">Refresh</button>
+            <button id="bulkDeleteSongs" class="ghost-btn">Bulk Delete (files)</button>
+          </div>
         </div>
         <div class="toolbar row">
-          <input id="searchInput" placeholder="搜索标题、提示词或标签" />
+          <input id="searchInput" placeholder="Search title, prompt, or tags" />
           <select id="availabilityFilter">
-            <option value="">全部状态</option>
-            <option value="true">仅启用</option>
-            <option value="false">仅停用</option>
+            <option value="">All status</option>
+            <option value="true">Enabled only</option>
+            <option value="false">Disabled only</option>
           </select>
           <select id="typeFilter">
-            <option value="">全部类别</option>
-            <option value="情绪">情绪</option>
-            <option value="风格">风格</option>
-            <option value="乐器">乐器</option>
-            <option value="场景">场景</option>
-            <option value="节奏">节奏</option>
+            <option value="">All types</option>
+            <option value="����">Mood</option>
+            <option value="���">Style</option>
+            <option value="����">Instrument</option>
+            <option value="����">Scene</option>
+            <option value="����">Tempo</option>
           </select>
         </div>
         <div id="songList" class="list"></div>
