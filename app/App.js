@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -558,6 +558,11 @@ export default function App() {
   const [currentSoundId, setCurrentSoundId] = useState(null);
   const [playback, setPlayback] = useState({ position: 0, duration: 1, isPlaying: false });
   const [generationLoading, setGenerationLoading] = useState(false);
+  const [recommendationState, setRecommendationState] = useState({
+    mode: "stable",
+    skipStreak: 0,
+    needsGeneration: false
+  });
   const [showQueue, setShowQueue] = useState(false);
   const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
   const [newTagName, setNewTagName] = useState("");
@@ -697,23 +702,31 @@ export default function App() {
 
   const refreshSongs = async (uid, options = {}) => {
     if (!uid) return [];
-    const res = await fetch(`${API_BASE}/songs?user_id=${uid}&include_history=true`);
-    const data = await res.json();
+    const query = new URLSearchParams({ user_id: String(uid), buffer: String(options.buffer || 8) });
+    if (options.cursorQueueId) query.set("cursor_queue_id", String(options.cursorQueueId));
+
+    const res = await fetch(`${API_BASE}/recommend/next?${query.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "recommendation fetch failed");
+
     const seen = new Set();
-    const items = (data.items || []).filter((item) => {
+    const items = (data.buffer || []).filter((item) => {
+      if (!item?.audio_url) return false;
       const key = item.queue_id || item.id || item.audio_url;
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
-    }).sort((a, b) => {
-      const at = new Date(a.created_at || 0).getTime();
-      const bt = new Date(b.created_at || 0).getTime();
-      if (at !== bt) return at - bt;
-      return Number(a.id || 0) - Number(b.id || 0);
     });
+
+    setRecommendationState({
+      mode: String(data.mode || "stable"),
+      skipStreak: Number(data.skip_streak || 0),
+      needsGeneration: Boolean(data.needs_generation)
+    });
+
     setSongs(items);
-    if (items.length > 0 && (options.preferLatest || !current)) {
-      setCurrent(items[items.length - 1]);
+    if (!current && items.length > 0) {
+      setCurrent(items[0]);
     }
     return items;
   };
@@ -1170,17 +1183,12 @@ export default function App() {
   };
 
   const ensureNextSongReady = async (playingSong) => {
-    if (!userId || !playingSong || generationLoading || prefetchLockRef.current) return;
+    if (!userId || !playingSong) return;
     const queueSnapshot = songsRef.current || [];
     if (getNextSongFromList(playingSong, queueSnapshot)) return;
-    prefetchLockRef.current = true;
     try {
-      await generate({ prefetch: true, silent: true, preferLatest: false });
-      await refreshSongs(userId, { preferLatest: false });
+      await refreshSongs(userId, { cursorQueueId: queueKeyOf(playingSong), buffer: 8 });
     } catch {}
-    finally {
-      prefetchLockRef.current = false;
-    }
   };
 
   const attachStatus = (status) => {
@@ -1212,7 +1220,15 @@ export default function App() {
   };
 
   const togglePlay = async () => {
-    if (!current) return generate();
+    if (!current) {
+      const fresh = await refreshSongs(userId, { buffer: 8 }).catch(() => []);
+      if (fresh.length > 0) return play(fresh[0]);
+      if (recommendationState.needsGeneration) {
+        Alert.alert("No playable songs", "Please go to Portrait and generate songs first.");
+        setActiveTab("galaxy");
+      }
+      return;
+    }
     if (!soundRef.current || currentSoundId !== queueKeyOf(current)) return play(current);
     if (playbackRef.current.isPlaying) await soundRef.current.pauseAsync();
     else await soundRef.current.playAsync();
@@ -1236,9 +1252,12 @@ export default function App() {
       await feedback(action);
       const index = current ? songs.findIndex((item) => queueKeyOf(item) === queueKeyOf(current)) : -1;
       if (index >= 0 && index < songs.length - 1) return play(songs[index + 1]);
-      await ensureNextSongReady(current);
-      const fresh = await refreshSongs(userId, { preferLatest: false });
-      const next = getNextSongFromList(current, fresh) || (fresh.length > 0 ? fresh[fresh.length - 1] : null);
+
+      const fresh = await refreshSongs(userId, {
+        cursorQueueId: current ? queueKeyOf(current) : undefined,
+        buffer: 8
+      });
+      const next = fresh.length > 0 ? fresh[0] : null;
       if (next) await play(next);
     } finally {
       autoNextLock.current = false;
@@ -1246,7 +1265,15 @@ export default function App() {
   };
 
   const handleNext = async () => {
-    if (!current) return generate();
+    if (!current) {
+      const fresh = await refreshSongs(userId, { buffer: 8 }).catch(() => []);
+      if (fresh.length > 0) return play(fresh[0]);
+      if (recommendationState.needsGeneration) {
+        Alert.alert("No playable songs", "Please generate songs in Portrait first.");
+        setActiveTab("galaxy");
+      }
+      return;
+    }
     const index = songs.findIndex((item) => queueKeyOf(item) === queueKeyOf(current));
     if (index >= 0 && index < songs.length - 1) return play(songs[index + 1]);
     await handleAutoNext("skip");
@@ -1488,6 +1515,11 @@ export default function App() {
         </View>
         <Text style={styles.playerTitle}>{current?.title || "No song yet"}</Text>
         <Text style={styles.playerSub} numberOfLines={2}>{songTagText(current)}</Text>
+        {!current && recommendationState.needsGeneration ? (
+          <TouchableOpacity style={styles.secondarySoft} onPress={() => setActiveTab("galaxy")}>
+            <Text style={styles.secondaryText}>No playable songs. Go to Portrait to generate.</Text>
+          </TouchableOpacity>
+        ) : null}
         <View style={styles.progressWrap}>
           <View
             ref={progressTrackRef}
@@ -1526,7 +1558,7 @@ export default function App() {
             <Text style={styles.controlText}>Favorite</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.playBtn} onPress={togglePlay}>
-            <Text style={styles.playText}>{!current && generationLoading ? "Generating..." : current ? (playback.isPlaying ? "Pause" : "Play") : "Generate"}</Text>
+            <Text style={styles.playText}>{current ? (playback.isPlaying ? "Pause" : "Play") : "Refresh"}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.controlBtn} onPress={handleNext}>
             <Text style={styles.controlText}>Next</Text>
@@ -1737,6 +1769,17 @@ export default function App() {
               )}
               <TouchableOpacity style={styles.primary} onPress={submitUserTag}>
                 <Text style={styles.primaryText}>Add to my portrait</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.secondarySoft}
+                onPress={async () => {
+                  await generate({ prefetch: false, silent: false, preferLatest: true });
+                  await refreshSongs(userId, { buffer: 8 });
+                  setActiveTab("player");
+                }}
+              >
+                <Text style={styles.secondaryText}>{generationLoading ? "Generating..." : "Generate songs from portrait"}</Text>
               </TouchableOpacity>
 
               {showCategoryPicker ? (
