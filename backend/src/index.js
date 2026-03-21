@@ -49,6 +49,8 @@ const REDIS_URL = process.env.REDIS_URL || "redis://redis:6379";
 const EXPLORE_POOL_SIZE = Number(process.env.EXPLORE_POOL_SIZE || 5);
 const EXPLORE_SNIPPET_SECONDS_MIN = Number(process.env.EXPLORE_SNIPPET_SECONDS_MIN || 60);
 const EXPLORE_SNIPPET_SECONDS_MAX = Number(process.env.EXPLORE_SNIPPET_SECONDS_MAX || 90);
+const RECOMMEND_MIN_BUFFER = Number(process.env.RECOMMEND_MIN_BUFFER || 2);
+const RECOMMEND_REFILL_TARGET = Number(process.env.RECOMMEND_REFILL_TARGET || 6);
 
 const PROMPT_GUIDE = {
   "\u60c5\u7eea": "Describe the emotional tone and energy arc.",
@@ -1563,6 +1565,12 @@ async function queueSongForUser(userId, songId, jobId, source, options = {}) {
   const numericJobId = jobId ? Number(jobId) : null;
   const { displayTitle = null, displayCoverUrl = null } = options;
 
+  const existingVisible = await query(
+    "SELECT id FROM user_song_queue WHERE user_id = $1 AND song_id = $2 AND COALESCE(is_hidden, false) = false ORDER BY id DESC LIMIT 1",
+    [numericUserId, numericSongId]
+  );
+  if (existingVisible.rows[0]) return existingVisible.rows[0];
+
   if (numericJobId) {
     const existing = await query(
       "SELECT id FROM user_song_queue WHERE user_id = $1 AND song_id = $2 AND generation_job_id = $3 ORDER BY id DESC LIMIT 1",
@@ -1606,6 +1614,54 @@ async function findReusableSongs(userId, tagIds, limit = 1, threshold = REUSE_SI
 async function findReusableSong(userId, tagIds, threshold = REUSE_SIMILARITY_MIN) {
   const rows = await findReusableSongs(userId, tagIds, 1, threshold);
   return rows[0] || null;
+}
+async function getUserActiveTagIds(userId, limit = 12) {
+  const { rows } = await query(
+    "SELECT tag_id, weight FROM user_tags WHERE user_id = $1 AND COALESCE(is_active, true) = true ORDER BY weight DESC, tag_id DESC LIMIT $2",
+    [Number(userId), Number(limit)]
+  );
+  return rows.map((row) => Number(row.tag_id)).filter(Boolean);
+}
+
+async function refillQueueFromLibrary(userId, targetCount = RECOMMEND_REFILL_TARGET) {
+  const uid = Number(userId);
+  if (!Number.isFinite(uid) || uid <= 0) return 0;
+
+  const currentQueue = await getPlayableQueue(uid);
+  const deficit = Math.max(0, Number(targetCount) - currentQueue.length);
+  if (deficit <= 0) return 0;
+
+  const tagIds = await getUserActiveTagIds(uid, 14);
+  if (tagIds.length === 0) return 0;
+
+  let added = 0;
+  const thresholds = [0.5, 0.42, 0.34, 0.26, 0.18];
+
+  for (const threshold of thresholds) {
+    const remaining = Math.max(0, deficit - added);
+    if (remaining <= 0) break;
+
+    const candidates = await findReusableSongs(uid, tagIds, Math.max(remaining * 2, remaining), threshold);
+    if (!Array.isArray(candidates) || candidates.length === 0) continue;
+
+    for (const song of candidates) {
+      const before = await query(
+        "SELECT COUNT(*)::int AS c FROM user_song_queue WHERE user_id = $1 AND song_id = $2 AND COALESCE(is_hidden, false) = false",
+        [uid, Number(song.id)]
+      );
+      const visibleCount = Number(before.rows[0]?.c || 0);
+      if (visibleCount > 0) continue;
+
+      await queueSongForUser(uid, Number(song.id), null, "recommended", {
+        displayTitle: normalizeTitle(song.title || null, song.title || null),
+        displayCoverUrl: song.cover_url || null
+      });
+      added += 1;
+      if (added >= deficit) break;
+    }
+  }
+
+  return added;
 }
 async function reuseSongForUser(job, librarySong) {
   const displayTitle = normalizeTitle(job.title_hint || librarySong.title || null, librarySong.title || null);
@@ -2072,8 +2128,8 @@ app.get("/recommend/next", async (request, reply) => {
     return;
   }
 
-  const queue = await getPlayableQueue(user_id);
-  const ordered = rotateQueueFromCursor(queue, cursor_queue_id);
+  let queue = await getPlayableQueue(user_id);
+  let ordered = rotateQueueFromCursor(queue, cursor_queue_id);
   const bufferSize = Math.max(1, Math.min(20, Number(buffer || 5)));
 
   const pendingJob = await query(
@@ -2095,6 +2151,11 @@ app.get("/recommend/next", async (request, reply) => {
     }
   }
 
+  if (queue.length < Math.max(RECOMMEND_MIN_BUFFER, 1) && !hasPendingGeneration) {
+    await refillQueueFromLibrary(user_id, Math.max(RECOMMEND_REFILL_TARGET, bufferSize));
+    queue = await getPlayableQueue(user_id);
+    ordered = rotateQueueFromCursor(queue, cursor_queue_id);
+  }
   const explore = await getExploreState(user_id);
 
 
@@ -2124,7 +2185,7 @@ app.get("/recommend/next", async (request, reply) => {
     standby_pool_size: explore.mode === "explore_deep" ? runtimeBuffer.length : 0,
     playable_count: queue.length,
     has_pending_generation: hasPendingGeneration,
-    needs_generation: queue.length < 2 && !hasPendingGeneration
+    needs_generation: queue.length < Math.max(RECOMMEND_MIN_BUFFER, 1) && !hasPendingGeneration
   };
 });
 
