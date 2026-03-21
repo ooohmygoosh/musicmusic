@@ -1765,7 +1765,7 @@ app.post("/callback/tpy", async (request, reply) => {
       const existingSong = existingByAudio.rows[0];
 
       const matchedJobs = await query(
-        "UPDATE generation_jobs SET status = 'reused', item_ids = $1 WHERE $2 = ANY(item_ids) AND status IN ('pending', 'submitted', 'done') RETURNING id, user_id, title_hint",
+        "UPDATE generation_jobs SET status = 'reused', item_ids = $1 WHERE $2 = ANY(item_ids) AND status IN ('pending', 'submitted') RETURNING id, user_id, title_hint",
         [[itemId], itemId]
       );
 
