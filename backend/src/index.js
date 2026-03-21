@@ -1983,12 +1983,12 @@ app.post("/feedback", async (request, reply) => {
     return;
   }  if (queue_id && Number.isFinite(Number(queue_id))) {
     await query(
-      "UPDATE user_song_queue SET acted_at = NOW(), is_hidden = CASE WHEN $1 IN ('skip', 'complete') THEN true ELSE is_hidden END WHERE id = $2 AND user_id = $3",
+      "UPDATE user_song_queue SET acted_at = NOW(), is_hidden = CASE WHEN $1 = 'skip' THEN true ELSE is_hidden END WHERE id = $2 AND user_id = $3",
       [normalizedAction, Number(queue_id), Number(user_id)]
     );
   } else {
     await query(
-      "UPDATE user_song_queue SET acted_at = NOW(), is_hidden = CASE WHEN $1 IN ('skip', 'complete') THEN true ELSE is_hidden END WHERE id = (SELECT q.id FROM user_song_queue q WHERE q.user_id = $2 AND q.song_id = $3 AND COALESCE(q.is_hidden, false) = false ORDER BY q.created_at DESC, q.id DESC LIMIT 1)",
+      "UPDATE user_song_queue SET acted_at = NOW(), is_hidden = CASE WHEN $1 = 'skip' THEN true ELSE is_hidden END WHERE id = (SELECT q.id FROM user_song_queue q WHERE q.user_id = $2 AND q.song_id = $3 AND COALESCE(q.is_hidden, false) = false ORDER BY q.created_at DESC, q.id DESC LIMIT 1)",
       [normalizedAction, Number(user_id), Number(song_id)]
     );
   }
@@ -2061,8 +2061,8 @@ function rotateQueueFromCursor(items, cursorQueueId) {
 
   const cursor = Number(cursorQueueId);
   const nextIndex = items.findIndex((item) => Number(item.queue_id) > cursor);
-  if (nextIndex < 0) return items;
-  return [...items.slice(nextIndex), ...items.slice(0, nextIndex)];
+  if (nextIndex < 0) return [];
+  return items.slice(nextIndex);
 }
 
 app.get("/recommend/next", async (request, reply) => {

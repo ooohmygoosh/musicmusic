@@ -50,6 +50,11 @@ function queueKeyOf(song) {
   return song?.queue_id || song?.id || song?.audio_url || null;
 }
 
+function queueOrderOf(song) {
+  const v = Number(song?.queue_id);
+  return Number.isFinite(v) ? v : null;
+}
+
 function isAudioUrlLikelyExpired(url) {
   if (!url) return true;
   try {
@@ -107,42 +112,24 @@ function firstPlayable(items, failedMap) {
   return null;
 }
 
-function getNextFromQueue(current, queue, failedMap) {
-  if (!Array.isArray(queue) || queue.length === 0) return null;
-  if (!current) return firstPlayable(queue, failedMap);
-
-  const currentKey = queueKeyOf(current);
-  const index = queue.findIndex((item) => queueKeyOf(item) === currentKey);
-  if (index < 0) return firstPlayable(queue, failedMap);
-
-  for (let i = index + 1; i < queue.length; i += 1) {
-    const song = queue[i];
-    const key = queueKeyOf(song);
-    if (!song?.audio_url || !key) continue;
-    if (isAudioUrlLikelyExpired(song.audio_url) || isBlockedKey(failedMap, key)) continue;
-    return song;
-  }
-
-  return null;
+function findByQueueKey(items, sample) {
+  const key = queueKeyOf(sample);
+  if (!key) return null;
+  return (items || []).find((x) => queueKeyOf(x) === key) || null;
 }
 
-function getQueueOrder(song) {
-  const value = Number(song?.queue_id);
-  return Number.isFinite(value) ? value : null;
-}
-
-function firstPlayableAfterCursor(items, cursorSong, failedMap) {
-  const cursor = getQueueOrder(cursorSong);
+function pickNextAfterCursor(items, cursorQueueId, failedMap) {
+  const cursor = Number(cursorQueueId);
+  if (!Array.isArray(items) || items.length === 0) return null;
   if (!Number.isFinite(cursor)) return firstPlayable(items, failedMap);
 
-  for (const song of items || []) {
-    const q = getQueueOrder(song);
-    if (!Number.isFinite(q) || q <= cursor) continue;
-    if (!song?.audio_url) continue;
-    if (isAudioUrlLikelyExpired(song.audio_url)) continue;
-    const key = queueKeyOf(song);
+  for (const item of items) {
+    const order = queueOrderOf(item);
+    if (!Number.isFinite(order) || order <= cursor) continue;
+    const key = queueKeyOf(item);
     if (!key || isBlockedKey(failedMap, key)) continue;
-    return song;
+    if (isAudioUrlLikelyExpired(item.audio_url)) continue;
+    return item;
   }
 
   return null;
@@ -165,6 +152,8 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
   const nextRef = useRef(async () => false);
   const playSongInternalRef = useRef(async () => false);
   const failedQueueKeyAtRef = useRef(new Map());
+  const serverCurrentRef = useRef(null);
+  const serverNextRef = useRef(null);
 
   useEffect(() => {
     queueRef.current = queue;
@@ -200,7 +189,16 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
   }, []);
 
   const requestRecommendations = useCallback(async (options = {}) => {
-    if (!userId) return [];
+    if (!userId) {
+      return {
+        items: [],
+        serverCurrent: null,
+        serverNext: null,
+        needsGeneration: false,
+        mode: "stable",
+        skipStreak: 0
+      };
+    }
 
     const query = new URLSearchParams({
       user_id: String(userId),
@@ -214,6 +212,12 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
     }
 
     const items = normalizeQueueSongs(data.buffer || [], failedQueueKeyAtRef.current);
+    const serverCurrent = findByQueueKey(items, data.current_playing) || findByQueueKey(items, data.next);
+    const serverNext = findByQueueKey(items, data.next_prepared) || null;
+
+    serverCurrentRef.current = serverCurrent;
+    serverNextRef.current = serverNext;
+
     const nextRecommendation = {
       mode: String(data.mode || "stable"),
       skipStreak: Number(data.skip_streak || 0),
@@ -223,18 +227,14 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
     setRecommendation(nextRecommendation);
     setQueue(items);
 
-    if (!currentRef.current && items.length > 0) {
-      setCurrent(items[0]);
-    }
-    if (currentRef.current) {
-      const currentKey = queueKeyOf(currentRef.current);
-      const stillVisible = items.some((item) => queueKeyOf(item) === currentKey);
-      if (!stillVisible && items.length > 0) {
-        setCurrent(items[0]);
-      }
-      if (!stillVisible && items.length === 0) {
-        setCurrent(null);
-      }
+    const localCurrent = currentRef.current;
+    const localCurrentInItems = findByQueueKey(items, localCurrent);
+    if (localCurrentInItems) {
+      setCurrent(localCurrentInItems);
+    } else if (serverCurrent) {
+      setCurrent(serverCurrent);
+    } else {
+      setCurrent(firstPlayable(items, failedQueueKeyAtRef.current));
     }
 
     if (items.length > 0) {
@@ -246,7 +246,14 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
       setStatus("empty");
     }
 
-    return items;
+    return {
+      items,
+      serverCurrent,
+      serverNext,
+      needsGeneration: nextRecommendation.needsGeneration,
+      mode: nextRecommendation.mode,
+      skipStreak: nextRecommendation.skipStreak
+    };
   }, [apiBase, onNeedsGeneration, userId]);
 
   const refresh = useCallback(async (options = {}) => {
@@ -271,16 +278,6 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
       "feedback timeout"
     ).catch(() => {});
   }, [apiBase, playback.position, userId]);
-
-  const recoverWhenQueueEmpty = useCallback(async () => {
-    await unloadCurrentSound();
-    setCurrent(null);
-    setPlayback({ position: 0, duration: 1, isPlaying: false });
-    setStatus("empty");
-
-    const refreshed = await requestRecommendations({ buffer: 8 }).catch(() => []);
-    return refreshed.length > 0;
-  }, [requestRecommendations, unloadCurrentSound]);
 
   const markSongFailed = useCallback((song) => {
     const key = queueKeyOf(song);
@@ -346,32 +343,25 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
         return false;
       }
 
-      const localQueue = queueRef.current.filter((item) => queueKeyOf(item) !== songKey);
-      const localNext = getNextFromQueue(song, localQueue, failedQueueKeyAtRef.current);
-      if (localNext) {
-        return playSongInternalRef.current(localNext, {
-          recoverDepth: recoverDepth + 1,
-          allowRecover: true
-        });
-      }
-
       const refreshed = await requestRecommendations({
         cursorQueueId: song.queue_id || null,
         buffer: 8
-      }).catch(() => []);
-      const remoteNext = firstPlayableAfterCursor(refreshed, song, failedQueueKeyAtRef.current);
-      if (remoteNext) {
-        return playSongInternalRef.current(remoteNext, {
+      }).catch(() => ({ items: [] }));
+
+      const nextSong = pickNextAfterCursor(refreshed.items || [], song.queue_id, failedQueueKeyAtRef.current);
+      if (nextSong) {
+        return playSongInternalRef.current(nextSong, {
           recoverDepth: recoverDepth + 1,
           allowRecover: true
         });
       }
 
-      await recoverWhenQueueEmpty();
-      setStatus("error");
+      setCurrent(null);
+      setPlayback({ position: 0, duration: 1, isPlaying: false });
+      setStatus("empty");
       return false;
     }
-  }, [markSongFailed, recoverWhenQueueEmpty, requestRecommendations, unloadCurrentSound]);
+  }, [markSongFailed, requestRecommendations, unloadCurrentSound]);
 
   playSongInternalRef.current = playSongInternal;
 
@@ -384,12 +374,13 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
       const song = currentRef.current;
 
       if (!song) {
-        const list = await requestRecommendations({ buffer: 8 }).catch(() => []);
-        if (list.length === 0) {
+        const refreshed = await requestRecommendations({ buffer: 8 }).catch(() => ({ items: [] }));
+        const first = refreshed.serverCurrent || firstPlayable(refreshed.items, failedQueueKeyAtRef.current);
+        if (!first) {
           setStatus("empty");
           return false;
         }
-        return playSongInternalRef.current(list[0], { allowRecover: true, recoverDepth: 0 });
+        return playSongInternalRef.current(first, { allowRecover: true, recoverDepth: 0 });
       }
 
       if (!soundRef.current) {
@@ -413,34 +404,41 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
       const song = currentRef.current;
 
       if (!song) {
-        const list = await requestRecommendations({ buffer: 8 }).catch(() => []);
-        if (list.length === 0) {
+        const refreshed = await requestRecommendations({ buffer: 8 }).catch(() => ({ items: [] }));
+        const first = refreshed.serverCurrent || firstPlayable(refreshed.items, failedQueueKeyAtRef.current);
+        if (!first) {
           setStatus("empty");
           return false;
         }
-        return playSongInternalRef.current(list[0], { allowRecover: true, recoverDepth: 0 });
+        return playSongInternalRef.current(first, { allowRecover: true, recoverDepth: 0 });
       }
 
       await sendFeedback(song, action);
 
-      const localNext = getNextFromQueue(song, queueRef.current, failedQueueKeyAtRef.current);
-      if (localNext) {
-        return playSongInternalRef.current(localNext, { allowRecover: true, recoverDepth: 0 });
-      }
-
       const refreshed = await requestRecommendations({
         cursorQueueId: song.queue_id || null,
         buffer: 8
-      }).catch(() => []);
-      const remoteNext = firstPlayableAfterCursor(refreshed, song, failedQueueKeyAtRef.current);
-      if (remoteNext) {
-        return playSongInternalRef.current(remoteNext, { allowRecover: true, recoverDepth: 0 });
+      }).catch(() => ({ items: [], needsGeneration: false }));
+
+      const fromServerPrepared = refreshed.serverNext;
+      const fromCursor = pickNextAfterCursor(refreshed.items || [], song.queue_id, failedQueueKeyAtRef.current);
+      const candidate = fromServerPrepared || fromCursor;
+
+      if (candidate) {
+        return playSongInternalRef.current(candidate, { allowRecover: true, recoverDepth: 0 });
       }
 
-      await recoverWhenQueueEmpty();
+      await unloadCurrentSound();
+      setCurrent(null);
+      setPlayback({ position: 0, duration: 1, isPlaying: false });
+      setStatus("empty");
+
+      if (refreshed.needsGeneration && onNeedsGeneration) {
+        onNeedsGeneration();
+      }
       return false;
     });
-  }, [recoverWhenQueueEmpty, requestRecommendations, runSerial, sendFeedback]);
+  }, [onNeedsGeneration, requestRecommendations, runSerial, sendFeedback, unloadCurrentSound]);
 
   nextRef.current = next;
 
@@ -472,6 +470,9 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
   const hardReset = useCallback(async () => {
     return runSerial(async () => {
       await unloadCurrentSound();
+      failedQueueKeyAtRef.current.clear();
+      serverCurrentRef.current = null;
+      serverNextRef.current = null;
       setQueue([]);
       setCurrent(null);
       setPlayback({ position: 0, duration: 1, isPlaying: false });
@@ -554,4 +555,3 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
     togglePlay
   ]);
 }
-
