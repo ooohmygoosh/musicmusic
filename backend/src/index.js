@@ -860,10 +860,26 @@ async function normalizeUserWeights(userId) {
   }
 }
 
+function isSceneTag(tag) {
+  const rawType = String(tag?.type || "").trim();
+  const type = rawType.toLowerCase();
+  const name = String(tag?.name || "").trim();
+  if (!rawType && !name) return false;
+
+  if (type.includes("scene")) return true;
+  if (rawType.includes("\u573a\u666f")) return true;
+
+  const sceneNameHints = new Set([
+    "\u6df1\u591c\u5de5\u4f5c", "\u5065\u8eab\u623f", "\u5496\u5561\u9986", "\u7761\u7720", "\u9a7e\u8f66",
+    "\u591c\u665a", "\u5b66\u4e60", "\u901a\u52e4", "\u6e05\u6668", "\u96e8\u5929", "\u5de5\u4f5c", "\u795e\u79d8"
+  ]);
+  return sceneNameHints.has(name);
+}
+
 function choosePrimaryAnchor(sortedTags) {
   if (!Array.isArray(sortedTags) || sortedTags.length === 0) return null;
 
-  const sceneTags = sortedTags.filter((tag) => String(tag.type || "") === "场景");
+  const sceneTags = sortedTags.filter((tag) => isSceneTag(tag));
   const strongScene = sceneTags.find((tag) => Number(tag.weight || 0) >= PROMPT_ANCHOR_MIN_WEIGHT);
   if (strongScene) return strongScene;
   if (sceneTags.length > 0) return sceneTags[0];
@@ -874,10 +890,11 @@ function choosePrimaryAnchor(sortedTags) {
 
 function pickSceneAnchor(sortedTags) {
   if (!Array.isArray(sortedTags) || sortedTags.length === 0) return null;
-  const sceneTags = sortedTags.filter((tag) => String(tag.type || "") === "场景");
+  const sceneTags = sortedTags.filter((tag) => isSceneTag(tag));
   if (sceneTags.length === 0) return null;
   return sceneTags.sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0))[0] || null;
 }
+
 function pickCoreConstraintTags(sortedTags, anchorTag, selectedIds) {
   const core = [];
   const usedTypes = new Set(anchorTag?.type ? [String(anchorTag.type)] : []);
@@ -930,45 +947,41 @@ function pickWeakSupplementTags(sortedTags, selectedIds) {
 
 function buildCoreConstraintPhrase(tag) {
   const name = String(tag?.name || "").trim();
-  const type = String(tag?.type || "").trim();
+  const rawType = String(tag?.type || "").trim();
+  const type = rawType.toLowerCase();
   if (!name) return "";
 
-  if (type === "风格") return `风格为${name}`;
-  if (type === "情绪") return `情绪是${name}`;
-  if (type === "乐器") return `主要使用${name}`;
-  if (type === "节奏") return `节奏控制在${name}`;
-  if (type === "场景") return `场景延展到${name}`;
-  return `重点突出${name}`;
+  if (type.includes("style") || rawType.includes("\u98ce\u683c")) return `style: ${name}`;
+  if (type.includes("mood") || rawType.includes("\u60c5\u7eea")) return `mood: ${name}`;
+  if (type.includes("instrument") || rawType.includes("\u4e50\u5668")) return `instrument focus: ${name}`;
+  if (type.includes("tempo") || rawType.includes("\u8282\u594f")) return `tempo: ${name}`;
+  if (isSceneTag(tag)) return `scene extension: ${name}`;
+  return `focus: ${name}`;
 }
 
 function buildWeakSupplementPhrase(tag) {
   const name = String(tag?.name || "").trim();
-  const type = String(tag?.type || "").trim();
   if (!name) return "";
-
-  if (type === "乐器") return `可以尝试用${name}做轻度点缀`;
-  if (type === "情绪") return `可以尝试加入${name}的细微情绪变化`;
-  if (type === "节奏") return `可以尝试在局部使用${name}的律动变化`;
-  return `可以尝试加入${name}作为弱补充`;
+  return `optional accent: ${name}`;
 }
 
 function buildNaturalLanguagePrompt({ anchorTag, coreTags, weakTags }) {
-  const anchorName = String(anchorTag?.name || "").trim();
-  const anchorType = String(anchorTag?.type || "").trim();
+  const anchorName = String(anchorTag?.name || "").trim() || "daily listening";
+  const anchorIsScene = isSceneTag(anchorTag);
 
-  const anchorSentence = anchorType === "场景"
-    ? `必须是一首适合${anchorName}场景的背景音乐，全程保持统一氛围，绝对核心不能偏离${anchorName}，结尾再次强调${anchorName}场景。`
-    : `必须围绕${anchorName}展开，全程保持一致表达，绝对核心不能偏离${anchorName}，结尾再次强调${anchorName}。`;
+  const anchorSentence = anchorIsScene
+    ? `Must be a background track for scene ${anchorName}; keep this scene as absolute core from start to end, and restate scene ${anchorName} in the ending.`
+    : `Must center on ${anchorName}; keep it as the absolute core from start to end and restate ${anchorName} in the ending.`;
 
   const coreParts = (coreTags || []).map(buildCoreConstraintPhrase).filter(Boolean);
   const coreSentence = coreParts.length > 0
-    ? `核心约束：${coreParts.join("，")}。`
-    : "核心约束：保持结构完整、旋律清晰、听感耐听。";
+    ? `Core constraints: ${coreParts.join(", ")}.`
+    : "Core constraints: clear structure, smooth melody, and high replayability.";
 
   const weakParts = (weakTags || []).map(buildWeakSupplementPhrase).filter(Boolean);
   const weakSentence = weakParts.length > 0
-    ? `弱补充：${weakParts.join("，")}。`
-    : "弱补充：可以少量加入细节点缀，但不要破坏主锚与核心约束。";
+    ? `Weak supplements: ${weakParts.join(", ")}.`
+    : "Weak supplements: add only subtle decorations without breaking anchor and core constraints.";
 
   return [anchorSentence, coreSentence, weakSentence].join("\n");
 }
@@ -1147,10 +1160,10 @@ async function optimizePromptWithDeepSeek({
             task: "按三层话语权生成自然语言音乐提示词，并给出标题和封面描述",
             product_requirements: DEEPSEEK_PRODUCT_REQUIREMENTS,
             base_prompt: basePrompt,
-            anchor_rule: "主锚标签放第一句并在结尾再次强调，使用必须是、全程保持、绝对核心等强约束词",
-            scene_priority_rule: "如果存在场景标签，场景必须是唯一主锚，第一句必须明确场景，不得被乐器或风格替代。",
-            core_rule: "核心约束放第二句，2-3 个标签，使用风格为、情绪是、主要使用等明确词",
-            weak_rule: "弱补充放最后一句，使用可以尝试、点缀等软约束词",
+            anchor_rule: "Put anchor in sentence one and restate it in ending with hard constraints.",
+            scene_priority_rule: "If any scene tag exists, scene must be the only anchor in sentence one and cannot be replaced by style or instrument.",
+            core_rule: "Put 2-3 core constraints in sentence two using explicit wording.",
+            weak_rule: "Put weak supplements in sentence three using soft wording.",
             anchor_tag: anchorTag
               ? { type: anchorTag.type, name: anchorTag.name, weight: Number(anchorTag.weight || 0) }
               : null,
