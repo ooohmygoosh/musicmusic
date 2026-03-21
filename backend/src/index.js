@@ -564,10 +564,16 @@ app.post("/admin/library-songs/bulk-delete", async (request, reply) => {
     "SELECT id, cover_url FROM songs WHERE source_song_id IS NULL AND id = ANY($1::int[])",
     [ids]
   );
-  const targetIds = songs.map((row) => Number(row.id));
-  if (targetIds.length === 0) {
+  const rootIds = songs.map((row) => Number(row.id));
+  if (rootIds.length === 0) {
     return { ok: true, affected: 0, files_deleted: 0, files_failed: 0 };
   }
+
+  const { rows: allSongRows } = await query(
+    "SELECT id, cover_url FROM songs WHERE id = ANY($1::int[]) OR source_song_id = ANY($1::int[])",
+    [rootIds]
+  );
+  const targetIds = allSongRows.map((row) => Number(row.id));
 
   const { rows: assets } = await query(
     "SELECT song_id, audio_url FROM song_assets WHERE song_id = ANY($1::int[])",
@@ -575,7 +581,7 @@ app.post("/admin/library-songs/bulk-delete", async (request, reply) => {
   );
 
   const candidateUrls = [];
-  for (const row of songs) {
+  for (const row of allSongRows) {
     if (row.cover_url) candidateUrls.push(String(row.cover_url));
   }
   for (const row of assets) {
@@ -593,9 +599,7 @@ app.post("/admin/library-songs/bulk-delete", async (request, reply) => {
     else if (result.reason && result.reason !== "not_local_asset" && result.reason !== "not_found") filesFailed += 1;
   }
 
-  await query("UPDATE songs SET is_available = false WHERE id = ANY($1::int[])", [targetIds]);
-  await query("DELETE FROM song_assets WHERE song_id = ANY($1::int[])", [targetIds]);
-  await query("UPDATE user_song_queue SET is_hidden = true, acted_at = NOW() WHERE song_id = ANY($1::int[])", [targetIds]);
+  await query("DELETE FROM songs WHERE id = ANY($1::int[])", [targetIds]);
 
   return {
     ok: true,

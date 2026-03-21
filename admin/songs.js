@@ -27,7 +27,7 @@ if (bulkDeleteButton) {
       alert("Please select songs to delete first.");
       return;
     }
-    const ok = confirm(`Delete ${ids.length} songs? This will remove local audio/cover files and stop reuse.`);
+    const ok = confirm(`Delete ${ids.length} songs permanently? This will remove local files and delete all related records.`);
     if (!ok) return;
 
     const res = await fetch("/admin/library-songs/bulk-delete", {
