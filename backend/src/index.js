@@ -3,6 +3,7 @@ import crypto from "crypto";
 import Fastify from "fastify";
 import fs from "fs/promises";
 import path from "path";
+import Redis from "ioredis";
 import { query } from "./db.js";
 
 const app = Fastify({ logger: true });
@@ -44,6 +45,10 @@ const ASSET_STORAGE_DIR = process.env.ASSET_STORAGE_DIR || "/app/storage";
 const CALLBACK_BASE = (process.env.CALLBACK_BASE || "").replace(/\/$/, "");
 const ASSET_PUBLIC_BASE = (process.env.ASSET_PUBLIC_BASE || (CALLBACK_BASE ? `${CALLBACK_BASE}${/\/api$/i.test(CALLBACK_BASE) ? "" : "/api"}/assets` : "/assets")).replace(/\/$/, "");
 const ASSET_DOWNLOAD_TIMEOUT_MS = Number(process.env.ASSET_DOWNLOAD_TIMEOUT_MS || 20 * 1000);
+const REDIS_URL = process.env.REDIS_URL || "redis://redis:6379";
+const EXPLORE_POOL_SIZE = Number(process.env.EXPLORE_POOL_SIZE || 5);
+const EXPLORE_SNIPPET_SECONDS_MIN = Number(process.env.EXPLORE_SNIPPET_SECONDS_MIN || 60);
+const EXPLORE_SNIPPET_SECONDS_MAX = Number(process.env.EXPLORE_SNIPPET_SECONDS_MAX || 90);
 
 const PROMPT_GUIDE = {
   "\u60c5\u7eea": "Describe the emotional tone and energy arc.",
@@ -63,6 +68,109 @@ const DEEPSEEK_PRODUCT_REQUIREMENTS = [
   "\u6807\u9898\u8981\u81ea\u7136\u3001\u7b80\u6d01\u3001\u50cf\u771f\u5b9e\u6b4c\u66f2\u540d\u3002",
   "\u5c01\u9762\u63cf\u8ff0\u8981\u9002\u5408\u540e\u7eed\u505a\u97f3\u4e50\u5c01\u9762\u56fe\uff0c\u7a81\u51fa\u6c1b\u56f4\u548c\u4e3b\u4f53\u610f\u8c61\u3002"
 ].join(" ");
+
+let redis = null;
+function createRedisClient() {
+  if (redis) return redis;
+  try {
+    redis = new Redis(REDIS_URL, {
+      maxRetriesPerRequest: 2,
+      enableReadyCheck: true,
+      lazyConnect: true
+    });
+    redis.on("error", (err) => {
+      app.log.warn({ err: String(err) }, "redis unavailable");
+    });
+    redis.connect().catch(() => {});
+    return redis;
+  } catch (err) {
+    app.log.warn({ err: String(err) }, "redis init failed");
+    redis = null;
+    return null;
+  }
+}
+
+function redisKeysForUser(userId) {
+  const uid = Number(userId);
+  return {
+    current: `recommend:${uid}:current_playing`,
+    next: `recommend:${uid}:next_prepared`,
+    explorePool: `recommend:${uid}:explore_pool`
+  };
+}
+
+async function cacheStableRuntime(userId, ordered) {
+  const r = createRedisClient();
+  if (!r) return;
+  const keys = redisKeysForUser(userId);
+  const current = ordered[0] || null;
+  const next = ordered[1] || null;
+  try {
+    await r.multi()
+      .set(keys.current, JSON.stringify(current || null), "EX", 600)
+      .set(keys.next, JSON.stringify(next || null), "EX", 600)
+      .del(keys.explorePool)
+      .exec();
+  } catch {
+    // ignore redis write errors
+  }
+}
+
+function tagSet(song) {
+  return new Set((song?.tags || []).map((x) => String(x || "").trim()).filter(Boolean));
+}
+
+function jaccardDistance(a, b) {
+  if (!a || !b || (a.size === 0 && b.size === 0)) return 0;
+  const union = new Set([...a, ...b]);
+  let inter = 0;
+  for (const item of a) {
+    if (b.has(item)) inter += 1;
+  }
+  return 1 - inter / Math.max(1, union.size);
+}
+
+function buildExplorePool(items, size = EXPLORE_POOL_SIZE) {
+  const pool = [];
+  const candidates = [...(items || [])];
+  if (candidates.length === 0) return pool;
+
+  pool.push(candidates.shift());
+  while (pool.length < size && candidates.length > 0) {
+    let bestIdx = 0;
+    let bestScore = -1;
+    for (let i = 0; i < candidates.length; i += 1) {
+      const cand = candidates[i];
+      const candTags = tagSet(cand);
+      let score = 0;
+      for (const existing of pool) {
+        score += jaccardDistance(candTags, tagSet(existing));
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+    pool.push(candidates.splice(bestIdx, 1)[0]);
+  }
+  return pool;
+}
+
+async function cacheExploreRuntime(userId, pool) {
+  const r = createRedisClient();
+  if (!r) return;
+  const keys = redisKeysForUser(userId);
+  try {
+    const payload = (pool || []).map((item) => JSON.stringify(item));
+    const multi = r.multi().del(keys.explorePool).del(keys.current).del(keys.next);
+    if (payload.length > 0) {
+      multi.rpush(keys.explorePool, ...payload).expire(keys.explorePool, 600);
+    }
+    await multi.exec();
+  } catch {
+    // ignore redis write errors
+  }
+}
 
 function normalizeAccountId(value) {
   return String(value || "").trim().toLowerCase();
@@ -1085,8 +1193,8 @@ function buildFallbackTitleHint(anchorTag, coreTags) {
   const firstCore = String((coreTags || [])[0]?.name || "").trim();
   const secondCore = String((coreTags || [])[1]?.name || "").trim();
   const parts = [anchorName, firstCore || secondCore].filter(Boolean);
-  const title = parts.join("·");
-  return (title || "新作品").slice(0, 24);
+  const title = parts.join(" ");
+  return (title || "New Track").slice(0, 24);
 }
 
 function buildFallbackCoverHint(anchorTag, coreTags, weakTags) {
@@ -1094,10 +1202,14 @@ function buildFallbackCoverHint(anchorTag, coreTags, weakTags) {
   const coreNames = (coreTags || []).map((tag) => String(tag.name || "").trim()).filter(Boolean);
   const weakNames = (weakTags || []).map((tag) => String(tag.name || "").trim()).filter(Boolean);
   return [
-    `以${anchorName || "音乐氛围"}为核心主体`,
-    coreNames.length > 0 ? `主元素包含${coreNames.join("、")}` : "突出主旋律与空间感",
-    weakNames.length > 0 ? `背景可点缀${weakNames.join("、")}` : "背景克制，避免复杂元素"
-  ].join("，");
+    `Cover centered on scene: ${anchorName || "music atmosphere"}.`,
+    coreNames.length > 0
+      ? `Primary visual elements: ${coreNames.join(", ")}.`
+      : "Highlight melody and spatial depth.",
+    weakNames.length > 0
+      ? `Optional accents: ${weakNames.join(", ")}.`
+      : "Keep background restrained and clean."
+  ].join(" ");
 }
 
 async function buildPrompt(userId) {
@@ -1211,8 +1323,8 @@ async function optimizePromptWithDeepSeek({
     usage: PROMPT_GUIDE[type] || "Add only music-generation-relevant details"
   }));
 
-  const parseJsonObject = (raw) => {
-    const clean = String(raw || "").trim();
+  const parseJsonObject = (rawText) => {
+    const clean = String(rawText || "").trim();
     if (!clean) return null;
     try {
       return JSON.parse(clean);
@@ -1246,12 +1358,12 @@ async function optimizePromptWithDeepSeek({
         {
           role: "system",
           content:
-            "你是音乐生成提示词优化助手。请严格返回 JSON 对象，不要解释，不要 Markdown，不要代码块。"
+            "You optimize music generation prompts. Return strict JSON only. No markdown, no code block, no explanation."
         },
         {
           role: "user",
           content: JSON.stringify({
-            task: "按三层话语权生成自然语言音乐提示词，并给出标题和封面描述",
+            task: "Rewrite prompt into a stronger natural-language music generation prompt while preserving user tags.",
             product_requirements: DEEPSEEK_PRODUCT_REQUIREMENTS,
             base_prompt: basePrompt,
             anchor_rule: "Put anchor in sentence one and restate it in ending with hard constraints.",
@@ -1269,14 +1381,14 @@ async function optimizePromptWithDeepSeek({
             tags: tagSummary,
             grouped_tags: groupedGuide,
             output_schema: {
-              prompt: "三句话中文提示词，主锚在第一句，核心约束在第二句，弱补充在第三句",
-              title_hint: "简短自然的中文歌名",
-              cover_hint: "适合封面图生成的中文画面描述"
+              prompt: "A complete natural-language music generation prompt",
+              title_hint: "Short song title hint",
+              cover_hint: "Short visual cover description"
             },
             constraints: [
-              "必须保留标签核心语义",
-              "不要输出列表，不要解释",
-              "严格输出 JSON 对象，字段包含 prompt、title_hint、cover_hint"
+              "Keep anchor/core/weak hierarchy clear.",
+              "Do not contradict scene anchor.",
+              "Return JSON object with keys: prompt, title_hint, cover_hint."
             ]
           })
         }
@@ -1325,13 +1437,12 @@ async function optimizePromptWithDeepSeek({
       }
     }
 
-    if (!data) {
-      return fallback;
-    }
+    if (!data) return fallback;
 
     if (usedModel !== DEEPSEEK_MODEL) {
       app.log.info({ requested_model: DEEPSEEK_MODEL, used_model: usedModel }, "deepseek model fallback applied");
     }
+
     const content = data?.choices?.[0]?.message?.content;
     const parsed = parseJsonObject(content);
     if (!parsed) {
@@ -1604,11 +1715,18 @@ app.post("/generate", async (request, reply) => {
       ? process.env.TPY_MODEL_INSTRUMENTAL || "TemPolor i3"
       : process.env.TPY_MODEL_SONG || "TemPolor v3");
 
+  const clipDuration = prefetch
+    ? Math.max(EXPLORE_SNIPPET_SECONDS_MIN, Math.min(EXPLORE_SNIPPET_SECONDS_MAX, EXPLORE_SNIPPET_SECONDS_MIN + Math.floor(Math.random() * (EXPLORE_SNIPPET_SECONDS_MAX - EXPLORE_SNIPPET_SECONDS_MIN + 1))))
+    : null;
+
   const payload = {
     model: modelToUse,
     prompt,
     callback_url: `${process.env.CALLBACK_BASE}/callback/tpy`
   };
+  if (clipDuration) {
+    payload.duration = clipDuration;
+  }
 
   let res = null;
   let data = null;
@@ -1979,11 +2097,31 @@ app.get("/recommend/next", async (request, reply) => {
 
   const explore = await getExploreState(user_id);
 
+
+  let runtimeBuffer = ordered.slice(0, bufferSize);
+  let nextItem = runtimeBuffer[0] || null;
+  let currentPlaying = ordered[0] || null;
+  let nextPrepared = ordered[1] || null;
+
+  if (explore.mode === "explore_deep") {
+    const pool = buildExplorePool(ordered, Math.min(EXPLORE_POOL_SIZE, bufferSize));
+    runtimeBuffer = pool.slice(0, bufferSize);
+    nextItem = runtimeBuffer[0] || null;
+    currentPlaying = nextItem;
+    nextPrepared = runtimeBuffer[1] || null;
+    await cacheExploreRuntime(user_id, runtimeBuffer);
+  } else {
+    await cacheStableRuntime(user_id, ordered);
+  }
+
   return {
     mode: explore.mode,
     skip_streak: explore.skip_streak,
-    next: ordered[0] || null,
-    buffer: ordered.slice(0, bufferSize),
+    next: nextItem,
+    buffer: runtimeBuffer,
+    current_playing: currentPlaying,
+    next_prepared: nextPrepared,
+    standby_pool_size: explore.mode === "explore_deep" ? runtimeBuffer.length : 0,
     playable_count: queue.length,
     has_pending_generation: hasPendingGeneration,
     needs_generation: queue.length < 2 && !hasPendingGeneration
