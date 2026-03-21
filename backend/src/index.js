@@ -30,6 +30,7 @@ const MAX_PER_TYPE = 2;
 const REUSE_SIMILARITY_MIN = Number(process.env.REUSE_SIMILARITY_MIN || 0.38);
 const PREFETCH_REUSE_SIMILARITY_MIN = Number(process.env.PREFETCH_REUSE_SIMILARITY_MIN || 0.28);
 const INIT_REUSE_SIMILARITY_MIN = Number(process.env.INIT_REUSE_SIMILARITY_MIN || 0.3);
+const ACTIVE_JOB_STALE_MS = Number(process.env.ACTIVE_JOB_STALE_MS || 10 * 60 * 1000);
 
 const PROMPT_GUIDE = {
   "\u60c5\u7eea": "Describe the emotional tone and energy arc.",
@@ -864,10 +865,10 @@ function normalizeTitle(title, fallback = null) {
 function buildCoverPrompt({ title, coverHint, prompt }) {
   const parts = [
     String(coverHint || "").trim(),
-    title ? "单曲名：《" + title + "》。" : "",
-    "请生成一张正方形音乐封面插图，不要任何文字、logo、水印或排版。",
-    "只保留一个明确主体与氛围背景，突出色彩、光感、层次和情绪，适合音乐流媒体封面。",
-    prompt ? "音乐气质参考：" + String(prompt).trim() : ""
+    title ? `Song title: ${title}.` : "",
+    "Create a square music cover illustration with no text, logo, watermark, or typography.",
+    "Keep one clear subject and an atmospheric background with strong color, light, layering, and mood.",
+    prompt ? `Music mood reference: ${String(prompt).trim()}` : ""
   ];
   return parts.filter(Boolean).join(" ");
 }
@@ -1016,28 +1017,39 @@ app.post("/generate", async (request, reply) => {
   }
 
   const activeJobLookup = await query(
-    "SELECT id FROM generation_jobs WHERE user_id = $1 AND status IN ('pending', 'submitted') ORDER BY id DESC LIMIT 1",
+    "SELECT id, created_at FROM generation_jobs WHERE user_id = $1 AND status IN ('pending', 'submitted') ORDER BY id DESC LIMIT 1",
     [Number(user_id)]
   );
   if (activeJobLookup.rows[0]?.id) {
-    const activeJob = await getGenerationJobDetail(activeJobLookup.rows[0].id);
-    return {
-      job_id: Number(activeJobLookup.rows[0].id),
-      existing: true,
-      status: activeJob?.status || 'pending',
-      prompt: activeJob?.prompt || null,
-      base_prompt: activeJob?.base_prompt || null,
-      title_hint: activeJob?.title_hint || null,
-      cover_hint: activeJob?.cover_hint || null,
-      song_id: activeJob?.song_id || null,
-      song: activeJob?.song_id ? {
-        id: activeJob.song_id,
-        title: activeJob.title,
-        cover_url: activeJob.cover_url,
-        audio_url: activeJob.audio_url,
-        tags: activeJob.tags || []
-      } : null
-    };
+    const active = activeJobLookup.rows[0];
+    const createdMs = new Date(active.created_at).getTime();
+    const isStale = Number.isFinite(createdMs) ? (Date.now() - createdMs > ACTIVE_JOB_STALE_MS) : false;
+
+    if (isStale) {
+      await query(
+        "UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2",
+        ['stale pending/submitted job timed out', Number(active.id)]
+      );
+    } else {
+      const activeJob = await getGenerationJobDetail(active.id);
+      return {
+        job_id: Number(active.id),
+        existing: true,
+        status: activeJob?.status || 'pending',
+        prompt: activeJob?.prompt || null,
+        base_prompt: activeJob?.base_prompt || null,
+        title_hint: activeJob?.title_hint || null,
+        cover_hint: activeJob?.cover_hint || null,
+        song_id: activeJob?.song_id || null,
+        song: activeJob?.song_id ? {
+          id: activeJob.song_id,
+          title: activeJob.title,
+          cover_url: activeJob.cover_url,
+          audio_url: activeJob.audio_url,
+          tags: activeJob.tags || []
+        } : null
+      };
+    }
   }
 
   const { prompt, tagIds, base_prompt, title_hint, cover_hint } = await buildPrompt(user_id);

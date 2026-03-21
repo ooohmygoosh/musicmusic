@@ -1245,6 +1245,29 @@ export default function App() {
     } catch {}
   };
 
+  const handleQueueExhausted = async () => {
+    if (soundRef.current) {
+      await soundRef.current.stopAsync().catch(() => {});
+      await soundRef.current.unloadAsync().catch(() => {});
+    }
+    setSound(null);
+    setCurrent(null);
+    setCurrentSoundId(null);
+    setPlayback((prev) => ({ ...prev, position: 0, isPlaying: false }));
+
+    const fresh = await refreshSongs(userId, { buffer: 8 }).catch(() => []);
+    if (fresh.length > 0) {
+      await play(fresh[0]);
+      return true;
+    }
+
+    if (recommendationState.needsGeneration) {
+      Alert.alert("Queue is empty", "Please generate songs in Portrait first.");
+      setActiveTab("galaxy");
+    }
+    return false;
+  };
+
   const handleAutoNext = async (action) => {
     if (!userId || autoNextLock.current) return;
     autoNextLock.current = true;
@@ -1258,7 +1281,11 @@ export default function App() {
         buffer: 8
       });
       const next = fresh.length > 0 ? fresh[0] : null;
-      if (next) await play(next);
+      if (next) {
+        await play(next);
+      } else {
+        await handleQueueExhausted();
+      }
     } finally {
       autoNextLock.current = false;
     }
