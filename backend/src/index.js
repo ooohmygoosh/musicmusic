@@ -1,4 +1,4 @@
-import "dotenv/config";
+﻿import "dotenv/config";
 import crypto from "crypto";
 import Fastify from "fastify";
 import fs from "fs/promises";
@@ -35,7 +35,7 @@ const INIT_REUSE_SIMILARITY_MIN = Number(process.env.INIT_REUSE_SIMILARITY_MIN |
 const ACTIVE_JOB_STALE_MS = Number(process.env.ACTIVE_JOB_STALE_MS || 10 * 60 * 1000);
 const ASSET_STORAGE_DIR = process.env.ASSET_STORAGE_DIR || "/app/storage";
 const CALLBACK_BASE = (process.env.CALLBACK_BASE || "").replace(/\/$/, "");
-const ASSET_PUBLIC_BASE = (process.env.ASSET_PUBLIC_BASE || (CALLBACK_BASE ? `${CALLBACK_BASE}/api/assets` : "/assets")).replace(/\/$/, "");
+const ASSET_PUBLIC_BASE = (process.env.ASSET_PUBLIC_BASE || (CALLBACK_BASE ? `${CALLBACK_BASE}${/\/api$/i.test(CALLBACK_BASE) ? "" : "/api"}/assets` : "/assets")).replace(/\/$/, "");
 const ASSET_DOWNLOAD_TIMEOUT_MS = Number(process.env.ASSET_DOWNLOAD_TIMEOUT_MS || 20 * 1000);
 
 const PROMPT_GUIDE = {
@@ -1629,6 +1629,7 @@ const port = Number(process.env.PORT || 8080);
 await ensureRuntimeSchema();
 await ensureAssetStorageDirs();
 app.listen({ port, host: "0.0.0.0" });
+
 
 
 
