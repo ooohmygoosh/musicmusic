@@ -1396,6 +1396,12 @@ app.post("/generate", async (request, reply) => {
     return;
   }
 
+  const userCheck = await query("SELECT id FROM users WHERE id = $1 LIMIT 1", [Number(user_id)]);
+  if (userCheck.rows.length === 0) {
+    reply.code(404).send({ error: "user not found" });
+    return;
+  }
+
   const activeJobLookup = await query(
     "SELECT id, created_at FROM generation_jobs WHERE user_id = $1 AND status IN ('pending', 'submitted') ORDER BY id DESC LIMIT 1",
     [Number(user_id)]
