@@ -1581,10 +1581,6 @@ app.post("/callback/tpy", async (request, reply) => {
 
     if (existingByAudio.rows.length > 0) {
       const existingSong = existingByAudio.rows[0];
-      await query(
-        "INSERT INTO song_assets (song_id, item_id, audio_url) VALUES ($1, $2, $3)",
-        [Number(existingSong.song_id), itemId, persistedAudioUrl]
-      );
 
       const matchedJobs = await query(
         "UPDATE generation_jobs SET status = 'reused', item_ids = $1 WHERE $2 = ANY(item_ids) AND status IN ('pending', 'submitted', 'done') RETURNING id, user_id, title_hint",
