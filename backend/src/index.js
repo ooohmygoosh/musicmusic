@@ -872,6 +872,12 @@ function choosePrimaryAnchor(sortedTags) {
   return strongAny || sortedTags[0] || null;
 }
 
+function pickSceneAnchor(sortedTags) {
+  if (!Array.isArray(sortedTags) || sortedTags.length === 0) return null;
+  const sceneTags = sortedTags.filter((tag) => String(tag.type || "") === "场景");
+  if (sceneTags.length === 0) return null;
+  return sceneTags.sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0))[0] || null;
+}
 function pickCoreConstraintTags(sortedTags, anchorTag, selectedIds) {
   const core = [];
   const usedTypes = new Set(anchorTag?.type ? [String(anchorTag.type)] : []);
@@ -1004,7 +1010,8 @@ async function buildPrompt(userId) {
   }
 
   const sorted = [...rows].sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0));
-  const anchorTag = choosePrimaryAnchor(sorted);
+  const sceneAnchor = pickSceneAnchor(sorted);
+  const anchorTag = sceneAnchor || choosePrimaryAnchor(sorted);
   if (!anchorTag) {
     return {
       prompt: "",
@@ -1033,6 +1040,7 @@ async function buildPrompt(userId) {
     chosenTags: chosen,
     basePrompt,
     anchorTag,
+    sceneAnchor,
     coreTags,
     weakTags,
     fallbackTitleHint,
@@ -1052,6 +1060,7 @@ async function optimizePromptWithDeepSeek({
   chosenTags,
   basePrompt,
   anchorTag,
+  sceneAnchor,
   coreTags,
   weakTags,
   fallbackTitleHint,
@@ -1139,10 +1148,14 @@ async function optimizePromptWithDeepSeek({
             product_requirements: DEEPSEEK_PRODUCT_REQUIREMENTS,
             base_prompt: basePrompt,
             anchor_rule: "主锚标签放第一句并在结尾再次强调，使用必须是、全程保持、绝对核心等强约束词",
+            scene_priority_rule: "如果存在场景标签，场景必须是唯一主锚，第一句必须明确场景，不得被乐器或风格替代。",
             core_rule: "核心约束放第二句，2-3 个标签，使用风格为、情绪是、主要使用等明确词",
             weak_rule: "弱补充放最后一句，使用可以尝试、点缀等软约束词",
             anchor_tag: anchorTag
               ? { type: anchorTag.type, name: anchorTag.name, weight: Number(anchorTag.weight || 0) }
+              : null,
+            scene_anchor: sceneAnchor
+              ? { type: sceneAnchor.type, name: sceneAnchor.name, weight: Number(sceneAnchor.weight || 0) }
               : null,
             core_tags: (coreTags || []).map((tag) => ({ type: tag.type, name: tag.name, weight: Number(tag.weight || 0) })),
             weak_tags: (weakTags || []).map((tag) => ({ type: tag.type, name: tag.name, weight: Number(tag.weight || 0) })),
@@ -1219,8 +1232,12 @@ async function optimizePromptWithDeepSeek({
       return fallback;
     }
 
+    const optimizedPrompt = String(parsed?.prompt || "").trim();
+    const sceneName = String(sceneAnchor?.name || "").trim();
+    const sceneMatched = sceneName ? optimizedPrompt.includes(sceneName) : true;
+
     const result = {
-      prompt: String(parsed?.prompt || "").trim() || basePrompt,
+      prompt: optimizedPrompt && sceneMatched ? optimizedPrompt : basePrompt,
       title_hint: String(parsed?.title_hint || "").trim() || fallback.title_hint,
       cover_hint: String(parsed?.cover_hint || "").trim() || fallback.cover_hint
     };
