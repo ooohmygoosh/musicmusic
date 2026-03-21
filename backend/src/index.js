@@ -1586,24 +1586,7 @@ app.post("/generate", async (request, reply) => {
   );
   const job = rows[0];
 
-  const reusableSong = await findReusableSong(
-    user_id,
-    tagIds,
-    prefetch ? PREFETCH_REUSE_SIMILARITY_MIN : REUSE_SIMILARITY_MIN
-  );
-  if (reusableSong) {
-    const songId = await reuseSongForUser(job, reusableSong);
-    return {
-      job_id: job.id,
-      item_ids: reusableSong.asset.item_id ? [reusableSong.asset.item_id] : [],
-      prompt,
-      reused: true,
-      song_id: songId,
-      matched_song_id: reusableSong.id,
-      similarity: Number(reusableSong.similarity || 0),
-      status: 'reused'
-    };
-  }
+
 
   if (!TPY_API_KEY) {
     await query("UPDATE generation_jobs SET status = 'failed' WHERE id = $1", [job.id]);
