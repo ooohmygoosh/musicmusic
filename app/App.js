@@ -1240,7 +1240,7 @@ export default function App() {
       await fetch(`${API_BASE}/feedback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, song_id: current.id, action, played_seconds: Math.floor((playbackRef.current.position || 0) / 1000) })
+        body: JSON.stringify({ user_id: userId, song_id: current.id, queue_id: current.queue_id || null, action, played_seconds: Math.floor((playbackRef.current.position || 0) / 1000) })
       });
     } catch {}
   };

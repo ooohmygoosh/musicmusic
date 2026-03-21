@@ -1270,7 +1270,7 @@ app.post("/callback/tpy", async (request, reply) => {
 });
 
 app.post("/feedback", async (request, reply) => {
-  const { user_id, song_id, action, played_seconds } = request.body || {};
+  const { user_id, song_id, queue_id, action, played_seconds } = request.body || {};
   if (!user_id || !song_id || !action) {
     reply.code(400).send({ error: "user_id, song_id, action required" });
     return;
@@ -1300,12 +1300,17 @@ app.post("/feedback", async (request, reply) => {
   } catch (err) {
     reply.code(500).send({ error: "feedback insert failed", detail: String(err) });
     return;
+  }  if (queue_id && Number.isFinite(Number(queue_id))) {
+    await query(
+      "UPDATE user_song_queue SET acted_at = NOW(), is_hidden = CASE WHEN $1 IN ('skip', 'complete') THEN true ELSE is_hidden END WHERE id = $2 AND user_id = $3",
+      [normalizedAction, Number(queue_id), Number(user_id)]
+    );
+  } else {
+    await query(
+      "UPDATE user_song_queue SET acted_at = NOW(), is_hidden = CASE WHEN $1 IN ('skip', 'complete') THEN true ELSE is_hidden END WHERE id = (SELECT q.id FROM user_song_queue q WHERE q.user_id = $2 AND q.song_id = $3 AND COALESCE(q.is_hidden, false) = false ORDER BY q.created_at DESC, q.id DESC LIMIT 1)",
+      [normalizedAction, Number(user_id), Number(song_id)]
+    );
   }
-
-  await query(
-    "UPDATE user_song_queue SET acted_at = NOW(), is_hidden = CASE WHEN $1 IN ('skip', 'complete') THEN true ELSE is_hidden END WHERE user_id = $2 AND song_id = $3 AND COALESCE(is_hidden, false) = false",
-    [normalizedAction, Number(user_id), Number(song_id)]
-  );
 
   await ensureUserTagWeights(user_id);
   const { rows } = await query(
@@ -1391,9 +1396,24 @@ app.get("/recommend/next", async (request, reply) => {
   const bufferSize = Math.max(1, Math.min(20, Number(buffer || 5)));
 
   const pendingJob = await query(
-    "SELECT id FROM generation_jobs WHERE user_id = $1 AND status IN ('pending', 'submitted') ORDER BY id DESC LIMIT 1",
+    "SELECT id, created_at FROM generation_jobs WHERE user_id = $1 AND status IN ('pending', 'submitted') ORDER BY id DESC LIMIT 1",
     [Number(user_id)]
   );
+
+  let hasPendingGeneration = pendingJob.rows.length > 0;
+  if (hasPendingGeneration) {
+    const pending = pendingJob.rows[0];
+    const createdMs = new Date(pending.created_at).getTime();
+    const isStale = Number.isFinite(createdMs) ? (Date.now() - createdMs > ACTIVE_JOB_STALE_MS) : false;
+    if (isStale) {
+      await query(
+        "UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2",
+        ['stale pending/submitted job timed out', Number(pending.id)]
+      );
+      hasPendingGeneration = false;
+    }
+  }
+
   const explore = await getExploreState(user_id);
 
   return {
@@ -1402,8 +1422,8 @@ app.get("/recommend/next", async (request, reply) => {
     next: ordered[0] || null,
     buffer: ordered.slice(0, bufferSize),
     playable_count: queue.length,
-    has_pending_generation: pendingJob.rows.length > 0,
-    needs_generation: queue.length < 2 && pendingJob.rows.length === 0
+    has_pending_generation: hasPendingGeneration,
+    needs_generation: queue.length < 2 && !hasPendingGeneration
   };
 });
 
