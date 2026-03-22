@@ -1615,12 +1615,112 @@ async function findReusableSong(userId, tagIds, threshold = REUSE_SIMILARITY_MIN
   const rows = await findReusableSongs(userId, tagIds, 1, threshold);
   return rows[0] || null;
 }
-async function getUserActiveTagIds(userId, limit = 12) {
+async function getUserRecommendationProfile(userId) {
+  await ensureUserTagWeights(userId);
   const { rows } = await query(
-    "SELECT tag_id, weight FROM user_tags WHERE user_id = $1 AND COALESCE(is_active, true) = true ORDER BY weight DESC, tag_id DESC LIMIT $2",
-    [Number(userId), Number(limit)]
+    "SELECT t.id, t.name, t.type, ut.weight FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true AND COALESCE(ut.is_active, true) = true ORDER BY ut.weight DESC, ut.tag_id DESC",
+    [Number(userId)]
   );
-  return rows.map((row) => Number(row.tag_id)).filter(Boolean);
+
+  if (rows.length === 0) {
+    return {
+      sortedTags: [],
+      sceneAnchor: null,
+      anchorTag: null,
+      coreTags: [],
+      weakTags: [],
+      weightByTagId: new Map()
+    };
+  }
+
+  const sortedTags = [...rows].sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0));
+  const sceneAnchor = pickSceneAnchor(sortedTags);
+  const anchorTag = sceneAnchor || choosePrimaryAnchor(sortedTags);
+  if (!anchorTag) {
+    return {
+      sortedTags,
+      sceneAnchor: null,
+      anchorTag: null,
+      coreTags: [],
+      weakTags: [],
+      weightByTagId: new Map(sortedTags.map((tag) => [Number(tag.id), Number(tag.weight || 0)]))
+    };
+  }
+
+  const selectedIds = new Set([Number(anchorTag.id)]);
+  const coreTags = pickCoreConstraintTags(sortedTags, anchorTag, selectedIds);
+  const weakTags = pickWeakSupplementTags(sortedTags, selectedIds);
+  const weightByTagId = new Map(sortedTags.map((tag) => [Number(tag.id), Number(tag.weight || 0)]));
+
+  return {
+    sortedTags,
+    sceneAnchor,
+    anchorTag,
+    coreTags,
+    weakTags,
+    weightByTagId
+  };
+}
+
+function countMatchedTags(songTagSet, tagIds) {
+  let hit = 0;
+  for (const id of tagIds || []) {
+    if (songTagSet.has(Number(id))) hit += 1;
+  }
+  return hit;
+}
+
+function rankCandidateLibrarySongs(rows, profile) {
+  const anchorId = Number(profile?.anchorTag?.id || 0);
+  const requireAnchor = Boolean(profile?.sceneAnchor && anchorId);
+  const coreIds = (profile?.coreTags || []).map((tag) => Number(tag.id)).filter(Boolean);
+  const weakIds = (profile?.weakTags || []).map((tag) => Number(tag.id)).filter(Boolean);
+  const weightByTagId = profile?.weightByTagId || new Map();
+
+  return [...(rows || [])]
+    .map((row) => {
+      const songTagIds = Array.isArray(row.song_tag_ids) ? row.song_tag_ids.map((id) => Number(id)).filter(Boolean) : [];
+      const songTagSet = new Set(songTagIds);
+      const anchorHit = anchorId ? songTagSet.has(anchorId) : false;
+      if (requireAnchor && !anchorHit) return null;
+
+      const coreHit = countMatchedTags(songTagSet, coreIds);
+      const weakHit = countMatchedTags(songTagSet, weakIds);
+      const coreTier = coreIds.length >= 3
+        ? (coreHit >= 3 ? 3 : coreHit >= 2 ? 2 : coreHit >= 1 ? 1 : 0)
+        : coreIds.length === 2
+          ? (coreHit >= 2 ? 3 : coreHit >= 1 ? 1 : 0)
+          : coreIds.length === 1
+            ? (coreHit >= 1 ? 2 : 0)
+            : 0;
+      const matchedWeight = songTagIds.reduce((sum, id) => sum + Number(weightByTagId.get(Number(id)) || 0), 0);
+      const score = (requireAnchor && anchorHit ? 1000 : 0)
+        + (!requireAnchor && anchorHit ? 220 : 0)
+        + coreTier * 400
+        + coreHit * 120
+        + weakHit * 18
+        + matchedWeight * 100
+        + Number(row.reuse_count || 0) * 0.01;
+
+      return {
+        ...row,
+        anchor_hit: anchorHit,
+        core_hit: coreHit,
+        weak_hit: weakHit,
+        core_tier: coreTier,
+        score
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (b.core_tier !== a.core_tier) return b.core_tier - a.core_tier;
+      if (b.core_hit !== a.core_hit) return b.core_hit - a.core_hit;
+      if (b.score !== a.score) return b.score - a.score;
+      if (Number(b.reuse_count || 0) !== Number(a.reuse_count || 0)) {
+        return Number(b.reuse_count || 0) - Number(a.reuse_count || 0);
+      }
+      return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+    });
 }
 
 async function refillQueueFromLibrary(userId, targetCount = RECOMMEND_REFILL_TARGET) {
@@ -1631,34 +1731,31 @@ async function refillQueueFromLibrary(userId, targetCount = RECOMMEND_REFILL_TAR
   const deficit = Math.max(0, Number(targetCount) - currentQueue.length);
   if (deficit <= 0) return 0;
 
-  const tagIds = await getUserActiveTagIds(uid, 14);
-  if (tagIds.length === 0) return 0;
+  const profile = await getUserRecommendationProfile(uid);
+  if (!profile.anchorTag) return 0;
 
+  const selectedTagIds = [
+    Number(profile.anchorTag?.id || 0),
+    ...(profile.coreTags || []).map((tag) => Number(tag.id)),
+    ...(profile.weakTags || []).map((tag) => Number(tag.id))
+  ].filter(Boolean);
+  if (selectedTagIds.length === 0) return 0;
+
+  const excludedSongIds = await getUserExcludedSongIds(uid);
+  const { rows } = await query(
+    "SELECT s.id, s.title, s.cover_url, s.cover_hint, s.prompt, s.model, s.duration, s.style, s.reuse_count, s.created_at, COALESCE(array_remove(array_agg(DISTINCT st.tag_id), NULL), '{}') AS song_tag_ids, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM songs s JOIN song_assets sa ON sa.song_id = s.id AND sa.audio_url IS NOT NULL LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE s.source_song_id IS NULL AND COALESCE(s.is_available, true) = true AND ($1::int[] = '{}'::int[] OR NOT (s.id = ANY($1::int[]))) AND EXISTS (SELECT 1 FROM song_tags st2 WHERE st2.song_id = s.id AND st2.tag_id = ANY($2::int[])) GROUP BY s.id ORDER BY s.reuse_count DESC, s.created_at DESC LIMIT 80",
+    [excludedSongIds, selectedTagIds]
+  );
+
+  const ranked = rankCandidateLibrarySongs(rows, profile);
   let added = 0;
-  const thresholds = [0.5, 0.42, 0.34, 0.26, 0.18];
-
-  for (const threshold of thresholds) {
-    const remaining = Math.max(0, deficit - added);
-    if (remaining <= 0) break;
-
-    const candidates = await findReusableSongs(uid, tagIds, Math.max(remaining * 2, remaining), threshold);
-    if (!Array.isArray(candidates) || candidates.length === 0) continue;
-
-    for (const song of candidates) {
-      const before = await query(
-        "SELECT COUNT(*)::int AS c FROM user_song_queue WHERE user_id = $1 AND song_id = $2 AND COALESCE(is_hidden, false) = false",
-        [uid, Number(song.id)]
-      );
-      const visibleCount = Number(before.rows[0]?.c || 0);
-      if (visibleCount > 0) continue;
-
-      await queueSongForUser(uid, Number(song.id), null, "recommended", {
-        displayTitle: normalizeTitle(song.title || null, song.title || null),
-        displayCoverUrl: song.cover_url || null
-      });
-      added += 1;
-      if (added >= deficit) break;
-    }
+  for (const song of ranked) {
+    if (added >= deficit) break;
+    await queueSongForUser(uid, Number(song.id), null, "recommended", {
+      displayTitle: normalizeTitle(song.title || null, song.title || null),
+      displayCoverUrl: song.cover_url || null
+    });
+    added += 1;
   }
 
   return added;
