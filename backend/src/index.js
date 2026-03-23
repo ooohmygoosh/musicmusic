@@ -51,6 +51,10 @@ const EXPLORE_SNIPPET_SECONDS_MIN = Number(process.env.EXPLORE_SNIPPET_SECONDS_M
 const EXPLORE_SNIPPET_SECONDS_MAX = Number(process.env.EXPLORE_SNIPPET_SECONDS_MAX || 90);
 const RECOMMEND_MIN_BUFFER = Number(process.env.RECOMMEND_MIN_BUFFER || 2);
 const RECOMMEND_REFILL_TARGET = Number(process.env.RECOMMEND_REFILL_TARGET || 6);
+const OFFICIAL_ACCOUNT_ID = normalizeAccountId(process.env.OFFICIAL_ACCOUNT_ID || "official") || "official";
+const OFFICIAL_DISPLAY_NAME = String(process.env.OFFICIAL_DISPLAY_NAME || "Official").trim() || "Official";
+const OFFICIAL_AVATAR = String(process.env.OFFICIAL_AVATAR || "music").trim() || "music";
+const AUTO_FALLBACK_ENABLED = process.env.AUTO_FALLBACK_ENABLED !== "false";
 
 const PROMPT_GUIDE = {
   "\u60c5\u7eea": "Describe the emotional tone and energy arc.",
@@ -344,14 +348,95 @@ async function ensureRuntimeSchema() {
       ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
       ADD COLUMN IF NOT EXISTS account_id TEXT,
       ADD COLUMN IF NOT EXISTS password_hash TEXT,
-      ADD COLUMN IF NOT EXISTS avatar TEXT
+      ADD COLUMN IF NOT EXISTS avatar TEXT,
+      ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'listener',
+      ADD COLUMN IF NOT EXISTS membership_status TEXT DEFAULT 'free',
+      ADD COLUMN IF NOT EXISTS membership_expires_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS wallet_balance NUMERIC DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS wallet_frozen NUMERIC DEFAULT 0
+  `);
+  await query(`
+    ALTER TABLE generation_jobs
+      ADD COLUMN IF NOT EXISTS requested_by_user_id INT REFERENCES users(id) ON DELETE CASCADE,
+      ADD COLUMN IF NOT EXISTS owner_user_id INT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS generation_intent TEXT DEFAULT 'manual',
+      ADD COLUMN IF NOT EXISTS should_publish BOOLEAN DEFAULT FALSE
+  `);
+  await query(`
+    ALTER TABLE songs
+      ADD COLUMN IF NOT EXISTS owner_user_id INT REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS creator_type TEXT DEFAULT 'user',
+      ADD COLUMN IF NOT EXISTS generation_source TEXT DEFAULT 'legacy',
+      ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS publish_status TEXT DEFAULT 'draft',
+      ADD COLUMN IF NOT EXISTS revenue_enabled BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS visibility_scope TEXT DEFAULT 'private',
+      ADD COLUMN IF NOT EXISTS official_fallback BOOLEAN DEFAULT FALSE
   `);
   await query(`
     UPDATE users
     SET account_id = LOWER(device_id)
     WHERE account_id IS NULL AND device_id IS NOT NULL
   `);
+  await query(`
+    UPDATE users
+    SET role = COALESCE(NULLIF(role, ''), 'listener'),
+        membership_status = COALESCE(NULLIF(membership_status, ''), 'free'),
+        wallet_balance = COALESCE(wallet_balance, 0),
+        wallet_frozen = COALESCE(wallet_frozen, 0)
+    WHERE role IS NULL
+       OR membership_status IS NULL
+       OR wallet_balance IS NULL
+       OR wallet_frozen IS NULL
+  `);
+  await query(`
+    UPDATE generation_jobs
+    SET requested_by_user_id = COALESCE(requested_by_user_id, user_id),
+        owner_user_id = COALESCE(owner_user_id, user_id),
+        generation_intent = COALESCE(NULLIF(generation_intent, ''), 'manual'),
+        should_publish = COALESCE(should_publish, FALSE)
+    WHERE requested_by_user_id IS NULL
+       OR owner_user_id IS NULL
+       OR generation_intent IS NULL
+       OR should_publish IS NULL
+  `);
+  await query(`
+    UPDATE songs
+    SET owner_user_id = COALESCE(owner_user_id, user_id),
+        creator_type = COALESCE(NULLIF(creator_type, ''), 'user'),
+        generation_source = COALESCE(NULLIF(generation_source, ''), 'legacy'),
+        is_public = COALESCE(is_public, FALSE),
+        publish_status = COALESCE(NULLIF(publish_status, ''), CASE WHEN COALESCE(is_public, FALSE) THEN 'published' ELSE 'draft' END),
+        revenue_enabled = COALESCE(revenue_enabled, FALSE),
+        visibility_scope = COALESCE(NULLIF(visibility_scope, ''), CASE WHEN COALESCE(is_public, FALSE) THEN 'public' ELSE 'private' END),
+        official_fallback = COALESCE(official_fallback, FALSE)
+    WHERE owner_user_id IS NULL
+       OR creator_type IS NULL
+       OR generation_source IS NULL
+       OR is_public IS NULL
+       OR publish_status IS NULL
+       OR revenue_enabled IS NULL
+       OR visibility_scope IS NULL
+       OR official_fallback IS NULL
+  `);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_account_id_unique ON users(account_id) WHERE account_id IS NOT NULL`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_generation_jobs_requested_user_status ON generation_jobs(requested_by_user_id, status, id DESC)`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_songs_owner_user_id ON songs(owner_user_id, created_at DESC)`);
+}
+
+async function getOrCreateOfficialUser() {
+  const existing = await query(
+    "SELECT id, device_id, account_id, display_name, avatar, role, created_at FROM users WHERE account_id = $1 LIMIT 1",
+    [OFFICIAL_ACCOUNT_ID]
+  );
+  if (existing.rows[0]) return existing.rows[0];
+
+  const passwordSeed = process.env.OFFICIAL_PASSWORD || crypto.randomBytes(24).toString("hex");
+  const inserted = await query(
+    "INSERT INTO users (device_id, account_id, password_hash, display_name, avatar, role, membership_status, wallet_balance, wallet_frozen, last_seen_at, is_active) VALUES ($1, $2, $3, $4, $5, 'official', 'internal', 0, 0, NOW(), true) RETURNING id, device_id, account_id, display_name, avatar, role, created_at",
+    [OFFICIAL_ACCOUNT_ID, OFFICIAL_ACCOUNT_ID, hashPassword(passwordSeed), OFFICIAL_DISPLAY_NAME, OFFICIAL_AVATAR]
+  );
+  return inserted.rows[0];
 }
 
 function requireAdmin(request, reply) {
@@ -1789,73 +1874,29 @@ async function reuseSongForUser(job, librarySong) {
 
   return librarySong.id;
 }
-app.post("/generate", async (request, reply) => {
-  const { user_id, instrumental = true, model, prefetch = false } = request.body || {};
-  if (!user_id) {
-    reply.code(400).send({ error: "user_id required" });
-    return;
-  }
-
-  const userCheck = await query("SELECT id FROM users WHERE id = $1 LIMIT 1", [Number(user_id)]);
-  if (userCheck.rows.length === 0) {
-    reply.code(404).send({ error: "user not found" });
-    return;
-  }
-
-  const activeJobLookup = await query(
-    "SELECT id, created_at FROM generation_jobs WHERE user_id = $1 AND status IN ('pending', 'submitted') ORDER BY id DESC LIMIT 1",
-    [Number(user_id)]
-  );
-  if (activeJobLookup.rows[0]?.id) {
-    const active = activeJobLookup.rows[0];
-    const createdMs = new Date(active.created_at).getTime();
-    const isStale = Number.isFinite(createdMs) ? (Date.now() - createdMs > ACTIVE_JOB_STALE_MS) : false;
-
-    if (isStale) {
-      await query(
-        "UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2",
-        ['stale pending/submitted job timed out', Number(active.id)]
-      );
-    } else {
-      const activeJob = await getGenerationJobDetail(active.id);
-      return {
-        job_id: Number(active.id),
-        existing: true,
-        status: activeJob?.status || 'pending',
-        prompt: activeJob?.prompt || null,
-        base_prompt: activeJob?.base_prompt || null,
-        title_hint: activeJob?.title_hint || null,
-        cover_hint: activeJob?.cover_hint || null,
-        song_id: activeJob?.song_id || null,
-        song: activeJob?.song_id ? {
-          id: activeJob.song_id,
-          title: activeJob.title,
-          cover_url: activeJob.cover_url,
-          audio_url: activeJob.audio_url,
-          tags: activeJob.tags || []
-        } : null
-      };
-    }
-  }
-
-  const { prompt, tagIds, base_prompt, title_hint, cover_hint } = await buildPrompt(user_id);
+async function submitGenerationJob({
+  requestUserId,
+  ownerUserId,
+  intent = "manual",
+  instrumental = true,
+  model,
+  prefetch = false,
+  shouldPublish = false
+}) {
+  const { prompt, tagIds, base_prompt, title_hint, cover_hint } = await buildPrompt(requestUserId);
   if (!prompt) {
-    reply.code(400).send({ error: "no tags found for user" });
-    return;
+    return { error: "no tags found for user", code: 400 };
   }
 
   const { rows } = await query(
-    "INSERT INTO generation_jobs (user_id, prompt, base_prompt, title_hint, cover_hint, status, tag_ids) VALUES ($1, $2, $3, $4, $5, 'pending', $6) RETURNING *",
-    [user_id, prompt, base_prompt || prompt, title_hint || null, cover_hint || null, tagIds]
+    "INSERT INTO generation_jobs (user_id, requested_by_user_id, owner_user_id, generation_intent, should_publish, prompt, base_prompt, title_hint, cover_hint, status, tag_ids) VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9) RETURNING *",
+    [requestUserId, ownerUserId, intent, Boolean(shouldPublish), prompt, base_prompt || prompt, title_hint || null, cover_hint || null, tagIds]
   );
   const job = rows[0];
 
-
-
   if (!TPY_API_KEY) {
-    await query("UPDATE generation_jobs SET status = 'failed' WHERE id = $1", [job.id]);
-    reply.code(500).send({ error: "TPY_API_KEY not set" });
-    return;
+    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", ["TPY_API_KEY not set", job.id]);
+    return { error: "TPY_API_KEY not set", code: 500 };
   }
 
   const url = instrumental
@@ -1877,9 +1918,7 @@ app.post("/generate", async (request, reply) => {
     prompt,
     callback_url: `${process.env.CALLBACK_BASE}/callback/tpy`
   };
-  if (clipDuration) {
-    payload.duration = clipDuration;
-  }
+  if (clipDuration) payload.duration = clipDuration;
 
   let res = null;
   let data = null;
@@ -1894,31 +1933,19 @@ app.post("/generate", async (request, reply) => {
     });
     data = await res.json();
   } catch (err) {
-    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [
-      String(err),
-      job.id
-    ]);
-    reply.code(502).send({ error: "tianpuyue request failed", detail: String(err) });
-    return;
+    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [String(err), job.id]);
+    return { error: "tianpuyue request failed", detail: String(err), code: 502 };
   }
 
   if (!res.ok) {
-    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [
-      JSON.stringify(data),
-      job.id
-    ]);
-    reply.code(502).send({ error: "tianpuyue request failed", detail: data });
-    return;
+    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [JSON.stringify(data), job.id]);
+    return { error: "tianpuyue request failed", detail: data, code: 502 };
   }
 
   const itemIds = data?.data?.item_ids || [];
   if (!Array.isArray(itemIds) || itemIds.length === 0) {
-    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [
-      JSON.stringify(data),
-      job.id
-    ]);
-    reply.code(502).send({ error: "tianpuyue returned no item_ids", detail: data });
-    return;
+    await query("UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2", [JSON.stringify(data), job.id]);
+    return { error: "tianpuyue returned no item_ids", detail: data, code: 502 };
   }
 
   await query(
@@ -1926,7 +1953,124 @@ app.post("/generate", async (request, reply) => {
     [itemIds, job.id]
   );
 
-  return { job_id: job.id, item_ids: itemIds, prompt, base_prompt, title_hint, cover_hint, reused: false, status: 'submitted' };
+  return {
+    job_id: job.id,
+    item_ids: itemIds,
+    prompt,
+    base_prompt,
+    title_hint,
+    cover_hint,
+    reused: false,
+    status: "submitted",
+    intent,
+    owner_user_id: Number(ownerUserId),
+    requested_by_user_id: Number(requestUserId)
+  };
+}
+
+async function triggerOfficialFallbackGenerationForUser(userId, options = {}) {
+  if (!AUTO_FALLBACK_ENABLED) return null;
+  const officialUser = await getOrCreateOfficialUser();
+  const result = await submitGenerationJob({
+    requestUserId: Number(userId),
+    ownerUserId: Number(officialUser.id),
+    intent: "fallback",
+    instrumental: options.instrumental !== false,
+    model: options.model,
+    prefetch: Boolean(options.prefetch),
+    shouldPublish: true
+  });
+  if (result?.error) {
+    app.log.warn({ user_id: Number(userId), detail: result.detail || result.error }, "official fallback generation failed");
+    return null;
+  }
+  return result;
+}
+
+app.post("/generate", async (request, reply) => {
+  const {
+    user_id,
+    instrumental = true,
+    model,
+    prefetch = false,
+    intent = "manual",
+    owner_user_id,
+    should_publish = true
+  } = request.body || {};
+  if (!user_id) {
+    reply.code(400).send({ error: "user_id required" });
+    return;
+  }
+
+  const requestUserId = Number(user_id);
+  const userCheck = await query("SELECT id FROM users WHERE id = $1 LIMIT 1", [requestUserId]);
+  if (userCheck.rows.length === 0) {
+    reply.code(404).send({ error: "user not found" });
+    return;
+  }
+
+  const activeJobLookup = await query(
+    "SELECT id, created_at FROM generation_jobs WHERE requested_by_user_id = $1 AND status IN ('pending', 'submitted') ORDER BY id DESC LIMIT 1",
+    [requestUserId]
+  );
+  if (activeJobLookup.rows[0]?.id) {
+    const active = activeJobLookup.rows[0];
+    const createdMs = new Date(active.created_at).getTime();
+    const isStale = Number.isFinite(createdMs) ? (Date.now() - createdMs > ACTIVE_JOB_STALE_MS) : false;
+
+    if (isStale) {
+      await query(
+        "UPDATE generation_jobs SET status = 'failed', error = $1 WHERE id = $2",
+        ["stale pending/submitted job timed out", Number(active.id)]
+      );
+    } else {
+      const activeJob = await getGenerationJobDetail(active.id);
+      return {
+        job_id: Number(active.id),
+        existing: true,
+        status: activeJob?.status || "pending",
+        prompt: activeJob?.prompt || null,
+        base_prompt: activeJob?.base_prompt || null,
+        title_hint: activeJob?.title_hint || null,
+        cover_hint: activeJob?.cover_hint || null,
+        song_id: activeJob?.song_id || null,
+        song: activeJob?.song_id ? {
+          id: activeJob.song_id,
+          title: activeJob.title,
+          cover_url: activeJob.cover_url,
+          audio_url: activeJob.audio_url,
+          tags: activeJob.tags || []
+        } : null
+      };
+    }
+  }
+
+  let ownerUserId = Number(owner_user_id || requestUserId);
+  let normalizedIntent = String(intent || "manual").toLowerCase() === "fallback" ? "fallback" : "manual";
+  let publishFlag = normalizedIntent === "manual" ? (should_publish !== false) : Boolean(should_publish);
+
+  if (normalizedIntent === "fallback") {
+    const officialUser = await getOrCreateOfficialUser();
+    ownerUserId = Number(officialUser.id);
+    publishFlag = true;
+  }
+
+  const result = await submitGenerationJob({
+    requestUserId,
+    ownerUserId,
+    intent: normalizedIntent,
+    instrumental,
+    model,
+    prefetch,
+    shouldPublish: publishFlag
+  });
+
+  if (result?.error) {
+    reply.code(Number(result.code || 500)).send({ error: result.error, detail: result.detail });
+    return;
+  }
+
+  return result;
 });
 
 app.get("/generation-jobs/:id", async (request, reply) => {
@@ -2019,13 +2163,13 @@ app.post("/callback/tpy", async (request, reply) => {
       const existingSong = existingByAudio.rows[0];
 
       const matchedJobs = await query(
-        "UPDATE generation_jobs SET status = 'reused', item_ids = $1 WHERE $2 = ANY(item_ids) AND status IN ('pending', 'submitted') RETURNING id, user_id, title_hint",
+        "UPDATE generation_jobs SET status = 'reused', item_ids = $1 WHERE $2 = ANY(item_ids) AND status IN ('pending', 'submitted') RETURNING id, user_id, requested_by_user_id, owner_user_id, title_hint",
         [[itemId], itemId]
       );
 
       for (const job of matchedJobs.rows) {
         const displayTitle = normalizeTitle(job.title_hint || existingSong.title || null, existingSong.title || null);
-        await queueSongForUser(job.user_id, Number(existingSong.song_id), job.id, 'reused', {
+        await queueSongForUser(Number(job.requested_by_user_id || job.user_id), Number(existingSong.song_id), job.id, 'reused', {
           displayTitle,
           displayCoverUrl: existingSong.cover_url || null
         });
@@ -2039,7 +2183,7 @@ app.post("/callback/tpy", async (request, reply) => {
     }
 
     const { rows } = await query(
-      "UPDATE generation_jobs SET status = 'processing' WHERE $1 = ANY(item_ids) AND status IN ('pending', 'submitted') RETURNING id, user_id, prompt, base_prompt, title_hint, cover_hint, tag_ids",
+      "UPDATE generation_jobs SET status = 'processing' WHERE $1 = ANY(item_ids) AND status IN ('pending', 'submitted') RETURNING id, user_id, requested_by_user_id, owner_user_id, generation_intent, should_publish, prompt, base_prompt, title_hint, cover_hint, tag_ids",
       [itemId]
     );
 
@@ -2059,10 +2203,34 @@ app.post("/callback/tpy", async (request, reply) => {
       ? await persistCoverAsset(rawCoverUrl).catch(() => rawCoverUrl)
       : null;
 
+    const ownerUserId = Number(job.owner_user_id || job.user_id);
+    const requestUserId = Number(job.requested_by_user_id || job.user_id);
+    const generationIntent = String(job.generation_intent || "manual").toLowerCase();
+    const isOfficialFallback = generationIntent === "fallback";
+    const isManualGeneration = generationIntent === "manual";
+    const shouldPublishToLibrary = isOfficialFallback || isManualGeneration || Boolean(job.should_publish);
+    const publishStatus = isOfficialFallback
+      ? "published"
+      : (shouldPublishToLibrary ? "published" : "draft");
+    const visibilityScope = isOfficialFallback
+      ? "public"
+      : (shouldPublishToLibrary ? "public" : "private");
+    const revenueEnabled = isManualGeneration && shouldPublishToLibrary;
+    const creatorType = isOfficialFallback ? "official" : "user";
+    const generationSource = isOfficialFallback ? "recommend_fallback" : "portrait_manual";
+
     const song = await query(
-      "INSERT INTO songs (user_id, prompt, base_prompt, title, cover_url, cover_hint, model, duration, style, generation_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'generated') RETURNING id",
+      "INSERT INTO songs (user_id, owner_user_id, creator_type, generation_source, is_public, publish_status, revenue_enabled, visibility_scope, official_fallback, prompt, base_prompt, title, cover_url, cover_hint, model, duration, style, generation_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'generated') RETURNING id",
       [
-        job.user_id,
+        ownerUserId,
+        ownerUserId,
+        creatorType,
+        generationSource,
+        shouldPublishToLibrary,
+        publishStatus,
+        revenueEnabled,
+        visibilityScope,
+        isOfficialFallback,
         job.prompt,
         job.base_prompt || job.prompt,
         displayTitle,
@@ -2089,7 +2257,7 @@ app.post("/callback/tpy", async (request, reply) => {
       [songId, itemId, persistedAudioUrl]
     );
 
-    await queueSongForUser(job.user_id, songId, job.id, 'generated', {
+    await queueSongForUser(requestUserId, songId, job.id, 'generated', {
       displayTitle,
       displayCoverUrl: coverUrl
     });
@@ -2225,12 +2393,13 @@ app.get("/recommend/next", async (request, reply) => {
     return;
   }
 
+  const explore = await getExploreState(user_id);
   let queue = await getPlayableQueue(user_id);
   let ordered = rotateQueueFromCursor(queue, cursor_queue_id);
   const bufferSize = Math.max(1, Math.min(20, Number(buffer || 5)));
 
   const pendingJob = await query(
-    "SELECT id, created_at FROM generation_jobs WHERE user_id = $1 AND status IN ('pending', 'submitted') ORDER BY id DESC LIMIT 1",
+    "SELECT id, created_at FROM generation_jobs WHERE requested_by_user_id = $1 AND status IN ('pending', 'submitted') ORDER BY id DESC LIMIT 1",
     [Number(user_id)]
   );
 
@@ -2253,7 +2422,16 @@ app.get("/recommend/next", async (request, reply) => {
     queue = await getPlayableQueue(user_id);
     ordered = rotateQueueFromCursor(queue, cursor_queue_id);
   }
-  const explore = await getExploreState(user_id);
+  let fallbackTriggered = false;
+  if (queue.length < Math.max(RECOMMEND_MIN_BUFFER, 1) && !hasPendingGeneration) {
+    const fallbackJob = await triggerOfficialFallbackGenerationForUser(user_id, {
+      prefetch: explore.mode === "explore_deep"
+    });
+    if (fallbackJob?.job_id) {
+      hasPendingGeneration = true;
+      fallbackTriggered = true;
+    }
+  }
 
 
   let runtimeBuffer = ordered.slice(0, bufferSize);
@@ -2282,7 +2460,8 @@ app.get("/recommend/next", async (request, reply) => {
     standby_pool_size: explore.mode === "explore_deep" ? runtimeBuffer.length : 0,
     playable_count: queue.length,
     has_pending_generation: hasPendingGeneration,
-    needs_generation: queue.length < Math.max(RECOMMEND_MIN_BUFFER, 1) && !hasPendingGeneration
+    needs_generation: queue.length < Math.max(RECOMMEND_MIN_BUFFER, 1) && !hasPendingGeneration,
+    fallback_triggered: fallbackTriggered
   };
 });
 
