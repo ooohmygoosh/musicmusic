@@ -1,4 +1,4 @@
-<!doctype html>
+ï»¿<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -31,19 +31,35 @@
           </div>
         </div>
         <div class="toolbar row">
-          <input id="searchInput" placeholder="Search title, prompt, or tags" />
+          <input id="searchInput" placeholder="Search title, prompt, tags, or owner" />
           <select id="availabilityFilter">
             <option value="">All status</option>
             <option value="true">Enabled only</option>
             <option value="false">Disabled only</option>
           </select>
+          <select id="creatorTypeFilter">
+            <option value="">All owners</option>
+            <option value="user">User generated</option>
+            <option value="official">Official fallback</option>
+          </select>
+          <select id="sourceFilter">
+            <option value="">All sources</option>
+            <option value="portrait_manual">Manual generation</option>
+            <option value="recommend_fallback">Recommend fallback</option>
+            <option value="legacy">Legacy</option>
+          </select>
+          <select id="visibilityFilter">
+            <option value="">All visibility</option>
+            <option value="public">Public</option>
+            <option value="private">Private</option>
+          </select>
           <select id="typeFilter">
             <option value="">All types</option>
-            <option value="ÇéÐ÷">Mood</option>
-            <option value="·ç¸ñ">Style</option>
-            <option value="ÀÖÆ÷">Instrument</option>
-            <option value="³¡¾°">Scene</option>
-            <option value="½Ú×à">Tempo</option>
+            <option value="æƒ…ç»ª">Mood</option>
+            <option value="é£Žæ ¼">Style</option>
+            <option value="ä¹å™¨">Instrument</option>
+            <option value="åœºæ™¯">Scene</option>
+            <option value="èŠ‚å¥">Tempo</option>
           </select>
         </div>
         <div id="songList" class="list"></div>

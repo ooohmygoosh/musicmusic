@@ -1,7 +1,10 @@
-const tokenInput = document.getElementById("token");
+锘縞onst tokenInput = document.getElementById("token");
 const list = document.getElementById("songList");
 const searchInput = document.getElementById("searchInput");
 const availabilityFilter = document.getElementById("availabilityFilter");
+const creatorTypeFilter = document.getElementById("creatorTypeFilter");
+const sourceFilter = document.getElementById("sourceFilter");
+const visibilityFilter = document.getElementById("visibilityFilter");
 const typeFilter = document.getElementById("typeFilter");
 const bulkDeleteButton = document.getElementById("bulkDeleteSongs");
 
@@ -18,6 +21,9 @@ document.getElementById("saveToken").addEventListener("click", () => {
 document.getElementById("refreshSongs").addEventListener("click", loadSongs);
 searchInput.addEventListener("input", loadSongs);
 availabilityFilter.addEventListener("change", loadSongs);
+creatorTypeFilter.addEventListener("change", loadSongs);
+sourceFilter.addEventListener("change", loadSongs);
+visibilityFilter.addEventListener("change", loadSongs);
 typeFilter.addEventListener("change", loadSongs);
 
 if (bulkDeleteButton) {
@@ -76,6 +82,12 @@ function renderSongs(items) {
     const tags = (item.tags || []).map((tag) => `<span class="pill">${tag}</span>`).join("");
     const types = (item.tag_types || []).map((tag) => `<span class="pill">${tag}</span>`).join("");
     const checked = selectedSongIds.has(songId) ? "checked" : "";
+    const ownerLabel = item.owner_display_name || item.owner_account_id || (item.owner_user_id ? `User ${item.owner_user_id}` : "Unknown");
+    const creatorLabel = item.creator_type || "user";
+    const sourceLabel = item.generation_source || "legacy";
+    const visibilityLabel = item.visibility_scope || "private";
+    const publishLabel = item.publish_status || "draft";
+    const revenueLabel = item.revenue_enabled ? "Revenue on" : "Revenue off";
 
     card.innerHTML = `
       <div class="library-main">
@@ -88,7 +100,9 @@ function renderSongs(items) {
         <div class="row library-head">
           <div>
             <div class="library-title">${item.title || "Untitled"}</div>
-            <div class="muted">${item.model || "Unknown model"} · ${item.duration || 0}s · ${item.primary_type || "Uncategorized"} · ${item.is_available ? "Enabled" : "Disabled"}</div>
+            <div class="muted">${item.model || "Unknown model"} 路 ${item.duration || 0}s 路 ${item.primary_type || "Uncategorized"} 路 ${item.is_available ? "Enabled" : "Disabled"}</div>
+            <div class="muted library-owner">${creatorLabel} 路 ${sourceLabel} 路 ${visibilityLabel} 路 ${publishLabel} 路 ${revenueLabel}</div>
+            <div class="muted library-owner">Owner: ${ownerLabel}${item.official_fallback ? " 路 Official fallback" : ""}</div>
           </div>
           ${item.cover_url ? `<img class="cover-thumb" src="${item.cover_url}" alt="cover" />` : ""}
         </div>
@@ -131,6 +145,9 @@ async function loadSongs() {
   const params = new URLSearchParams();
   if (searchInput.value.trim()) params.set("q", searchInput.value.trim());
   if (availabilityFilter.value) params.set("available", availabilityFilter.value);
+  if (creatorTypeFilter.value) params.set("creator_type", creatorTypeFilter.value);
+  if (sourceFilter.value) params.set("generation_source", sourceFilter.value);
+  if (visibilityFilter.value) params.set("visibility_scope", visibilityFilter.value);
   if (typeFilter.value) params.set("type", typeFilter.value);
   const query = params.toString();
 

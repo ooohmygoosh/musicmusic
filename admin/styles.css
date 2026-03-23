@@ -145,6 +145,16 @@ button {
 .library-main { width: 100%; }
 .library-head { justify-content: space-between; align-items: flex-start; }
 .library-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+.library-owner { margin-top: 4px; }
+.library-prompt-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #4a4137;
+  margin-top: 6px;
+}
+.library-prompt-block + .library-prompt-block {
+  margin-top: 8px;
+}
 .library-prompt { margin: 8px 0 10px; line-height: 1.5; }
 .cover-thumb {
   width: 64px;
