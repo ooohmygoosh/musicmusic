@@ -27,14 +27,13 @@ const TABS = [
 ];
 
 const TYPE_COLORS = {
+  "\u573a\u666f": ["#FFC36A", "#FFD6A8", "#FFF8EA"],
   "\u60c5\u7eea": ["#FF8B7A", "#FFD98C", "#FFF3EE"],
   "\u98ce\u683c": ["#3E89FF", "#6CC8FF", "#EEF5FF"],
-  "\u4e50\u5668": ["#65C58E", "#B8F2C8", "#EFFFF5"],
-  "\u573a\u666f": ["#FFC36A", "#FFD6A8", "#FFF8EA"],
-  "\u8282\u594f": ["#9C7BFF", "#C9B7FF", "#F5F0FF"]
+  "\u5176\u4ed6": ["#8E8AF6", "#D8D6FF", "#F5F4FF"]
 };
 
-const CATEGORY_ORDER = ["\u60c5\u7eea", "\u98ce\u683c", "\u4e50\u5668", "\u573a\u666f", "\u8282\u594f"];
+const CATEGORY_ORDER = ["\u573a\u666f", "\u60c5\u7eea", "\u98ce\u683c", "\u5176\u4ed6"];
 const MAX_PORTRAIT_TAGS = 15;
 const PORTRAIT_MIN_SIZE = 14;
 const PORTRAIT_MAX_SIZE = 108;
@@ -1748,13 +1747,13 @@ export default function App() {
                 <View style={styles.songListText}>
                   <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
                   <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
-                  <Text style={styles.listSub} numberOfLines={1}>{`${song.is_public ? "Public" : "Private"} ， ${song.is_available ? "Enabled" : "Disabled"} ， ${song.generation_source || "portrait_manual"}`}</Text>
+                  <Text style={styles.listSub} numberOfLines={1}>{`${song.is_public ? "Public" : "Private"} - ${song.is_available ? "Enabled" : "Disabled"} - ${song.generation_source || "portrait_manual"}`}</Text>
                 </View>
               </View>
               <Text style={styles.chevron}>{">"}</Text>
             </TouchableOpacity>
             <View style={styles.workMetaRow}>
-              <Text style={styles.workMetaText}>{`ID ${song.id} ， ${song.creator_type || "user"} ， ${song.revenue_enabled ? "Revenue on" : "Revenue off"}`}</Text>
+              <Text style={styles.workMetaText}>{`ID ${song.id} - ${song.creator_type || "user"} - ${song.revenue_enabled ? "Revenue on" : "Revenue off"}`}</Text>
               <Text style={styles.workMetaText}>{new Date(song.created_at).toLocaleString()}</Text>
             </View>
           </View>

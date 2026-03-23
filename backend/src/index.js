@@ -61,11 +61,10 @@ const OFFICIAL_AVATAR = String(process.env.OFFICIAL_AVATAR || "music").trim() ||
 const AUTO_FALLBACK_ENABLED = process.env.AUTO_FALLBACK_ENABLED !== "false";
 
 const PROMPT_GUIDE = {
-  "\u60c5\u7eea": "Describe the emotional tone and energy arc.",
-  "\u4e50\u5668": "Describe the lead instruments and arrangement texture.",
-  "\u98ce\u683c": "Describe genre, era feeling, and production direction.",
   "\u573a\u666f": "Describe listening scene and atmosphere imagery.",
-  "\u8282\u594f": "Describe tempo, groove, and pacing.",
+  "\u60c5\u7eea": "Describe the emotional tone and energy arc.",
+  "\u98ce\u683c": "Describe genre, era feeling, and production direction.",
+  "\u5176\u4ed6": "Use as subtle reference accents, imagery, or cultural texture without breaking anchor and core constraints.",
   "\u4eba\u58f0": "Describe vocal style, timbre, and performance intensity."
 };
 
@@ -184,6 +183,25 @@ async function cacheExploreRuntime(userId, pool) {
 
 function normalizeAccountId(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function normalizeTagType(value) {
+  const raw = String(value || "").trim();
+  const lower = raw.toLowerCase();
+  if (!raw) return "\u5176\u4ed6";
+  if (lower.includes("scene") || raw.includes("\u573a\u666f")) return "\u573a\u666f";
+  if (lower.includes("mood") || raw.includes("\u60c5\u7eea")) return "\u60c5\u7eea";
+  if (lower.includes("style") || lower.includes("genre") || raw.includes("\u98ce\u683c")) return "\u98ce\u683c";
+  if (lower.includes("instrument") || lower.includes("tempo") || raw.includes("\u4e50\u5668") || raw.includes("\u8282\u594f") || raw.includes("\u5176\u4ed6")) return "\u5176\u4ed6";
+  return "\u5176\u4ed6";
+}
+
+function normalizeTagRow(row) {
+  return row ? { ...row, type: normalizeTagType(row.type) } : row;
+}
+
+function normalizeTagRows(rows) {
+  return (rows || []).map(normalizeTagRow);
 }
 
 function hashPassword(password) {
@@ -524,38 +542,40 @@ async function deleteLocalAssetByUrl(rawUrl) {
 
 app.get("/tags", async () => {
   const { rows } = await query("SELECT id, name, type FROM tags WHERE is_active = true ORDER BY id");
-  return { items: rows };
+  return { items: normalizeTagRows(rows) };
 });
 
 app.get("/admin/tags", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
   const { rows } = await query("SELECT * FROM tags ORDER BY id");
-  return { items: rows };
+  return { items: normalizeTagRows(rows) };
 });
 
 app.post("/admin/tags", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
   const { name, type, description, sort_order, is_active } = request.body || {};
-  if (!name || !type) {
+  const normalizedType = normalizeTagType(type);
+  if (!name || !normalizedType) {
     reply.code(400).send({ error: "name and type required" });
     return;
   }
   const { rows } = await query(
     "INSERT INTO tags (name, type, description, sort_order, is_active) VALUES ($1, $2, $3, COALESCE($4, 0), COALESCE($5, true)) RETURNING *",
-    [name, type, description || null, sort_order ?? 0, is_active]
+    [name, normalizedType, description || null, sort_order ?? 0, is_active]
   );
-  return { item: rows[0] };
+  return { item: normalizeTagRow(rows[0]) };
 });
 
 app.patch("/admin/tags/:id", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
   const { id } = request.params;
   const { name, type, is_active, description, sort_order } = request.body || {};
+  const normalizedType = type == null ? null : normalizeTagType(type);
   const { rows } = await query(
     "UPDATE tags SET name = COALESCE($1, name), type = COALESCE($2, type), is_active = COALESCE($3, is_active), description = COALESCE($4, description), sort_order = COALESCE($5, sort_order) WHERE id = $6 RETURNING *",
-    [name, type, is_active, description, sort_order, id]
+    [name, normalizedType, is_active, description, sort_order, id]
   );
-  return { item: rows[0] };
+  return { item: normalizeTagRow(rows[0]) };
 });
 
 app.delete("/admin/tags/:id", async (request, reply) => {
@@ -723,11 +743,11 @@ app.get("/admin/favorites", async (request, reply) => {
 
 app.get("/admin/library-songs", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
-  const { q, available, type, creator_type, generation_source, visibility_scope, sort_by, sort_dir } = request.query || {};
+  const { q, available, tag_name, creator_type, generation_source, visibility_scope, sort_by, sort_dir } = request.query || {};
   const search = q ? `%${String(q).trim()}%` : null;
   const availableFilter =
     available === "true" ? true : available === "false" ? false : null;
-  const typeFilter = type ? String(type).trim() : null;
+  const tagNameFilter = tag_name ? String(tag_name).trim() : null;
   const creatorTypeFilter = creator_type ? String(creator_type).trim() : null;
   const generationSourceFilter = generation_source ? String(generation_source).trim() : null;
   const visibilityScopeFilter = visibility_scope ? String(visibility_scope).trim() : null;
@@ -743,10 +763,10 @@ app.get("/admin/library-songs", async (request, reply) => {
   const orderDir = String(sort_dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
 
   const { rows } = await query(
-    `SELECT lib.id, lib.created_at, lib.title, lib.cover_url, lib.prompt, lib.base_prompt, lib.cover_hint, lib.model, lib.duration, lib.style, lib.is_available, lib.is_public, lib.reuse_count, lib.creator_type, lib.generation_source, lib.visibility_scope, lib.publish_status, lib.revenue_enabled, lib.official_fallback, lib.owner_user_id, owner.account_id AS owner_account_id, owner.display_name AS owner_display_name, COUNT(DISTINCT all_s.id)::int AS copies, COUNT(DISTINCT qd.id)::int AS deliveries, COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS likes, COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skips, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, COALESCE(array_remove(array_agg(DISTINCT t.type), NULL), '{}') AS tag_types, COALESCE((array_remove(array_agg(DISTINCT t.type), NULL))[1], 'Uncategorized') AS primary_type, sa.audio_url FROM songs lib LEFT JOIN users owner ON owner.id = lib.owner_user_id LEFT JOIN songs all_s ON COALESCE(all_s.source_song_id, all_s.id) = lib.id LEFT JOIN feedback f ON f.song_id = all_s.id LEFT JOIN user_song_queue qd ON qd.song_id = all_s.id LEFT JOIN song_tags st ON st.song_id = lib.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = lib.id ORDER BY id DESC LIMIT 1) sa ON true WHERE lib.source_song_id IS NULL AND ($1::text IS NULL OR lib.title ILIKE $1 OR lib.prompt ILIKE $1 OR lib.base_prompt ILIKE $1 OR owner.account_id ILIKE $1 OR owner.display_name ILIKE $1 OR EXISTS (SELECT 1 FROM song_tags st2 JOIN tags t2 ON t2.id = st2.tag_id WHERE st2.song_id = lib.id AND (t2.name ILIKE $1 OR t2.type ILIKE $1))) AND ($2::boolean IS NULL OR lib.is_available = $2) AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM song_tags st3 JOIN tags t3 ON t3.id = st3.tag_id WHERE st3.song_id = lib.id AND t3.type = $3)) AND ($4::text IS NULL OR lib.creator_type = $4) AND ($5::text IS NULL OR lib.generation_source = $5) AND ($6::text IS NULL OR lib.visibility_scope = $6) GROUP BY lib.id, owner.account_id, owner.display_name, sa.audio_url ORDER BY ${orderBy} ${orderDir}, lib.id DESC LIMIT 300`,
-    [search, availableFilter, typeFilter, creatorTypeFilter, generationSourceFilter, visibilityScopeFilter]
+    `SELECT lib.id, lib.created_at, lib.title, lib.cover_url, lib.prompt, lib.base_prompt, lib.cover_hint, lib.model, lib.duration, lib.style, lib.is_available, lib.is_public, lib.reuse_count, lib.creator_type, lib.generation_source, lib.visibility_scope, lib.publish_status, lib.revenue_enabled, lib.official_fallback, lib.owner_user_id, owner.account_id AS owner_account_id, owner.display_name AS owner_display_name, COUNT(DISTINCT all_s.id)::int AS copies, COUNT(DISTINCT qd.id)::int AS deliveries, COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS likes, COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skips, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, COALESCE(array_remove(array_agg(DISTINCT t.type), NULL), '{}') AS tag_types, COALESCE((array_remove(array_agg(DISTINCT t.type), NULL))[1], 'Uncategorized') AS primary_type, sa.audio_url FROM songs lib LEFT JOIN users owner ON owner.id = lib.owner_user_id LEFT JOIN songs all_s ON COALESCE(all_s.source_song_id, all_s.id) = lib.id LEFT JOIN feedback f ON f.song_id = all_s.id LEFT JOIN user_song_queue qd ON qd.song_id = all_s.id LEFT JOIN song_tags st ON st.song_id = lib.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = lib.id ORDER BY id DESC LIMIT 1) sa ON true WHERE lib.source_song_id IS NULL AND ($1::text IS NULL OR lib.title ILIKE $1 OR lib.prompt ILIKE $1 OR lib.base_prompt ILIKE $1 OR owner.account_id ILIKE $1 OR owner.display_name ILIKE $1 OR EXISTS (SELECT 1 FROM song_tags st2 JOIN tags t2 ON t2.id = st2.tag_id WHERE st2.song_id = lib.id AND (t2.name ILIKE $1 OR t2.type ILIKE $1))) AND ($2::boolean IS NULL OR lib.is_available = $2) AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM song_tags st3 JOIN tags t3 ON t3.id = st3.tag_id WHERE st3.song_id = lib.id AND t3.name = $3)) AND ($4::text IS NULL OR lib.creator_type = $4) AND ($5::text IS NULL OR lib.generation_source = $5) AND ($6::text IS NULL OR lib.visibility_scope = $6) GROUP BY lib.id, owner.account_id, owner.display_name, sa.audio_url ORDER BY ${orderBy} ${orderDir}, lib.id DESC LIMIT 300`,
+    [search, availableFilter, tagNameFilter, creatorTypeFilter, generationSourceFilter, visibilityScopeFilter]
   );
-  return { items: rows };
+  return { items: rows.map((row) => ({ ...row, tag_types: (row.tag_types || []).map(normalizeTagType), primary_type: normalizeTagType(row.primary_type) })) };
 });
 
 app.patch("/admin/library-songs/:id", async (request, reply) => {
@@ -962,7 +982,7 @@ app.post("/user-tags", async (request, reply) => {
     return;
   }
   const cleanName = String(name).trim();
-  const cleanType = type ? String(type).trim() : "";
+  const cleanType = type ? normalizeTagType(type) : "";
   if (!cleanName) {
     reply.code(400).send({ error: "name required" });
     return;
@@ -973,13 +993,11 @@ app.post("/user-tags", async (request, reply) => {
   }
 
   let existing = await query(
-    cleanType
-      ? "SELECT id, name, type FROM tags WHERE LOWER(name) = LOWER($1) AND LOWER(type) = LOWER($2) LIMIT 1"
-      : "SELECT id, name, type FROM tags WHERE LOWER(name) = LOWER($1) ORDER BY is_system DESC, sort_order ASC, id ASC LIMIT 1",
-    cleanType ? [cleanName, cleanType] : [cleanName]
+    "SELECT id, name, type, is_system, sort_order FROM tags WHERE LOWER(name) = LOWER($1) ORDER BY is_system DESC, sort_order ASC, id ASC",
+    [cleanName]
   );
 
-  let tag = existing.rows[0];
+  let tag = normalizeTagRows(existing.rows).find((item) => !cleanType || item.type === cleanType) || null;
   if (!tag) {
     if (!cleanType) {
       reply.code(400).send({ error: "type required for new tag" });
@@ -989,7 +1007,7 @@ app.post("/user-tags", async (request, reply) => {
       "INSERT INTO tags (name, type, is_active, is_system) VALUES ($1, $2, true, false) RETURNING id, name, type",
       [cleanName, cleanType]
     );
-    tag = created.rows[0];
+    tag = normalizeTagRow(created.rows[0]);
   }
 
   await ensureUserTagWeights(user_id);
@@ -999,7 +1017,7 @@ app.post("/user-tags", async (request, reply) => {
   );
   await normalizeUserWeights(user_id);
 
-  return { tag };
+  return { tag: normalizeTagRow(tag) };
 });
 
 app.get("/user-tags", async (request, reply) => {
@@ -1012,7 +1030,7 @@ app.get("/user-tags", async (request, reply) => {
     "SELECT t.id AS tag_id, t.name, t.type, ut.weight, COALESCE(ut.is_active, true) AS is_active FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 ORDER BY ut.weight DESC",
     [Number(user_id)]
   );
-  return { items: rows };
+  return { items: normalizeTagRows(rows) };
 });
 
 app.post("/user-tags/remove", async (request, reply) => {
@@ -1219,7 +1237,7 @@ async function normalizeUserWeights(userId) {
 }
 
 function isSceneTag(tag) {
-  const rawType = String(tag?.type || "").trim();
+  const rawType = normalizeTagType(tag?.type);
   const type = rawType.toLowerCase();
   const name = String(tag?.name || "").trim();
   if (!rawType && !name) return false;
@@ -1236,8 +1254,7 @@ function isSceneTag(tag) {
 
 function isMoodTag(tag) {
   const rawType = String(tag?.type || "").trim();
-  const type = rawType.toLowerCase();
-  return type.includes("mood") || rawType.includes("\u60c5\u7eea");
+  return normalizeTagType(rawType) === "\u60c5\u7eea";
 }
 
 function choosePrimaryAnchor(sortedTags) {
@@ -1266,7 +1283,8 @@ function pickSceneAnchor(sortedTags) {
 
 function pickCoreConstraintTags(sortedTags, anchorTag, selectedIds) {
   const core = [];
-  const usedTypes = new Set(anchorTag?.type ? [String(anchorTag.type)] : []);
+  const anchorType = normalizeTagType(anchorTag?.type);
+  const usedTypes = new Set(anchorType ? [anchorType] : []);
   const targetCount = Math.min(
     PROMPT_CORE_MAX_COUNT,
     Math.max(1, Math.min(3, (sortedTags || []).length - (anchorTag ? 1 : 0)))
@@ -1279,16 +1297,25 @@ function pickCoreConstraintTags(sortedTags, anchorTag, selectedIds) {
   const take = (pool) => {
     for (const tag of pool) {
       if (core.length >= targetCount) break;
-      const type = String(tag.type || "");
-      if (!type || usedTypes.has(type)) continue;
-      core.push(tag);
+      const type = normalizeTagType(tag.type);
+      if (!type || type === "\u5176\u4ed6" || usedTypes.has(type)) continue;
+      core.push({ ...tag, type });
       usedTypes.add(type);
       selectedIds.add(Number(tag.id));
     }
   };
 
   take(primary);
-  if (core.length < targetCount) take(fallback);
+  if (core.length === 0 && core.length < targetCount) {
+    for (const tag of fallback) {
+      if (core.length >= targetCount) break;
+      const type = normalizeTagType(tag.type);
+      if (!type || usedTypes.has(type)) continue;
+      core.push({ ...tag, type });
+      usedTypes.add(type);
+      selectedIds.add(Number(tag.id));
+    }
+  }
   return core;
 }
 
@@ -1372,15 +1399,16 @@ function buildCoreConstraintPhrase(tag) {
 
   if (type.includes("style") || rawType.includes("\u98ce\u683c")) return `style: ${name}`;
   if (type.includes("mood") || rawType.includes("\u60c5\u7eea")) return `mood: ${name}`;
-  if (type.includes("instrument") || rawType.includes("\u4e50\u5668")) return `instrument focus: ${name}`;
-  if (type.includes("tempo") || rawType.includes("\u8282\u594f")) return `tempo: ${name}`;
   if (isSceneTag(tag)) return `scene extension: ${name}`;
+  if (rawType.includes("\u5176\u4ed6")) return `reference accent: ${name}`;
   return `focus: ${name}`;
 }
 
 function buildWeakSupplementPhrase(tag) {
   const name = String(tag?.name || "").trim();
+  const normalizedType = normalizeTagType(tag?.type);
   if (!name) return "";
+  if (normalizedType === "\u5176\u4ed6") return `optional reference: ${name}`;
   return `optional accent: ${name}`;
 }
 
@@ -1431,10 +1459,11 @@ function buildFallbackCoverHint(anchorTag, coreTags, weakTags) {
 
 async function buildPrompt(userId, options = {}) {
   await ensureUserTagWeights(userId);
-  const { rows } = await query(
+  const rawTags = await query(
     "SELECT t.id, t.name, t.type, ut.weight FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true AND COALESCE(ut.is_active, true) = true",
     [userId]
   );
+  const rows = normalizeTagRows(rawTags.rows);
   if (rows.length === 0) {
     return {
       prompt: "",
@@ -1840,10 +1869,11 @@ async function findReusableSong(userId, tagIds, threshold = REUSE_SIMILARITY_MIN
 }
 async function getUserRecommendationProfile(userId, options = {}) {
   await ensureUserTagWeights(userId);
-  const { rows } = await query(
+  const rawTags = await query(
     "SELECT t.id, t.name, t.type, ut.weight FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true AND COALESCE(ut.is_active, true) = true ORDER BY ut.weight DESC, ut.tag_id DESC",
     [Number(userId)]
   );
+  const rows = normalizeTagRows(rawTags.rows);
 
   if (rows.length === 0) {
     return {

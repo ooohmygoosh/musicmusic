@@ -18,7 +18,7 @@ async function saveTag() {
     body: JSON.stringify({ name, type, description })
   });
   document.getElementById("tagName").value = "";
-  document.getElementById("tagType").value = "";
+  document.getElementById("tagType").value = "mood";
   document.getElementById("tagDescription").value = "";
   loadTags();
 }

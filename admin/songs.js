@@ -5,7 +5,7 @@ const availabilityFilter = document.getElementById("availabilityFilter");
 const creatorTypeFilter = document.getElementById("creatorTypeFilter");
 const sourceFilter = document.getElementById("sourceFilter");
 const visibilityFilter = document.getElementById("visibilityFilter");
-const typeFilter = document.getElementById("typeFilter");
+const tagFilter = document.getElementById("tagFilter");
 const sortByFilter = document.getElementById("sortByFilter");
 const sortDirFilter = document.getElementById("sortDirFilter");
 const bulkDeleteButton = document.getElementById("bulkDeleteSongs");
@@ -53,17 +53,48 @@ async function patchSong(songId, payload) {
 
 document.getElementById("saveToken").addEventListener("click", () => {
   localStorage.setItem("adminToken", tokenInput.value.trim());
-  loadSongs();
+  loadTagOptions().then(loadSongs);
 });
-document.getElementById("refreshSongs").addEventListener("click", loadSongs);
+document.getElementById("refreshSongs").addEventListener("click", () => loadTagOptions().then(loadSongs));
 searchInput.addEventListener("input", loadSongs);
 availabilityFilter.addEventListener("change", loadSongs);
 creatorTypeFilter.addEventListener("change", loadSongs);
 sourceFilter.addEventListener("change", loadSongs);
 visibilityFilter.addEventListener("change", loadSongs);
-typeFilter.addEventListener("change", loadSongs);
+tagFilter.addEventListener("change", loadSongs);
 sortByFilter.addEventListener("change", loadSongs);
 sortDirFilter.addEventListener("change", loadSongs);
+
+async function loadTagOptions() {
+  const res = await fetch("/admin/tags", { headers: { "x-admin-token": getToken() } });
+  if (!res.ok) return;
+  const data = await res.json().catch(() => ({}));
+  const items = data.items || [];
+  const grouped = new Map();
+  for (const item of items) {
+    const type = String(item.type || "Other");
+    const list = grouped.get(type) || [];
+    list.push(item);
+    grouped.set(type, list);
+  }
+
+  const current = tagFilter.value;
+  tagFilter.innerHTML = '<option value="">All tags</option>';
+  Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0], "zh-CN")).forEach(([type, list]) => {
+    const group = document.createElement("optgroup");
+    group.label = type;
+    list
+      .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-CN"))
+      .forEach((item) => {
+        const option = document.createElement("option");
+        option.value = String(item.name || "");
+        option.textContent = String(item.name || "");
+        group.appendChild(option);
+      });
+    tagFilter.appendChild(group);
+  });
+  if (current) tagFilter.value = current;
+}
 
 if (bulkDeleteButton) {
   bulkDeleteButton.addEventListener("click", async () => {
@@ -90,7 +121,7 @@ if (bulkDeleteButton) {
     const data = await res.json().catch(() => ({}));
     alert(`Done. songs=${data.affected || 0}, files_deleted=${data.files_deleted || 0}`);
     selectedSongIds.clear();
-    await loadSongs();
+    await loadTagOptions().then(loadSongs);
   });
 }
 
@@ -157,7 +188,7 @@ function renderSongs(items) {
               </div>
               <div class="detail-section">
                 <div class="library-prompt-label">Tags</div>
-                <div class="pill-row">${(item.tag_types || []).map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("")}${(item.tags || []).map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("") || "<span class='muted'>No tags</span>"}</div>
+                <div class="pill-row">${(item.tags || []).map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("") || "<span class='muted'>No tags</span>"}</div>
               </div>
               <div class="detail-section">
                 <div class="library-prompt-label">TPY Prompt</div>
@@ -222,7 +253,7 @@ async function loadSongs() {
   if (creatorTypeFilter.value) params.set("creator_type", creatorTypeFilter.value);
   if (sourceFilter.value) params.set("generation_source", sourceFilter.value);
   if (visibilityFilter.value) params.set("visibility_scope", visibilityFilter.value);
-  if (typeFilter.value) params.set("type", typeFilter.value);
+  if (tagFilter.value) params.set("tag_name", tagFilter.value);
   if (sortByFilter.value) params.set("sort_by", sortByFilter.value);
   if (sortDirFilter.value) params.set("sort_dir", sortDirFilter.value);
   const query = params.toString();
