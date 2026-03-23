@@ -5,6 +5,7 @@ const availabilityFilter = document.getElementById("availabilityFilter");
 const creatorTypeFilter = document.getElementById("creatorTypeFilter");
 const sourceFilter = document.getElementById("sourceFilter");
 const visibilityFilter = document.getElementById("visibilityFilter");
+const tagCategoryFilter = document.getElementById("tagCategoryFilter");
 const tagFilter = document.getElementById("tagFilter");
 const sortByFilter = document.getElementById("sortByFilter");
 const sortDirFilter = document.getElementById("sortDirFilter");
@@ -61,39 +62,59 @@ availabilityFilter.addEventListener("change", loadSongs);
 creatorTypeFilter.addEventListener("change", loadSongs);
 sourceFilter.addEventListener("change", loadSongs);
 visibilityFilter.addEventListener("change", loadSongs);
+tagCategoryFilter.addEventListener("change", () => { renderTagOptionsForCategory(); loadSongs(); });
 tagFilter.addEventListener("change", loadSongs);
 sortByFilter.addEventListener("change", loadSongs);
 sortDirFilter.addEventListener("change", loadSongs);
+
+let groupedTagOptions = new Map();
+
+function renderTagOptionsForCategory() {
+  const currentTag = tagFilter.value;
+  const category = String(tagCategoryFilter.value || "");
+  const items = category ? (groupedTagOptions.get(category) || []) : Array.from(groupedTagOptions.values()).flat();
+  tagFilter.innerHTML = '<option value="">All tags</option>';
+  items
+    .slice()
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-CN"))
+    .forEach((item) => {
+      const option = document.createElement("option");
+      option.value = String(item.name || "");
+      option.textContent = String(item.name || "");
+      tagFilter.appendChild(option);
+    });
+  if (currentTag && items.some((item) => String(item.name || "") === currentTag)) {
+    tagFilter.value = currentTag;
+  }
+}
 
 async function loadTagOptions() {
   const res = await fetch("/admin/tags", { headers: { "x-admin-token": getToken() } });
   if (!res.ok) return;
   const data = await res.json().catch(() => ({}));
   const items = data.items || [];
-  const grouped = new Map();
+  groupedTagOptions = new Map();
   for (const item of items) {
     const type = String(item.type || "Other");
-    const list = grouped.get(type) || [];
+    const list = groupedTagOptions.get(type) || [];
     list.push(item);
-    grouped.set(type, list);
+    groupedTagOptions.set(type, list);
   }
 
-  const current = tagFilter.value;
-  tagFilter.innerHTML = '<option value="">All tags</option>';
-  Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0], "zh-CN")).forEach(([type, list]) => {
-    const group = document.createElement("optgroup");
-    group.label = type;
-    list
-      .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-CN"))
-      .forEach((item) => {
-        const option = document.createElement("option");
-        option.value = String(item.name || "");
-        option.textContent = String(item.name || "");
-        group.appendChild(option);
-      });
-    tagFilter.appendChild(group);
-  });
-  if (current) tagFilter.value = current;
+  const currentCategory = tagCategoryFilter.value;
+  tagCategoryFilter.innerHTML = '<option value="">All categories</option>';
+  Array.from(groupedTagOptions.keys())
+    .sort((a, b) => a.localeCompare(b, "zh-CN"))
+    .forEach((type) => {
+      const option = document.createElement("option");
+      option.value = type;
+      option.textContent = type;
+      tagCategoryFilter.appendChild(option);
+    });
+  if (currentCategory && groupedTagOptions.has(currentCategory)) {
+    tagCategoryFilter.value = currentCategory;
+  }
+  renderTagOptionsForCategory();
 }
 
 if (bulkDeleteButton) {
