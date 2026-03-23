@@ -53,6 +53,8 @@ const EXPLORE_SNIPPET_SECONDS_MIN = Number(process.env.EXPLORE_SNIPPET_SECONDS_M
 const EXPLORE_SNIPPET_SECONDS_MAX = Number(process.env.EXPLORE_SNIPPET_SECONDS_MAX || 90);
 const RECOMMEND_MIN_BUFFER = Number(process.env.RECOMMEND_MIN_BUFFER || 2);
 const RECOMMEND_REFILL_TARGET = Number(process.env.RECOMMEND_REFILL_TARGET || 6);
+const STABLE_EXPLORE_TAG_COUNT = Number(process.env.STABLE_EXPLORE_TAG_COUNT || 1);
+const DEEP_EXPLORE_TAG_COUNT = Number(process.env.DEEP_EXPLORE_TAG_COUNT || 2);
 const OFFICIAL_ACCOUNT_ID = normalizeAccountId(process.env.OFFICIAL_ACCOUNT_ID || "official") || "official";
 const OFFICIAL_DISPLAY_NAME = String(process.env.OFFICIAL_DISPLAY_NAME || "Official").trim() || "Official";
 const OFFICIAL_AVATAR = String(process.env.OFFICIAL_AVATAR || "music").trim() || "music";
@@ -1232,6 +1234,12 @@ function isSceneTag(tag) {
   return sceneNameHints.has(name);
 }
 
+function isMoodTag(tag) {
+  const rawType = String(tag?.type || "").trim();
+  const type = rawType.toLowerCase();
+  return type.includes("mood") || rawType.includes("\u60c5\u7eea");
+}
+
 function choosePrimaryAnchor(sortedTags) {
   if (!Array.isArray(sortedTags) || sortedTags.length === 0) return null;
 
@@ -1239,6 +1247,11 @@ function choosePrimaryAnchor(sortedTags) {
   const strongScene = sceneTags.find((tag) => Number(tag.weight || 0) >= PROMPT_ANCHOR_MIN_WEIGHT);
   if (strongScene) return strongScene;
   if (sceneTags.length > 0) return sceneTags[0];
+
+  const moodTags = sortedTags.filter((tag) => isMoodTag(tag));
+  const strongMood = moodTags.find((tag) => Number(tag.weight || 0) >= PROMPT_ANCHOR_MIN_WEIGHT);
+  if (strongMood) return strongMood;
+  if (moodTags.length > 0) return moodTags[0];
 
   const strongAny = sortedTags.find((tag) => Number(tag.weight || 0) >= PROMPT_ANCHOR_MIN_WEIGHT);
   return strongAny || sortedTags[0] || null;
@@ -1296,6 +1309,56 @@ function pickWeakSupplementTags(sortedTags, selectedIds) {
     if (picked.length >= PROMPT_WEAK_MAX_COUNT) break;
     picked.push(tag);
     selectedIds.add(Number(tag.id));
+  }
+
+  return picked;
+}
+
+function shuffleList(list) {
+  const arr = [...(list || [])];
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+async function pickExplorationTagsForUser(userId, selectedIds, anchorTag, count = STABLE_EXPLORE_TAG_COUNT) {
+  const target = Math.max(0, Number(count || 0));
+  if (target <= 0) return [];
+
+  const recentTagIds = await getRecentTagIds(userId, 12);
+  const { rows } = await query(
+    "SELECT t.id, t.name, t.type, COALESCE(ut.weight, 0) AS weight, COALESCE(ut.is_active, false) AS is_active FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true AND COALESCE(ut.is_active, false) = false",
+    [Number(userId)]
+  );
+
+  const typePriority = new Map([["\u98ce\u683c", 0], ["\u8282\u594f", 1], ["\u60c5\u7eea", 2], ["\u4e50\u5668", 3]]);
+  const anchorType = String(anchorTag?.type || "").trim();
+  const pool = shuffleList(rows)
+    .filter((tag) => !selectedIds.has(Number(tag.id)))
+    .filter((tag) => !isSceneTag(tag))
+    .filter((tag) => !String(tag.type || "").includes("\u4eba\u58f0"))
+    .filter((tag) => String(tag.type || "").trim() !== anchorType)
+    .sort((a, b) => {
+      const pa = typePriority.has(String(a.type || "").trim()) ? typePriority.get(String(a.type || "").trim()) : 99;
+      const pb = typePriority.has(String(b.type || "").trim()) ? typePriority.get(String(b.type || "").trim()) : 99;
+      const ra = recentTagIds.has(Number(a.id)) ? 1 : 0;
+      const rb = recentTagIds.has(Number(b.id)) ? 1 : 0;
+      if (ra !== rb) return ra - rb;
+      if (pa !== pb) return pa - pb;
+      return Number(a.id) - Number(b.id);
+    });
+
+  const picked = [];
+  const usedTypes = new Set();
+  for (const tag of pool) {
+    if (picked.length >= target) break;
+    const type = String(tag.type || "").trim();
+    if (!type || usedTypes.has(type)) continue;
+    picked.push({ ...tag, weight: Math.min(PROMPT_WEAK_MAX_WEIGHT, EXPLORE_TAG_SEED_WEIGHT) });
+    selectedIds.add(Number(tag.id));
+    usedTypes.add(type);
   }
 
   return picked;
@@ -1366,7 +1429,7 @@ function buildFallbackCoverHint(anchorTag, coreTags, weakTags) {
   ].join(" ");
 }
 
-async function buildPrompt(userId) {
+async function buildPrompt(userId, options = {}) {
   await ensureUserTagWeights(userId);
   const { rows } = await query(
     "SELECT t.id, t.name, t.type, ut.weight FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true AND COALESCE(ut.is_active, true) = true",
@@ -1378,7 +1441,8 @@ async function buildPrompt(userId) {
       tagIds: [],
       base_prompt: "",
       title_hint: "",
-      cover_hint: ""
+      cover_hint: "",
+      explore_tags: []
     };
   }
 
@@ -1391,23 +1455,29 @@ async function buildPrompt(userId) {
       tagIds: [],
       base_prompt: "",
       title_hint: "",
-      cover_hint: ""
+      cover_hint: "",
+      explore_tags: []
     };
   }
 
   const selectedIds = new Set([Number(anchorTag.id)]);
   const coreTags = pickCoreConstraintTags(sorted, anchorTag, selectedIds);
   const weakTags = pickWeakSupplementTags(sorted, selectedIds);
-  const chosen = [anchorTag, ...coreTags, ...weakTags];
+  const exploreCount = String(options.explore_mode || "stable") === "explore_deep"
+    ? DEEP_EXPLORE_TAG_COUNT
+    : STABLE_EXPLORE_TAG_COUNT;
+  const exploreTags = await pickExplorationTagsForUser(userId, selectedIds, anchorTag, exploreCount);
+  const weakAndExploreTags = [...weakTags, ...exploreTags];
+  const chosen = [anchorTag, ...coreTags, ...weakAndExploreTags];
   const tagIds = chosen.map((tag) => Number(tag.id));
 
   const basePrompt = buildNaturalLanguagePrompt({
     anchorTag,
     coreTags,
-    weakTags
+    weakTags: weakAndExploreTags
   });
   const fallbackTitleHint = buildFallbackTitleHint(anchorTag, coreTags);
-  const fallbackCoverHint = buildFallbackCoverHint(anchorTag, coreTags, weakTags);
+  const fallbackCoverHint = buildFallbackCoverHint(anchorTag, coreTags, weakAndExploreTags);
 
   const optimized = await optimizePromptWithDeepSeek({
     chosenTags: chosen,
@@ -1415,7 +1485,7 @@ async function buildPrompt(userId) {
     anchorTag,
     sceneAnchor,
     coreTags,
-    weakTags,
+    weakTags: weakAndExploreTags,
     fallbackTitleHint,
     fallbackCoverHint
   });
@@ -1425,7 +1495,8 @@ async function buildPrompt(userId) {
     tagIds,
     base_prompt: basePrompt,
     title_hint: optimized.title_hint || fallbackTitleHint,
-    cover_hint: optimized.cover_hint || fallbackCoverHint
+    cover_hint: optimized.cover_hint || fallbackCoverHint,
+    explore_tags: exploreTags
   };
 }
 
@@ -1767,7 +1838,7 @@ async function findReusableSong(userId, tagIds, threshold = REUSE_SIMILARITY_MIN
   const rows = await findReusableSongs(userId, tagIds, 1, threshold);
   return rows[0] || null;
 }
-async function getUserRecommendationProfile(userId) {
+async function getUserRecommendationProfile(userId, options = {}) {
   await ensureUserTagWeights(userId);
   const { rows } = await query(
     "SELECT t.id, t.name, t.type, ut.weight FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true AND COALESCE(ut.is_active, true) = true ORDER BY ut.weight DESC, ut.tag_id DESC",
@@ -1781,6 +1852,7 @@ async function getUserRecommendationProfile(userId) {
       anchorTag: null,
       coreTags: [],
       weakTags: [],
+      exploreTags: [],
       weightByTagId: new Map()
     };
   }
@@ -1795,6 +1867,7 @@ async function getUserRecommendationProfile(userId) {
       anchorTag: null,
       coreTags: [],
       weakTags: [],
+      exploreTags: [],
       weightByTagId: new Map(sortedTags.map((tag) => [Number(tag.id), Number(tag.weight || 0)]))
     };
   }
@@ -1802,7 +1875,14 @@ async function getUserRecommendationProfile(userId) {
   const selectedIds = new Set([Number(anchorTag.id)]);
   const coreTags = pickCoreConstraintTags(sortedTags, anchorTag, selectedIds);
   const weakTags = pickWeakSupplementTags(sortedTags, selectedIds);
+  const exploreCount = String(options.explore_mode || "stable") === "explore_deep"
+    ? DEEP_EXPLORE_TAG_COUNT
+    : STABLE_EXPLORE_TAG_COUNT;
+  const exploreTags = await pickExplorationTagsForUser(userId, selectedIds, anchorTag, exploreCount);
   const weightByTagId = new Map(sortedTags.map((tag) => [Number(tag.id), Number(tag.weight || 0)]));
+  for (const tag of exploreTags) {
+    weightByTagId.set(Number(tag.id), Math.max(Number(weightByTagId.get(Number(tag.id)) || 0), Number(tag.weight || 0)));
+  }
 
   return {
     sortedTags,
@@ -1810,6 +1890,7 @@ async function getUserRecommendationProfile(userId) {
     anchorTag,
     coreTags,
     weakTags,
+    exploreTags,
     weightByTagId
   };
 }
@@ -1827,6 +1908,7 @@ function rankCandidateLibrarySongs(rows, profile) {
   const requireAnchor = Boolean(profile?.sceneAnchor && anchorId);
   const coreIds = (profile?.coreTags || []).map((tag) => Number(tag.id)).filter(Boolean);
   const weakIds = (profile?.weakTags || []).map((tag) => Number(tag.id)).filter(Boolean);
+  const exploreIds = (profile?.exploreTags || []).map((tag) => Number(tag.id)).filter(Boolean);
   const weightByTagId = profile?.weightByTagId || new Map();
 
   return [...(rows || [])]
@@ -1838,6 +1920,7 @@ function rankCandidateLibrarySongs(rows, profile) {
 
       const coreHit = countMatchedTags(songTagSet, coreIds);
       const weakHit = countMatchedTags(songTagSet, weakIds);
+      const exploreHit = countMatchedTags(songTagSet, exploreIds);
       const coreTier = coreIds.length >= 3
         ? (coreHit >= 3 ? 3 : coreHit >= 2 ? 2 : coreHit >= 1 ? 1 : 0)
         : coreIds.length === 2
@@ -1851,6 +1934,7 @@ function rankCandidateLibrarySongs(rows, profile) {
         + coreTier * 400
         + coreHit * 120
         + weakHit * 18
+        + exploreHit * 36
         + matchedWeight * 100
         + Number(row.reuse_count || 0) * 0.01;
 
@@ -1859,6 +1943,7 @@ function rankCandidateLibrarySongs(rows, profile) {
         anchor_hit: anchorHit,
         core_hit: coreHit,
         weak_hit: weakHit,
+        explore_hit: exploreHit,
         core_tier: coreTier,
         score
       };
@@ -1889,13 +1974,14 @@ async function refillQueueFromLibrary(userId, targetCount = RECOMMEND_REFILL_TAR
   const deficit = Math.max(0, Number(targetCount) - currentQueue.length);
   if (deficit <= 0) return 0;
 
-  const profile = await getUserRecommendationProfile(uid);
+  const profile = await getUserRecommendationProfile(uid, options);
   if (!profile.anchorTag) return 0;
 
   const selectedTagIds = [
     Number(profile.anchorTag?.id || 0),
     ...(profile.coreTags || []).map((tag) => Number(tag.id)),
-    ...(profile.weakTags || []).map((tag) => Number(tag.id))
+    ...(profile.weakTags || []).map((tag) => Number(tag.id)),
+    ...(profile.exploreTags || []).map((tag) => Number(tag.id))
   ].filter(Boolean);
   if (selectedTagIds.length === 0) return 0;
 
@@ -1956,7 +2042,7 @@ async function submitGenerationJob({
   prefetch = false,
   shouldPublish = false
 }) {
-  const { prompt, tagIds, base_prompt, title_hint, cover_hint } = await buildPrompt(requestUserId);
+  const { prompt, tagIds, base_prompt, title_hint, cover_hint } = await buildPrompt(requestUserId, { explore_mode: prefetch ? "explore_deep" : "stable", intent });
   if (!prompt) {
     return { error: "no tags found for user", code: 400 };
   }
@@ -2083,7 +2169,7 @@ app.post("/generate", async (request, reply) => {
   }
 
   const activeJobLookup = await query(
-    "SELECT id, created_at FROM generation_jobs WHERE requested_by_user_id = $1 AND status IN ('pending', 'submitted') ORDER BY id DESC LIMIT 1",
+    "SELECT id, created_at FROM generation_jobs WHERE requested_by_user_id = $1 AND status IN ('pending', 'submitted', 'processing') ORDER BY id DESC LIMIT 1",
     [requestUserId]
   );
   if (activeJobLookup.rows[0]?.id) {
@@ -2473,7 +2559,7 @@ app.get("/recommend/next", async (request, reply) => {
   const bufferSize = Math.max(1, Math.min(20, Number(buffer || 5)));
 
   const pendingJob = await query(
-    "SELECT id, created_at FROM generation_jobs WHERE requested_by_user_id = $1 AND status IN ('pending', 'submitted') ORDER BY id DESC LIMIT 1",
+    "SELECT id, created_at FROM generation_jobs WHERE requested_by_user_id = $1 AND status IN ('pending', 'submitted', 'processing') ORDER BY id DESC LIMIT 1",
     [Number(user_id)]
   );
 
@@ -2492,7 +2578,7 @@ app.get("/recommend/next", async (request, reply) => {
   }
 
   if (queue.length < Math.max(RECOMMEND_MIN_BUFFER, 1) && !hasPendingGeneration) {
-    await refillQueueFromLibrary(user_id, Math.max(RECOMMEND_REFILL_TARGET, bufferSize));
+    await refillQueueFromLibrary(user_id, Math.max(RECOMMEND_REFILL_TARGET, bufferSize), { explore_mode: explore.mode });
     queue = await getPlayableQueue(user_id);
     ordered = rotateQueueFromCursor(queue, cursor_queue_id);
   }
