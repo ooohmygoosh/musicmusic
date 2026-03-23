@@ -55,6 +55,9 @@ const RECOMMEND_MIN_BUFFER = Number(process.env.RECOMMEND_MIN_BUFFER || 2);
 const RECOMMEND_REFILL_TARGET = Number(process.env.RECOMMEND_REFILL_TARGET || 6);
 const STABLE_EXPLORE_TAG_COUNT = Number(process.env.STABLE_EXPLORE_TAG_COUNT || 1);
 const DEEP_EXPLORE_TAG_COUNT = Number(process.env.DEEP_EXPLORE_TAG_COUNT || 2);
+const MAX_GENERATION_TAGS = Number(process.env.MAX_GENERATION_TAGS || 8);
+const USER_TOP_REFERENCE_COUNT = Number(process.env.USER_TOP_REFERENCE_COUNT || 6);
+const MIN_REFERENCE_OVERLAP = Number(process.env.MIN_REFERENCE_OVERLAP || 3);
 const OFFICIAL_ACCOUNT_ID = normalizeAccountId(process.env.OFFICIAL_ACCOUNT_ID || "official") || "official";
 const OFFICIAL_DISPLAY_NAME = String(process.env.OFFICIAL_DISPLAY_NAME || "Official").trim() || "Official";
 const OFFICIAL_AVATAR = String(process.env.OFFICIAL_AVATAR || "music").trim() || "music";
@@ -1066,6 +1069,57 @@ app.post("/user-tags/weight", async (request, reply) => {
   return { ok: true, item: rows[0] };
 });
 
+app.post("/user-tags/anchor", async (request, reply) => {
+  const { user_id, tag_id } = request.body || {};
+  if (!user_id || !tag_id) {
+    reply.code(400).send({ error: "user_id and tag_id required" });
+    return;
+  }
+
+  await ensureUserTagWeights(user_id);
+  const tagLookup = await query("SELECT id, name, type FROM tags WHERE id = $1 LIMIT 1", [Number(tag_id)]);
+  const tag = normalizeTagRow(tagLookup.rows[0]);
+  if (!tag) {
+    reply.code(404).send({ error: "tag not found" });
+    return;
+  }
+  if (!isSceneTag(tag)) {
+    reply.code(400).send({ error: "anchor tag must be a scene" });
+    return;
+  }
+
+  const allTags = await query(
+    "SELECT ut.tag_id, ut.weight, COALESCE(ut.is_active, true) AS is_active, t.type FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1",
+    [Number(user_id)]
+  );
+  const rows = normalizeTagRows(allTags.rows);
+  const activeOthers = rows.filter((row) => Number(row.tag_id) !== Number(tag.id) && !isSceneTag(row) && row.is_active !== false && Number(row.weight || 0) > 0);
+  const totalOther = activeOthers.reduce((sum, row) => sum + Number(row.weight || 0), 0);
+
+  const sceneRows = rows.filter((row) => isSceneTag(row));
+  for (const row of sceneRows) {
+    await query(
+      "UPDATE user_tags SET weight = 0, is_active = false, last_updated = NOW() WHERE user_id = $1 AND tag_id = $2",
+      [Number(user_id), Number(row.tag_id)]
+    );
+  }
+
+  for (const row of activeOthers) {
+    const nextWeight = totalOther > 0 ? Number(((Number(row.weight || 0) / totalOther) * 0.5).toFixed(6)) : 0;
+    await query(
+      "UPDATE user_tags SET weight = $1, is_active = $2, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4",
+      [nextWeight, nextWeight > 0, Number(user_id), Number(row.tag_id)]
+    );
+  }
+
+  await query(
+    "UPDATE user_tags SET weight = 0.5, initial_weight = GREATEST(COALESCE(initial_weight, 0), 0.5), is_active = true, last_updated = NOW() WHERE user_id = $1 AND tag_id = $2",
+    [Number(user_id), Number(tag.id)]
+  );
+
+  return { ok: true, anchor_tag_id: Number(tag.id) };
+});
+
 app.get("/favorites", async (request, reply) => {
   const { user_id } = request.query || {};
   if (!user_id) {
@@ -1457,6 +1511,48 @@ function buildFallbackCoverHint(anchorTag, coreTags, weakTags) {
   ].join(" ");
 }
 
+function buildGenerationTagSelection(sortedTags, anchorTag, coreTags, weakTags, exploreTags) {
+  const supplementLimit = Math.max(0, MAX_GENERATION_TAGS - 1);
+  const topReferenceTags = (sortedTags || [])
+    .filter((tag) => Number(tag.id) !== Number(anchorTag?.id || 0))
+    .slice(0, USER_TOP_REFERENCE_COUNT);
+  const requiredOverlap = Math.min(MIN_REFERENCE_OVERLAP, topReferenceTags.length, supplementLimit);
+  const topReferenceIdSet = new Set(topReferenceTags.map((tag) => Number(tag.id)).filter(Boolean));
+  const picked = [];
+  const pickedIds = new Set();
+
+  const addUnique = (pool, limit = supplementLimit) => {
+    for (const tag of pool || []) {
+      if (picked.length >= limit) break;
+      const id = Number(tag?.id || 0);
+      if (!id || pickedIds.has(id) || id === Number(anchorTag?.id || 0)) continue;
+      picked.push(tag);
+      pickedIds.add(id);
+    }
+  };
+
+  addUnique((coreTags || []).filter((tag) => topReferenceIdSet.has(Number(tag.id))), requiredOverlap);
+  addUnique((weakTags || []).filter((tag) => topReferenceIdSet.has(Number(tag.id))), requiredOverlap);
+  addUnique((sortedTags || []).filter((tag) => topReferenceIdSet.has(Number(tag.id))), requiredOverlap);
+  addUnique(exploreTags || []);
+  addUnique(coreTags || []);
+  addUnique(weakTags || []);
+  addUnique(sortedTags || []);
+
+  const supplements = picked.slice(0, supplementLimit);
+  const supplementIdSet = new Set(supplements.map((tag) => Number(tag.id)).filter(Boolean));
+  const trimmedCoreTags = (coreTags || []).filter((tag) => supplementIdSet.has(Number(tag.id))).slice(0, PROMPT_CORE_MAX_COUNT);
+  const trimmedWeakTags = supplements.filter((tag) => !trimmedCoreTags.some((core) => Number(core.id) === Number(tag.id)));
+
+  return {
+    topReferenceTags,
+    requiredOverlap,
+    chosenTags: [anchorTag, ...supplements].filter(Boolean).slice(0, MAX_GENERATION_TAGS),
+    coreTags: trimmedCoreTags,
+    weakTags: trimmedWeakTags
+  };
+}
+
 async function buildPrompt(userId, options = {}) {
   await ensureUserTagWeights(userId);
   const rawTags = await query(
@@ -1490,15 +1586,17 @@ async function buildPrompt(userId, options = {}) {
   }
 
   const selectedIds = new Set([Number(anchorTag.id)]);
-  const coreTags = pickCoreConstraintTags(sorted, anchorTag, selectedIds);
-  const weakTags = pickWeakSupplementTags(sorted, selectedIds);
+  const coreCandidates = pickCoreConstraintTags(sorted, anchorTag, selectedIds);
+  const weakCandidates = pickWeakSupplementTags(sorted, selectedIds);
   const exploreCount = String(options.explore_mode || "stable") === "explore_deep"
     ? DEEP_EXPLORE_TAG_COUNT
     : STABLE_EXPLORE_TAG_COUNT;
   const exploreTags = await pickExplorationTagsForUser(userId, selectedIds, anchorTag, exploreCount);
-  const weakAndExploreTags = [...weakTags, ...exploreTags];
-  const chosen = [anchorTag, ...coreTags, ...weakAndExploreTags];
-  const tagIds = chosen.map((tag) => Number(tag.id));
+  const selection = buildGenerationTagSelection(sorted, anchorTag, coreCandidates, weakCandidates, exploreTags);
+  const chosen = selection.chosenTags;
+  const coreTags = selection.coreTags;
+  const weakAndExploreTags = selection.weakTags;
+  const tagIds = chosen.map((tag) => Number(tag.id)).filter(Boolean);
 
   const basePrompt = buildNaturalLanguagePrompt({
     anchorTag,
@@ -1525,7 +1623,9 @@ async function buildPrompt(userId, options = {}) {
     base_prompt: basePrompt,
     title_hint: optimized.title_hint || fallbackTitleHint,
     cover_hint: optimized.cover_hint || fallbackCoverHint,
-    explore_tags: exploreTags
+    explore_tags: exploreTags,
+    top_reference_tags: selection.topReferenceTags,
+    required_overlap: selection.requiredOverlap
   };
 }
 
@@ -1903,12 +2003,15 @@ async function getUserRecommendationProfile(userId, options = {}) {
   }
 
   const selectedIds = new Set([Number(anchorTag.id)]);
-  const coreTags = pickCoreConstraintTags(sortedTags, anchorTag, selectedIds);
-  const weakTags = pickWeakSupplementTags(sortedTags, selectedIds);
+  const coreCandidates = pickCoreConstraintTags(sortedTags, anchorTag, selectedIds);
+  const weakCandidates = pickWeakSupplementTags(sortedTags, selectedIds);
   const exploreCount = String(options.explore_mode || "stable") === "explore_deep"
     ? DEEP_EXPLORE_TAG_COUNT
     : STABLE_EXPLORE_TAG_COUNT;
   const exploreTags = await pickExplorationTagsForUser(userId, selectedIds, anchorTag, exploreCount);
+  const selection = buildGenerationTagSelection(sortedTags, anchorTag, coreCandidates, weakCandidates, exploreTags);
+  const coreTags = selection.coreTags;
+  const weakTags = selection.weakTags;
   const weightByTagId = new Map(sortedTags.map((tag) => [Number(tag.id), Number(tag.weight || 0)]));
   for (const tag of exploreTags) {
     weightByTagId.set(Number(tag.id), Math.max(Number(weightByTagId.get(Number(tag.id)) || 0), Number(tag.weight || 0)));
@@ -1921,6 +2024,8 @@ async function getUserRecommendationProfile(userId, options = {}) {
     coreTags,
     weakTags,
     exploreTags,
+    topReferenceTags: selection.topReferenceTags,
+    requiredOverlap: selection.requiredOverlap,
     weightByTagId
   };
 }
@@ -1935,10 +2040,12 @@ function countMatchedTags(songTagSet, tagIds) {
 
 function rankCandidateLibrarySongs(rows, profile) {
   const anchorId = Number(profile?.anchorTag?.id || 0);
-  const requireAnchor = Boolean(profile?.sceneAnchor && anchorId);
+  const requireAnchor = Boolean(anchorId);
   const coreIds = (profile?.coreTags || []).map((tag) => Number(tag.id)).filter(Boolean);
   const weakIds = (profile?.weakTags || []).map((tag) => Number(tag.id)).filter(Boolean);
   const exploreIds = (profile?.exploreTags || []).map((tag) => Number(tag.id)).filter(Boolean);
+  const topReferenceIds = (profile?.topReferenceTags || []).map((tag) => Number(tag.id)).filter(Boolean);
+  const requiredOverlap = Math.min(Number(profile?.requiredOverlap || 0), topReferenceIds.length);
   const weightByTagId = profile?.weightByTagId || new Map();
 
   return [...(rows || [])]
@@ -1947,6 +2054,9 @@ function rankCandidateLibrarySongs(rows, profile) {
       const songTagSet = new Set(songTagIds);
       const anchorHit = anchorId ? songTagSet.has(anchorId) : false;
       if (requireAnchor && !anchorHit) return null;
+
+      const topReferenceHit = countMatchedTags(songTagSet, topReferenceIds);
+      if (requiredOverlap > 0 && topReferenceHit < requiredOverlap) return null;
 
       const coreHit = countMatchedTags(songTagSet, coreIds);
       const weakHit = countMatchedTags(songTagSet, weakIds);
@@ -1959,8 +2069,8 @@ function rankCandidateLibrarySongs(rows, profile) {
             ? (coreHit >= 1 ? 2 : 0)
             : 0;
       const matchedWeight = songTagIds.reduce((sum, id) => sum + Number(weightByTagId.get(Number(id)) || 0), 0);
-      const score = (requireAnchor && anchorHit ? 1000 : 0)
-        + (!requireAnchor && anchorHit ? 220 : 0)
+      const score = (anchorHit ? 1000 : 0)
+        + topReferenceHit * 140
         + coreTier * 400
         + coreHit * 120
         + weakHit * 18
@@ -1974,6 +2084,7 @@ function rankCandidateLibrarySongs(rows, profile) {
         core_hit: coreHit,
         weak_hit: weakHit,
         explore_hit: exploreHit,
+        top_reference_hit: topReferenceHit,
         core_tier: coreTier,
         score
       };

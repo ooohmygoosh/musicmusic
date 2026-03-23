@@ -94,6 +94,14 @@ function queueKeyOf(song) {
   return song?.queue_id || song?.id;
 }
 
+function orderQueueForDisplay(currentSong, list) {
+  if (!currentSong || !Array.isArray(list) || list.length === 0) return list || [];
+  const currentKey = queueKeyOf(currentSong);
+  const currentIndex = list.findIndex((item) => queueKeyOf(item) === currentKey);
+  if (currentIndex <= 0) return list;
+  return [...list.slice(currentIndex), ...list.slice(0, currentIndex)];
+}
+
 function cloneQueueSong(song, source = "manual") {
   if (!song) return null;
   return { ...song, queue_id: `${source}-${song.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
@@ -565,7 +573,6 @@ export default function App() {
     skipStreak: 0,
     needsGeneration: false
   });
-  const [showQueue, setShowQueue] = useState(false);
   const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
   const [newTagName, setNewTagName] = useState("");
   const [pendingTagName, setPendingTagName] = useState("");
@@ -627,6 +634,16 @@ export default function App() {
 
   const activeProfileTags = useMemo(
     () => sortProfileTags(profileTags.filter((item) => item.is_active !== false && Number(item.weight || 0) > 0)).slice(0, MAX_PORTRAIT_TAGS),
+    [profileTags]
+  );
+
+  const sceneOptions = useMemo(
+    () => tags.filter((tag) => String(tag.type || "") === "\u573a\u666f"),
+    [tags]
+  );
+
+  const activeSceneAnchor = useMemo(
+    () => sortProfileTags(profileTags.filter((item) => String(item.type || "") === "\u573a\u666f" && item.is_active !== false && Number(item.weight || 0) > 0))[0] || null,
     [profileTags]
   );
 
@@ -787,7 +804,7 @@ export default function App() {
   const persistProfileTagWeight = async (tagId, weight) => {
     const uid = Number(userIdRef.current);
     if (!Number.isFinite(uid) || uid <= 0) return;
-    const res = await fetch(`${API_BASE}/user-tags/weight`, {
+    const res = await fetch(API_BASE + "/user-tags/weight", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: uid, tag_id: Number(tagId), weight: Number(weight) })
@@ -797,6 +814,21 @@ export default function App() {
       throw new Error(data.error || "weight update failed");
     }
     return res.json().catch(() => ({}));
+  };
+
+  const persistSceneAnchor = async (tagId) => {
+    const uid = Number(userIdRef.current);
+    if (!Number.isFinite(uid) || uid <= 0) return;
+    const res = await fetch(API_BASE + "/user-tags/anchor", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: uid, tag_id: Number(tagId) })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "anchor update failed");
+    await loadProfileTags(uid);
+    await playbackEngine.refresh({ buffer: 8 });
+    return data;
   };
 
   const computeNextWeight = (currentWeight, zoneId) => {
@@ -1512,6 +1544,7 @@ export default function App() {
   const renderPlayer = () => {
     const playerCurrent = playbackEngine.current;
     const playerQueue = playbackEngine.queue || [];
+    const displayedQueue = orderQueueForDisplay(playerCurrent, playerQueue);
     const playerPlayback = playbackEngine.playback || { position: 0, duration: 1, isPlaying: false };
     const playerNeedsGeneration = Boolean(playbackEngine.recommendation?.needsGeneration);
     const playerStatus = String(playbackEngine.status || "idle");
@@ -1534,6 +1567,32 @@ export default function App() {
     return (
       <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
         <ScreenTitle eyebrow={"Hi, " + displayName} title="Songs" subtitle="Play, favorite and manage your queue." />
+
+        {sceneOptions.length > 0 ? (
+          <View style={styles.anchorStrip}>
+            <Text style={styles.anchorStripLabel}>Scene anchor</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.anchorChipRow}>
+              {sceneOptions.map((tag) => {
+                const selected = Number(activeSceneAnchor?.tag_id || activeSceneAnchor?.id || 0) === Number(tag.id);
+                return (
+                  <TouchableOpacity
+                    key={String(tag.id)}
+                    style={[styles.anchorChip, selected && styles.anchorChipActive]}
+                    onPress={async () => {
+                      try {
+                        await persistSceneAnchor(tag.id);
+                      } catch (err) {
+                        Alert.alert("Anchor update failed", String(err?.message || err));
+                      }
+                    }}
+                  >
+                    <Text style={[styles.anchorChipText, selected && styles.anchorChipTextActive]}>{tag.name}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : null}
 
         <View style={styles.playerStatusRow}>
           <View style={[styles.playerStatusPill, playerStatus === "error" && styles.playerStatusPillError]}>
@@ -1630,37 +1689,34 @@ export default function App() {
         ) : null}
 
         <View style={styles.section}>
-          <TouchableOpacity style={styles.queueToggle} onPress={() => setShowQueue((prev) => !prev)}>
+          <View style={styles.queueToggle}>
             <View>
               <Text style={styles.queueLabel}>Queue</Text>
-              <Text style={styles.queueHint}>Tap an item to switch playback</Text>
+              <Text style={styles.queueHint}>Current song stays first. Tap any item to switch playback.</Text>
             </View>
-            <Text style={styles.queueAction}>{showQueue ? "Hide" : "Show"}</Text>
-          </TouchableOpacity>
-          {showQueue ? (
-            playerQueue.length > 0 ? (
-              playerQueue.map((item, index) => (
-                <TouchableOpacity
-                  key={String(queueKeyOf(item))}
-                  style={[styles.listItem, queueKeyOf(playerCurrent) === queueKeyOf(item) && styles.currentQueueItem]}
-                  onPress={() => play(item)}
-                >
-                  <View style={styles.songListMain}>
-                    <SongArtwork uri={item.cover_url} size={56} radius={18} label={item.title || "TPY"} />
-                    <View style={styles.songListText}>
-                      <Text style={styles.listTitle}>{String(index + 1) + ". " + (item.title || "Untitled")}</Text>
-                      <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
-                    </View>
+          </View>
+          {displayedQueue.length > 0 ? (
+            displayedQueue.map((item, index) => (
+              <TouchableOpacity
+                key={String(queueKeyOf(item))}
+                style={[styles.listItem, queueKeyOf(playerCurrent) === queueKeyOf(item) && styles.currentQueueItem]}
+                onPress={() => play(item)}
+              >
+                <View style={styles.songListMain}>
+                  <SongArtwork uri={item.cover_url} size={56} radius={18} label={item.title || "TPY"} />
+                  <View style={styles.songListText}>
+                    <Text style={styles.listTitle}>{String(index + 1) + ". " + (item.title || "Untitled")}</Text>
+                    <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
                   </View>
-                  <Text style={styles.chevron}>{">"}</Text>
-                </TouchableOpacity>
-              ))
-            ) : (
-              <View style={styles.queueEmptyBox}>
-                <Text style={styles.placeholder}>Queue is empty. Tap Reload or generate songs in Portrait.</Text>
-              </View>
-            )
-          ) : null}
+                </View>
+                <Text style={styles.chevron}>{">"}</Text>
+              </TouchableOpacity>
+            ))
+          ) : (
+            <View style={styles.queueEmptyBox}>
+              <Text style={styles.placeholder}>Queue is empty. Tap Reload or generate songs in Portrait.</Text>
+            </View>
+          )}
         </View>
       </ScrollView>
     );
@@ -2007,10 +2063,16 @@ const styles = StyleSheet.create({
   playBtn: { flex: 1, backgroundColor: "#FFFFFF", borderRadius: 18, paddingVertical: 15, alignItems: "center" },
   playText: { color: "#111217", fontSize: 15, fontWeight: "800" },
   section: { marginBottom: 18 },
+  anchorStrip: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 24, padding: 18, marginBottom: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  anchorStripLabel: { color: "#FFFFFF", fontSize: 16, fontWeight: "800", marginBottom: 12 },
+  anchorChipRow: { gap: 10, paddingRight: 10 },
+  anchorChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  anchorChipActive: { backgroundColor: "#FFFFFF", borderColor: "#FFFFFF" },
+  anchorChipText: { color: "rgba(255,255,255,0.85)", fontSize: 13, fontWeight: "700" },
+  anchorChipTextActive: { color: "#0B111B" },
   queueToggle: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 24, padding: 18, marginBottom: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   queueLabel: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" },
   queueHint: { color: "rgba(255,255,255,0.6)", fontSize: 13, marginTop: 4 },
-  queueAction: { color: "rgba(255,255,255,0.82)", fontSize: 14, fontWeight: "700" },
   listItem: { backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   currentQueueItem: { borderColor: "rgba(255,255,255,0.28)" },
   queueEmptyBox: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", padding: 14 },
