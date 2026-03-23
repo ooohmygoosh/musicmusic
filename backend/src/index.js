@@ -1055,6 +1055,19 @@ app.get("/favorites", async (request, reply) => {
   return { items: rows };
 });
 
+app.get("/my-songs", async (request, reply) => {
+  const { user_id } = request.query || {};
+  if (!user_id) {
+    reply.code(400).send({ error: "user_id required" });
+    return;
+  }
+  const { rows } = await query(
+    "SELECT s.id, s.created_at, s.title, s.cover_url, s.prompt, s.base_prompt, s.creator_type, s.generation_source, s.is_public, s.is_available, s.visibility_scope, s.publish_status, s.revenue_enabled, s.official_fallback, sa.audio_url, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags FROM songs s LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = s.id ORDER BY id DESC LIMIT 1) sa ON true LEFT JOIN song_tags st ON st.song_id = s.id LEFT JOIN tags t ON t.id = st.tag_id WHERE s.owner_user_id = $1 AND s.source_song_id IS NULL GROUP BY s.id, sa.audio_url ORDER BY s.created_at DESC, s.id DESC LIMIT 200",
+    [Number(user_id)]
+  );
+  return { items: rows };
+});
+
 app.get("/playlists", async (request, reply) => {
   const { user_id } = request.query || {};
   if (!user_id) {

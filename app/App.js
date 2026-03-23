@@ -21,6 +21,7 @@ import { usePlaybackEngine } from "./playback/usePlaybackEngine";
 const TABS = [
   { key: "player", label: "\u6b4c\u66f2", icon: "\u25c9" },
   { key: "favorites", label: "\u6536\u85cf", icon: "\u2661" },
+  { key: "works", label: "Works", icon: "\u25c7" },
   { key: "galaxy", label: "\u753b\u50cf", icon: "\u2726" },
   { key: "settings", label: "\u8bbe\u7f6e", icon: "\u2318" }
 ];
@@ -549,6 +550,7 @@ export default function App() {
   const [profileTags, setProfileTags] = useState([]);
   const [songs, setSongs] = useState([]);
   const [favorites, setFavorites] = useState([]);
+  const [mySongs, setMySongs] = useState([]);
   const [playlists, setPlaylists] = useState([]);
   const [playlistSongsMap, setPlaylistSongsMap] = useState({});
   const [playlistSongs, setPlaylistSongs] = useState([]);
@@ -748,6 +750,14 @@ export default function App() {
     return data.items || [];
   };
 
+  const refreshMySongs = async (uid) => {
+    if (!uid) return [];
+    const res = await fetch(`${API_BASE}/my-songs?user_id=${uid}`);
+    const data = await res.json();
+    setMySongs(data.items || []);
+    return data.items || [];
+  };
+
   const loadPlaylists = async (uid) => {
     if (!uid) return [];
     const res = await fetch(`${API_BASE}/playlists?user_id=${uid}`);
@@ -769,7 +779,7 @@ export default function App() {
   const bootstrapUser = async (user, nameOverride) => {
     setSession({ userId: user.id, deviceId: user.device_id, accountId: user.account_id || user.device_id, name: nameOverride || user.display_name || accountName.trim() || user.account_id || user.device_id, avatar: user.avatar || selectedAvatar });
     const profile = await loadProfileTags(user.id);
-    await Promise.all([playbackEngine.refresh({ buffer: 8 }), refreshFavorites(user.id), loadPlaylists(user.id)]);
+    await Promise.all([playbackEngine.refresh({ buffer: 8 }), refreshFavorites(user.id), refreshMySongs(user.id), loadPlaylists(user.id)]);
     const active = (profile || []).filter((item) => item.is_active !== false);
     setNeedsOnboarding(active.length === 0);
     setOnboardingStep(0);
@@ -1171,6 +1181,7 @@ export default function App() {
           throw new Error(item.error || data.error || "generation failed");
         }
         if ((status === "done" || status === "reused") && (item.song?.id || data.song_id)) {
+          await refreshMySongs(userId);
           return refreshSongs(userId, { preferLatest });
         }
         await wait(3000);
@@ -1320,7 +1331,7 @@ export default function App() {
 
   const refreshAllData = async () => {
     if (!userId) return;
-    await Promise.all([loadTags(), loadProfileTags(userId), playbackEngine.refresh({ buffer: 8 }), refreshFavorites(userId), loadPlaylists(userId)]);
+    await Promise.all([loadTags(), loadProfileTags(userId), playbackEngine.refresh({ buffer: 8 }), refreshFavorites(userId), refreshMySongs(userId), loadPlaylists(userId)]);
     setHealth({ loading: false, ok: true, message: "\u6570\u636e\u5df2\u5237\u65b0" });
   };
 
@@ -1334,6 +1345,7 @@ export default function App() {
     setProfileTags([]);
     setSongs([]);
     setFavorites([]);
+    setMySongs([]);
     setPlaylists([]);
     setPlaylistSongsMap({});
     setPlaylistSongs([]);
@@ -1744,6 +1756,36 @@ export default function App() {
     </ScrollView>
   );
 
+  const renderWorks = () => (
+    <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
+      <ScreenTitle eyebrow="Creator" title="My works" subtitle="Your generated songs, ownership, and publish status." />
+      <View style={styles.groupCard}>
+        <Text style={styles.groupTitle}>My songs</Text>
+        {mySongs.length === 0 ? (
+          <Text style={styles.placeholder}>No works yet. Generate songs in Portrait first.</Text>
+        ) : mySongs.map((song) => (
+          <View key={String(song.id) + "-work"} style={styles.playlistBox}>
+            <TouchableOpacity style={styles.listItem} onPress={() => play(song)}>
+              <View style={styles.songListMain}>
+                <SongArtwork uri={song.cover_url} size={56} radius={18} label={song.title || "TPY"} />
+                <View style={styles.songListText}>
+                  <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
+                  <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
+                  <Text style={styles.listSub} numberOfLines={1}>{`${song.is_public ? "Public" : "Private"} · ${song.is_available ? "Enabled" : "Disabled"} · ${song.generation_source || "portrait_manual"}`}</Text>
+                </View>
+              </View>
+              <Text style={styles.chevron}>{">"}</Text>
+            </TouchableOpacity>
+            <View style={styles.workMetaRow}>
+              <Text style={styles.workMetaText}>{`ID ${song.id} · ${song.creator_type || "user"} · ${song.revenue_enabled ? "Revenue on" : "Revenue off"}`}</Text>
+              <Text style={styles.workMetaText}>{new Date(song.created_at).toLocaleString()}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+    </ScrollView>
+  );
+
   const renderGalaxy = () => {
     const zones = getFuncZones(effectiveStageSize);
 
@@ -1896,6 +1938,7 @@ export default function App() {
       <View style={styles.content}>
         {activeTab === "player" && renderPlayer()}
         {activeTab === "favorites" && renderFavorites()}
+        {activeTab === "works" && renderWorks()}
         {activeTab === "galaxy" && renderGalaxy()}
         {activeTab === "settings" && renderSettings()}
       </View>
@@ -2058,13 +2101,8 @@ const styles = StyleSheet.create({
   tabIconActive: { color: "#FFFFFF" },
   tabText: { fontSize: 11, color: "rgba(255,255,255,0.42)", fontWeight: "600" },
   tabTextActive: { color: "#FFFFFF", fontWeight: "800" },
+  workMetaRow: { flexDirection: "row", justifyContent: "space-between", gap: 10, marginTop: 10, paddingHorizontal: 4 },
+  workMetaText: { color: "rgba(255,255,255,0.64)", fontSize: 12, flex: 1 },
   rowGap: { flexDirection: "row", gap: 10 },
   flex: { flex: 1 }
 });
-
-
-
-
-
-
-
