@@ -931,7 +931,12 @@ app.post("/init-tags", async (request, reply) => {
   await ensureUserTagWeights(user_id);
 
   await query(
-    "UPDATE user_tags SET weight = $1, initial_weight = $1, update_count = 0, last_updated = NOW() WHERE user_id = $2 AND tag_id = ANY($3)",
+    "UPDATE user_tags SET weight = 0, initial_weight = 0, update_count = 0, last_updated = NOW(), is_active = false WHERE user_id = $1",
+    [Number(user_id)]
+  );
+
+  await query(
+    "UPDATE user_tags SET weight = $1, initial_weight = $1, update_count = 0, last_updated = NOW(), is_active = true WHERE user_id = $2 AND tag_id = ANY($3)",
     [SELECTED_TAG_WEIGHT, user_id, allowedTagIds]
   );
 
@@ -1162,12 +1167,17 @@ async function ensureUserTagWeights(userId) {
   const tagIds = rows.map((r) => r.id);
 
   await query(
-    "INSERT INTO user_tags (user_id, tag_id, weight, initial_weight) SELECT $1, t.id, $2, $2 FROM tags t WHERE t.is_active = true ON CONFLICT (user_id, tag_id) DO NOTHING",
-    [userId, DEFAULT_TAG_WEIGHT]
+    "INSERT INTO user_tags (user_id, tag_id, weight, initial_weight, is_active) SELECT $1, t.id, 0, 0, false FROM tags t WHERE t.is_active = true ON CONFLICT (user_id, tag_id) DO NOTHING",
+    [userId]
   );
 
   await query(
-    "UPDATE user_tags SET is_active = false WHERE user_id = $1 AND tag_id <> ALL($2::int[])",
+    "UPDATE user_tags SET is_active = false, weight = 0 WHERE user_id = $1 AND tag_id = ANY($2::int[])",
+    [userId, tagIds]
+  );
+
+  await query(
+    "UPDATE user_tags SET is_active = false, weight = 0 WHERE user_id = $1 AND tag_id <> ALL($2::int[])",
     [userId, tagIds]
   );
 }
