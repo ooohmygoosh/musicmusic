@@ -147,6 +147,7 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
   const currentRef = useRef(current);
   const soundRef = useRef(null);
   const operationRef = useRef(Promise.resolve());
+  const interactiveLockRef = useRef(false);
   const mountedRef = useRef(false);
   const completeHandledKeyRef = useRef(null);
   const nextRef = useRef(async () => false);
@@ -366,78 +367,95 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
   playSongInternalRef.current = playSongInternal;
 
   const playSong = useCallback(async (song) => {
-    return runSerial(async () => playSongInternalRef.current(song, { allowRecover: true, recoverDepth: 0 }));
+    if (interactiveLockRef.current) return false;
+    interactiveLockRef.current = true;
+    try {
+      return await runSerial(async () => playSongInternalRef.current(song, { allowRecover: true, recoverDepth: 0 }));
+    } finally {
+      interactiveLockRef.current = false;
+    }
   }, [runSerial]);
 
   const togglePlay = useCallback(async () => {
-    return runSerial(async () => {
-      const song = currentRef.current;
+    if (interactiveLockRef.current) return false;
+    interactiveLockRef.current = true;
+    try {
+      return await runSerial(async () => {
+        const song = currentRef.current;
 
-      if (!song) {
-        const refreshed = await requestRecommendations({ buffer: 8 }).catch(() => ({ items: [] }));
-        const first = refreshed.serverCurrent || firstPlayable(refreshed.items, failedQueueKeyAtRef.current);
-        if (!first) {
-          setStatus("empty");
-          return false;
+        if (!song) {
+          const refreshed = await requestRecommendations({ buffer: 8 }).catch(() => ({ items: [] }));
+          const first = refreshed.serverCurrent || firstPlayable(refreshed.items, failedQueueKeyAtRef.current);
+          if (!first) {
+            setStatus("empty");
+            return false;
+          }
+          return playSongInternalRef.current(first, { allowRecover: true, recoverDepth: 0 });
         }
-        return playSongInternalRef.current(first, { allowRecover: true, recoverDepth: 0 });
-      }
 
-      if (!soundRef.current) {
-        return playSongInternalRef.current(song, { allowRecover: true, recoverDepth: 0 });
-      }
+        if (!soundRef.current) {
+          return playSongInternalRef.current(song, { allowRecover: true, recoverDepth: 0 });
+        }
 
-      const isPlaying = playback.isPlaying;
-      if (isPlaying) {
-        await soundRef.current.pauseAsync().catch(() => {});
-        setStatus("paused");
-      } else {
-        await soundRef.current.playAsync().catch(() => {});
-        setStatus("playing");
-      }
-      return true;
-    });
+        const isPlaying = playback.isPlaying;
+        if (isPlaying) {
+          await soundRef.current.pauseAsync().catch(() => {});
+          setStatus("paused");
+        } else {
+          await soundRef.current.playAsync().catch(() => {});
+          setStatus("playing");
+        }
+        return true;
+      });
+    } finally {
+      interactiveLockRef.current = false;
+    }
   }, [playback.isPlaying, requestRecommendations, runSerial]);
 
   const next = useCallback(async (action = "skip") => {
-    return runSerial(async () => {
-      const song = currentRef.current;
+    const isInteractiveAction = action !== "complete";
+    if (isInteractiveAction && interactiveLockRef.current) return false;
+    if (isInteractiveAction) interactiveLockRef.current = true;
+    try {
+      return await runSerial(async () => {
+        const song = currentRef.current;
 
-      if (!song) {
-        const refreshed = await requestRecommendations({ buffer: 8 }).catch(() => ({ items: [] }));
-        const first = refreshed.serverCurrent || firstPlayable(refreshed.items, failedQueueKeyAtRef.current);
-        if (!first) {
-          setStatus("empty");
-          return false;
+        if (!song) {
+          const refreshed = await requestRecommendations({ buffer: 8 }).catch(() => ({ items: [] }));
+          const first = refreshed.serverCurrent || firstPlayable(refreshed.items, failedQueueKeyAtRef.current);
+          if (!first) {
+            setStatus("empty");
+            return false;
+          }
+          return playSongInternalRef.current(first, { allowRecover: true, recoverDepth: 0 });
         }
-        return playSongInternalRef.current(first, { allowRecover: true, recoverDepth: 0 });
-      }
 
-      await sendFeedback(song, action);
+        await sendFeedback(song, action);
 
-      const refreshed = await requestRecommendations({
-        cursorQueueId: song.queue_id || null,
-        buffer: 8
-      }).catch(() => ({ items: [], needsGeneration: false }));
+        const refreshed = await requestRecommendations({
+          cursorQueueId: song.queue_id || null,
+          buffer: 8
+        }).catch(() => ({ items: [], needsGeneration: false }));
 
-      const fromServerPrepared = refreshed.serverNext;
-      const fromCursor = pickNextAfterCursor(refreshed.items || [], song.queue_id, failedQueueKeyAtRef.current);
-      const candidate = fromServerPrepared || fromCursor;
+        const candidate = refreshed.serverCurrent || firstPlayable(refreshed.items || [], failedQueueKeyAtRef.current);
 
-      if (candidate) {
-        return playSongInternalRef.current(candidate, { allowRecover: true, recoverDepth: 0 });
-      }
+        if (candidate) {
+          return playSongInternalRef.current(candidate, { allowRecover: true, recoverDepth: 0 });
+        }
 
-      await unloadCurrentSound();
-      setCurrent(null);
-      setPlayback({ position: 0, duration: 1, isPlaying: false });
-      setStatus("empty");
+        await unloadCurrentSound();
+        setCurrent(null);
+        setPlayback({ position: 0, duration: 1, isPlaying: false });
+        setStatus("empty");
 
-      if (refreshed.needsGeneration && onNeedsGeneration) {
-        onNeedsGeneration();
-      }
-      return false;
-    });
+        if (refreshed.needsGeneration && onNeedsGeneration) {
+          onNeedsGeneration();
+        }
+        return false;
+      });
+    } finally {
+      if (isInteractiveAction) interactiveLockRef.current = false;
+    }
   }, [onNeedsGeneration, requestRecommendations, runSerial, sendFeedback, unloadCurrentSound]);
 
   nextRef.current = next;

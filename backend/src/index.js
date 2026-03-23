@@ -1,4 +1,4 @@
-﻿import "dotenv/config";
+import "dotenv/config";
 import crypto from "crypto";
 import Fastify from "fastify";
 import fs from "fs/promises";
@@ -937,15 +937,12 @@ app.post("/init-tags", async (request, reply) => {
 
   await normalizeUserWeights(user_id);
 
-  const seededSongs = await findReusableSongs(user_id, allowedTagIds, 4, INIT_REUSE_SIMILARITY_MIN);
-  for (const song of seededSongs) {
-    await queueSongForUser(user_id, song.id, null, 'seeded');
-    await query("UPDATE songs SET reuse_count = reuse_count + 1 WHERE id = $1", [Number(song.id)]);
-  }
+  await refillQueueFromLibrary(user_id, 4, { source: "seeded", resetQueue: true });
+  const seededQueue = await getPlayableQueue(user_id);
 
   return {
     ok: true,
-    seeded_song_ids: seededSongs.map((song) => Number(song.id))
+    seeded_song_ids: seededQueue.slice(0, 4).map((song) => Number(song.id))
   };
 });
 
@@ -1852,9 +1849,15 @@ function rankCandidateLibrarySongs(rows, profile) {
     });
 }
 
-async function refillQueueFromLibrary(userId, targetCount = RECOMMEND_REFILL_TARGET) {
+async function refillQueueFromLibrary(userId, targetCount = RECOMMEND_REFILL_TARGET, options = {}) {
   const uid = Number(userId);
   if (!Number.isFinite(uid) || uid <= 0) return 0;
+  const source = String(options.source || "recommended");
+  const resetQueue = Boolean(options.resetQueue);
+
+  if (resetQueue) {
+    await query("DELETE FROM user_song_queue WHERE user_id = $1", [uid]);
+  }
 
   const currentQueue = await getPlayableQueue(uid);
   const deficit = Math.max(0, Number(targetCount) - currentQueue.length);
@@ -1880,7 +1883,7 @@ async function refillQueueFromLibrary(userId, targetCount = RECOMMEND_REFILL_TAR
   let added = 0;
   for (const song of ranked) {
     if (added >= deficit) break;
-    await queueSongForUser(uid, Number(song.id), null, "recommended", {
+    await queueSongForUser(uid, Number(song.id), null, source, {
       displayTitle: normalizeTitle(song.title || null, song.title || null),
       displayCoverUrl: song.cover_url || null
     });

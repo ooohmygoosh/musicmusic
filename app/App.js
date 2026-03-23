@@ -1,4 +1,4 @@
-锘縤mport React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -21,7 +21,7 @@ import { usePlaybackEngine } from "./playback/usePlaybackEngine";
 const TABS = [
   { key: "player", label: "\u6b4c\u66f2", icon: "\u25c9" },
   { key: "favorites", label: "\u6536\u85cf", icon: "\u2661" },
-  { key: "works", label: "Works", icon: "\u25c7" },
+
   { key: "galaxy", label: "\u753b\u50cf", icon: "\u2726" },
   { key: "settings", label: "\u8bbe\u7f6e", icon: "\u2318" }
 ];
@@ -1668,7 +1668,7 @@ export default function App() {
   };
   const renderFavorites = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="Favorites" title="Playlists and songs" subtitle="Expand playlist, append single song, or append whole playlist by +." />
+      <ScreenTitle eyebrow="Library" title="Playlists and my songs" subtitle="Manage playlists, and play your generated songs directly from here." />
 
       <View style={styles.groupCard}>
         <Text style={styles.groupTitle}>New playlist</Text>
@@ -1726,7 +1726,7 @@ export default function App() {
                           <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
                         </View>
                       </View>
-                      <Text style={styles.chevron}>></Text>
+                      <Text style={styles.chevron}>{">"}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -1737,47 +1737,24 @@ export default function App() {
       </View>
 
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>Favorite history</Text>
-        {favorites.length === 0 ? (
-          <Text style={styles.placeholder}>No favorite songs yet.</Text>
-        ) : favorites.map((song) => (
-          <TouchableOpacity key={String(song.id) + "-" + String(song.created_at || "fav")} style={styles.listItem} onPress={() => enqueueSongToTail(song, "favorite")}>
-            <View style={styles.songListMain}>
-              <SongArtwork uri={song.cover_url} size={56} radius={18} label={song.title || "TPY"} />
-              <View style={styles.songListText}>
-                <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
-                <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
-              </View>
-            </View>
-            <Text style={styles.chevron}>></Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </ScrollView>
-  );
-
-  const renderWorks = () => (
-    <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="Creator" title="My works" subtitle="Your generated songs, ownership, and publish status." />
-      <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>My songs</Text>
+        <Text style={styles.groupTitle}>My generated songs</Text>
         {mySongs.length === 0 ? (
-          <Text style={styles.placeholder}>No works yet. Generate songs in Portrait first.</Text>
+          <Text style={styles.placeholder}>No generated songs yet. Generate songs in Portrait first.</Text>
         ) : mySongs.map((song) => (
-          <View key={String(song.id) + "-work"} style={styles.playlistBox}>
+          <View key={String(song.id) + "-mine"} style={styles.playlistBox}>
             <TouchableOpacity style={styles.listItem} onPress={() => play(song)}>
               <View style={styles.songListMain}>
                 <SongArtwork uri={song.cover_url} size={56} radius={18} label={song.title || "TPY"} />
                 <View style={styles.songListText}>
                   <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
                   <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
-                  <Text style={styles.listSub} numberOfLines={1}>{`${song.is_public ? "Public" : "Private"} 路 ${song.is_available ? "Enabled" : "Disabled"} 路 ${song.generation_source || "portrait_manual"}`}</Text>
+                  <Text style={styles.listSub} numberOfLines={1}>{`${song.is_public ? "Public" : "Private"} · ${song.is_available ? "Enabled" : "Disabled"} · ${song.generation_source || "portrait_manual"}`}</Text>
                 </View>
               </View>
               <Text style={styles.chevron}>{">"}</Text>
             </TouchableOpacity>
             <View style={styles.workMetaRow}>
-              <Text style={styles.workMetaText}>{`ID ${song.id} 路 ${song.creator_type || "user"} 路 ${song.revenue_enabled ? "Revenue on" : "Revenue off"}`}</Text>
+              <Text style={styles.workMetaText}>{`ID ${song.id} · ${song.creator_type || "user"} · ${song.revenue_enabled ? "Revenue on" : "Revenue off"}`}</Text>
               <Text style={styles.workMetaText}>{new Date(song.created_at).toLocaleString()}</Text>
             </View>
           </View>
@@ -1785,7 +1762,6 @@ export default function App() {
       </View>
     </ScrollView>
   );
-
   const renderGalaxy = () => {
     const zones = getFuncZones(effectiveStageSize);
 
@@ -1938,7 +1914,7 @@ export default function App() {
       <View style={styles.content}>
         {activeTab === "player" && renderPlayer()}
         {activeTab === "favorites" && renderFavorites()}
-        {activeTab === "works" && renderWorks()}
+
         {activeTab === "galaxy" && renderGalaxy()}
         {activeTab === "settings" && renderSettings()}
       </View>
@@ -2106,3 +2082,5 @@ const styles = StyleSheet.create({
   rowGap: { flexDirection: "row", gap: 10 },
   flex: { flex: 1 }
 });
+
+
