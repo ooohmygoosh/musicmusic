@@ -29,6 +29,8 @@ const COEF_FAVORITE = 0.15;
 const COEF_SKIP_EARLY = 0.2;
 const COEF_SKIP_LATE = 0.1;
 const COEF_COMPLETE = 0.05;
+const EXPLORE_TAG_SEED_WEIGHT = Number(process.env.EXPLORE_TAG_SEED_WEIGHT || 0.08);
+const COMPLETE_PROMOTE_THRESHOLD = Number(process.env.COMPLETE_PROMOTE_THRESHOLD || 2);
 const NORMALIZE_EVERY = 10;
 const MAX_TAGS_TOTAL = 6;
 const MAX_PER_TYPE = 2;
@@ -1160,26 +1162,40 @@ async function getRecentTagIds(userId, limit = 5) {
 }
 
 async function ensureUserTagWeights(userId) {
-  const { rows } = await query(
-    "SELECT id FROM tags WHERE is_active = true ORDER BY id"
-  );
-  if (rows.length === 0) return;
-  const tagIds = rows.map((r) => r.id);
-
   await query(
     "INSERT INTO user_tags (user_id, tag_id, weight, initial_weight, is_active) SELECT $1, t.id, 0, 0, false FROM tags t WHERE t.is_active = true ON CONFLICT (user_id, tag_id) DO NOTHING",
     [userId]
   );
+}
 
-  await query(
-    "UPDATE user_tags SET is_active = false, weight = 0 WHERE user_id = $1 AND tag_id = ANY($2::int[])",
-    [userId, tagIds]
+async function absorbExplorationTags(userId, songId, behavior) {
+  if (behavior !== "favorite" && behavior !== "complete") return;
+
+  const candidateTags = await query(
+    "SELECT DISTINCT st.tag_id FROM song_tags st LEFT JOIN user_tags ut ON ut.user_id = $1 AND ut.tag_id = st.tag_id WHERE st.song_id = $2 AND (ut.tag_id IS NULL OR COALESCE(ut.is_active, false) = false OR COALESCE(ut.weight, 0) <= 0)",
+    [Number(userId), Number(songId)]
   );
 
-  await query(
-    "UPDATE user_tags SET is_active = false, weight = 0 WHERE user_id = $1 AND tag_id <> ALL($2::int[])",
-    [userId, tagIds]
-  );
+  if (candidateTags.rows.length === 0) return;
+
+  for (const row of candidateTags.rows) {
+    const tagId = Number(row.tag_id);
+    if (!Number.isFinite(tagId)) continue;
+
+    if (behavior === "complete") {
+      const history = await query(
+        "SELECT COUNT(*)::int AS total FROM feedback f JOIN song_tags st ON st.song_id = f.song_id WHERE f.user_id = $1 AND f.action = 'complete' AND st.tag_id = $2",
+        [Number(userId), tagId]
+      );
+      const total = Number(history.rows[0]?.total || 0);
+      if (total < COMPLETE_PROMOTE_THRESHOLD) continue;
+    }
+
+    await query(
+      "INSERT INTO user_tags (user_id, tag_id, weight, initial_weight, is_active, update_count, last_updated) VALUES ($1, $2, $3, $3, true, 0, NOW()) ON CONFLICT (user_id, tag_id) DO UPDATE SET weight = GREATEST(user_tags.weight, $3), initial_weight = GREATEST(COALESCE(user_tags.initial_weight, 0), $3), is_active = true, last_updated = NOW()",
+      [Number(userId), tagId, EXPLORE_TAG_SEED_WEIGHT]
+    );
+  }
 }
 
 async function normalizeUserWeights(userId) {
@@ -2372,6 +2388,7 @@ app.post("/feedback", async (request, reply) => {
   }
 
   await ensureUserTagWeights(user_id);
+  await absorbExplorationTags(user_id, song_id, behavior);
   const { rows } = await query(
     "SELECT tag_id, COALESCE(relevance, 1.0) AS relevance FROM song_tags WHERE song_id = $1",
     [Number(song_id)]
