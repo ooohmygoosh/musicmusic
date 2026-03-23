@@ -1307,7 +1307,7 @@ export default function App() {
     }
 
     if (recommendationState.needsGeneration) {
-      Alert.alert("Queue is empty", "Please generate songs in Portrait first.");
+      Alert.alert("No songs ready", "Please generate songs in Portrait first.");
       setActiveTab("galaxy");
     }
     return false;
@@ -1545,19 +1545,25 @@ export default function App() {
     const playerCurrent = playbackEngine.current;
     const playerQueue = playbackEngine.queue || [];
     const displayedQueue = orderQueueForDisplay(playerCurrent, playerQueue);
+    const hasPendingGeneration = Boolean(playbackEngine.recommendation?.hasPendingGeneration);
     const playerPlayback = playbackEngine.playback || { position: 0, duration: 1, isPlaying: false };
     const playerNeedsGeneration = Boolean(playbackEngine.recommendation?.needsGeneration);
     const playerStatus = String(playbackEngine.status || "idle");
     const playerError = String(playbackEngine.lastError || "");
     const displayedPosition = playerPlayback.position || 0;
     const progressPercent = Math.min(1, Math.max(0, (displayedPosition || 0) / Math.max(playerPlayback.duration || 1, 1)));
+    const shouldShowQueueSkeleton = Boolean(
+      playerStatus === "loading"
+      || hasPendingGeneration
+      || (playerNeedsGeneration && displayedQueue.length > 0)
+    );
 
     const statusText = playerStatus === "loading"
       ? "Loading queue..."
       : playerStatus === "error"
         ? "Playback error"
         : playerStatus === "empty"
-          ? "Queue empty"
+          ? "No songs ready"
           : playerStatus === "paused"
             ? "Paused"
             : playerStatus === "playing"
@@ -1566,7 +1572,7 @@ export default function App() {
 
     return (
       <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-        <ScreenTitle eyebrow={"Hi, " + displayName} title="Songs" subtitle="Play, favorite and manage your queue." />
+        <ScreenTitle eyebrow={"Hi, " + displayName} title="Songs" subtitle="Play, favorite and keep music flowing." />
 
         {sceneOptions.length > 0 ? (
           <View style={styles.anchorStrip}>
@@ -1689,32 +1695,49 @@ export default function App() {
         ) : null}
 
         <View style={styles.section}>
-          <View style={styles.queueToggle}>
-            <View>
-              <Text style={styles.queueLabel}>Queue</Text>
-              <Text style={styles.queueHint}>Current song stays first. Tap any item to switch playback.</Text>
-            </View>
-          </View>
           {displayedQueue.length > 0 ? (
-            displayedQueue.map((item, index) => (
-              <TouchableOpacity
-                key={String(queueKeyOf(item))}
-                style={[styles.listItem, queueKeyOf(playerCurrent) === queueKeyOf(item) && styles.currentQueueItem]}
-                onPress={() => play(item)}
-              >
-                <View style={styles.songListMain}>
-                  <SongArtwork uri={item.cover_url} size={56} radius={18} label={item.title || "TPY"} />
-                  <View style={styles.songListText}>
-                    <Text style={styles.listTitle}>{String(index + 1) + ". " + (item.title || "Untitled")}</Text>
-                    <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
+            <>
+              {displayedQueue.map((item) => (
+                <TouchableOpacity
+                  key={String(queueKeyOf(item))}
+                  style={[styles.listItem, queueKeyOf(playerCurrent) === queueKeyOf(item) && styles.currentQueueItem]}
+                  onPress={() => play(item)}
+                >
+                  <View style={styles.songListMain}>
+                    <SongArtwork uri={item.cover_url} size={56} radius={18} label={item.title || "TPY"} />
+                    <View style={styles.songListText}>
+                      <Text style={styles.listTitle}>{item.title || "Untitled"}</Text>
+                      <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.chevron}>{">"}</Text>
+                </TouchableOpacity>
+              ))}
+              {shouldShowQueueSkeleton ? (
+                <View style={[styles.listItem, styles.queueSkeletonItem]}>
+                  <View style={styles.songListMain}>
+                    <View style={styles.queueSkeletonArtwork} />
+                    <View style={styles.songListText}>
+                      <View style={[styles.queueSkeletonLine, styles.queueSkeletonLinePrimary]} />
+                      <View style={[styles.queueSkeletonLine, styles.queueSkeletonLineSecondary]} />
+                    </View>
                   </View>
                 </View>
-                <Text style={styles.chevron}>{">"}</Text>
-              </TouchableOpacity>
-            ))
+              ) : null}
+            </>
           ) : (
             <View style={styles.queueEmptyBox}>
-              <Text style={styles.placeholder}>Queue is empty. Tap Reload or generate songs in Portrait.</Text>
+              {playerStatus === "loading" || hasPendingGeneration ? (
+                <View style={styles.queueSkeletonStandalone}>
+                  <View style={styles.queueSkeletonArtwork} />
+                  <View style={styles.songListText}>
+                    <View style={[styles.queueSkeletonLine, styles.queueSkeletonLinePrimary]} />
+                    <View style={[styles.queueSkeletonLine, styles.queueSkeletonLineSecondary]} />
+                  </View>
+                </View>
+              ) : (
+                <Text style={styles.placeholder}>Queue is empty. Tap Reload or generate songs in Portrait.</Text>
+              )}
             </View>
           )}
         </View>
@@ -2070,12 +2093,15 @@ const styles = StyleSheet.create({
   anchorChipActive: { backgroundColor: "#FFFFFF", borderColor: "#FFFFFF" },
   anchorChipText: { color: "rgba(255,255,255,0.85)", fontSize: 13, fontWeight: "700" },
   anchorChipTextActive: { color: "#0B111B" },
-  queueToggle: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 24, padding: 18, marginBottom: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  queueLabel: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" },
-  queueHint: { color: "rgba(255,255,255,0.6)", fontSize: 13, marginTop: 4 },
   listItem: { backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   currentQueueItem: { borderColor: "rgba(255,255,255,0.28)" },
   queueEmptyBox: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", padding: 14 },
+  queueSkeletonItem: { opacity: 0.78 },
+  queueSkeletonStandalone: { flexDirection: "row", alignItems: "center" },
+  queueSkeletonArtwork: { width: 56, height: 56, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.12)" },
+  queueSkeletonLine: { borderRadius: 999, backgroundColor: "rgba(255,255,255,0.12)" },
+  queueSkeletonLinePrimary: { height: 16, width: "72%" },
+  queueSkeletonLineSecondary: { height: 12, width: "54%", marginTop: 10 },
   songListMain: { flexDirection: "row", alignItems: "center", flex: 1 },
   songListText: { flex: 1, marginLeft: 12 },
   playlistBox: { borderRadius: 20, backgroundColor: "rgba(255,255,255,0.08)", padding: 12, marginBottom: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
