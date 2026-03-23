@@ -55,6 +55,7 @@ const RECOMMEND_MIN_BUFFER = Number(process.env.RECOMMEND_MIN_BUFFER || 2);
 const RECOMMEND_REFILL_TARGET = Number(process.env.RECOMMEND_REFILL_TARGET || 6);
 const STABLE_EXPLORE_TAG_COUNT = Number(process.env.STABLE_EXPLORE_TAG_COUNT || 1);
 const DEEP_EXPLORE_TAG_COUNT = Number(process.env.DEEP_EXPLORE_TAG_COUNT || 2);
+const FALLBACK_EXPLORE_TAG_COUNT = Number(process.env.FALLBACK_EXPLORE_TAG_COUNT || 4);
 const MAX_GENERATION_TAGS = Number(process.env.MAX_GENERATION_TAGS || 8);
 const TAG_CATEGORY_LIMITS = Object.freeze({
   "\u573a\u666f": 2,
@@ -1409,23 +1410,24 @@ function shuffleList(list) {
   return arr;
 }
 
-async function pickExplorationTagsForUser(userId, selectedIds, anchorTag, count = STABLE_EXPLORE_TAG_COUNT) {
+async function pickExplorationTagsForUser(userId, selectedIds, anchorTag, count = STABLE_EXPLORE_TAG_COUNT, options = {}) {
   const target = Math.max(0, Number(count || 0));
   if (target <= 0) return [];
 
+  const allowScene = Boolean(options.allowScene);
   const recentTagIds = await getRecentTagIds(userId, 12);
   const { rows } = await query(
     "SELECT t.id, t.name, t.type, COALESCE(ut.weight, 0) AS weight, COALESCE(ut.is_active, false) AS is_active FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1 AND t.is_active = true AND COALESCE(ut.is_active, false) = false",
     [Number(userId)]
   );
 
-  const typePriority = new Map([["\u98ce\u683c", 0], ["\u60c5\u7eea", 1], ["\u5176\u4ed6", 2]]);
+  const typePriority = new Map([["\u573a\u666f", allowScene ? 0 : 3], ["\u98ce\u683c", 1], ["\u60c5\u7eea", 2], ["\u5176\u4ed6", 3]]);
   const anchorType = normalizeTagType(anchorTag?.type);
   const pool = shuffleList(normalizeTagRows(rows))
     .filter((tag) => !selectedIds.has(Number(tag.id)))
-    .filter((tag) => !isSceneTag(tag))
+    .filter((tag) => allowScene || !isSceneTag(tag))
     .filter((tag) => !String(tag.type || "").includes("\u4eba\u58f0"))
-    .filter((tag) => normalizeTagType(tag.type) !== anchorType)
+    .filter((tag) => normalizeTagType(tag.type) !== anchorType || (allowScene && normalizeTagType(tag.type) === "\u573a\u666f"))
     .sort((a, b) => {
       const pa = typePriority.has(normalizeTagType(a.type)) ? typePriority.get(normalizeTagType(a.type)) : 99;
       const pb = typePriority.has(normalizeTagType(b.type)) ? typePriority.get(normalizeTagType(b.type)) : 99;
@@ -1441,7 +1443,8 @@ async function pickExplorationTagsForUser(userId, selectedIds, anchorTag, count 
   for (const tag of pool) {
     if (picked.length >= target) break;
     const type = normalizeTagType(tag.type);
-    if (!type || usedTypes.has(type)) continue;
+    if (!type) continue;
+    if (!allowScene && usedTypes.has(type)) continue;
     picked.push({ ...tag, type, weight: Math.min(PROMPT_WEAK_MAX_WEIGHT, EXPLORE_TAG_SEED_WEIGHT) });
     selectedIds.add(Number(tag.id));
     usedTypes.add(type);
@@ -1516,10 +1519,13 @@ function buildFallbackCoverHint(anchorTag, coreTags, weakTags) {
   ].join(" ");
 }
 
-function buildGenerationTagSelection(sortedTags, anchorTag, coreTags, weakTags, exploreTags) {
+function buildGenerationTagSelection(sortedTags, anchorTag, coreTags, weakTags, exploreTags, options = {}) {
   const supplementLimit = Math.max(0, MAX_GENERATION_TAGS - 1);
   const anchorId = Number(anchorTag?.id || 0);
   const anchorType = normalizeTagType(anchorTag?.type);
+  const intent = String(options.intent || "manual").toLowerCase();
+  const randomizeFill = intent === "fallback";
+  const randomWindow = randomizeFill ? Math.max(RANDOMIZED_SECONDARY_WINDOW, 6) : RANDOMIZED_SECONDARY_WINDOW;
   const categoryCounts = new Map();
   if (anchorType) categoryCounts.set(anchorType, 1);
 
@@ -1584,8 +1590,10 @@ function buildGenerationTagSelection(sortedTags, anchorTag, coreTags, weakTags, 
     return true;
   };
 
+  const available = (type) => (byType.get(type) || []).filter((tag) => !pickedIds.has(Number(tag.id)));
+
   const takePrimary = (type) => {
-    const pool = (byType.get(type) || []).filter((tag) => !pickedIds.has(Number(tag.id)));
+    const pool = available(type);
     if (pool.length === 0) return;
     addTag(pool[0]);
   };
@@ -1594,23 +1602,44 @@ function buildGenerationTagSelection(sortedTags, anchorTag, coreTags, weakTags, 
     const limit = Number(TAG_CATEGORY_LIMITS[type] || 0);
     const current = Number(categoryCounts.get(type) || 0);
     if (limit <= current) return;
-    const pool = (byType.get(type) || []).filter((tag) => !pickedIds.has(Number(tag.id)));
+    const pool = available(type);
     if (pool.length === 0) return;
-    const windowSize = Math.min(RANDOMIZED_SECONDARY_WINDOW, pool.length);
+    const windowSize = Math.min(randomWindow, pool.length);
     const randomPool = pool.slice(0, windowSize);
     const chosen = randomPool[Math.floor(Math.random() * randomPool.length)] || pool[0];
     addTag(chosen);
   };
 
-  if (anchorType === "\u573a\u666f") takePrimary("\u573a\u666f");
+  if (anchorType !== "\u573a\u666f") takePrimary("\u573a\u666f");
+  if (anchorType !== "\u60c5\u7eea") takePrimary("\u60c5\u7eea");
   takePrimary("\u98ce\u683c");
-  takePrimary("\u60c5\u7eea");
   takePrimary("\u5176\u4ed6");
 
   if (anchorType === "\u573a\u666f") takeSecondary("\u573a\u666f");
   takeSecondary("\u98ce\u683c");
   takeSecondary("\u60c5\u7eea");
   takeSecondary("\u5176\u4ed6");
+
+  if (randomizeFill) {
+    while (picked.length < supplementLimit) {
+      const candidateTypes = shuffleList(["\u573a\u666f", "\u98ce\u683c", "\u60c5\u7eea", "\u5176\u4ed6"]);
+      let added = false;
+      for (const type of candidateTypes) {
+        const limit = Number(TAG_CATEGORY_LIMITS[type] || 0);
+        const current = Number(categoryCounts.get(type) || 0);
+        if (limit <= current) continue;
+        const pool = available(type);
+        if (pool.length === 0) continue;
+        const randomPool = pool.slice(0, Math.min(randomWindow, pool.length));
+        const choice = randomPool[Math.floor(Math.random() * randomPool.length)] || pool[0];
+        if (addTag(choice)) {
+          added = true;
+          break;
+        }
+      }
+      if (!added) break;
+    }
+  }
 
   for (const tag of ranked) {
     if (picked.length >= supplementLimit) break;
@@ -1666,11 +1695,16 @@ async function buildPrompt(userId, options = {}) {
   const selectedIds = new Set([Number(anchorTag.id)]);
   const coreCandidates = pickCoreConstraintTags(sorted, anchorTag, selectedIds);
   const weakCandidates = pickWeakSupplementTags(sorted, selectedIds);
-  const exploreCount = String(options.explore_mode || "stable") === "explore_deep"
-    ? DEEP_EXPLORE_TAG_COUNT
-    : STABLE_EXPLORE_TAG_COUNT;
-  const exploreTags = await pickExplorationTagsForUser(userId, selectedIds, anchorTag, exploreCount);
-  const selection = buildGenerationTagSelection(sorted, anchorTag, coreCandidates, weakCandidates, exploreTags);
+  const isFallbackIntent = String(options.intent || "manual").toLowerCase() === "fallback";
+  const exploreCount = isFallbackIntent
+    ? FALLBACK_EXPLORE_TAG_COUNT
+    : String(options.explore_mode || "stable") === "explore_deep"
+      ? DEEP_EXPLORE_TAG_COUNT
+      : STABLE_EXPLORE_TAG_COUNT;
+  const exploreTags = await pickExplorationTagsForUser(userId, selectedIds, anchorTag, exploreCount, {
+    allowScene: isFallbackIntent && normalizeTagType(anchorTag?.type) !== "\u573a\u666f"
+  });
+  const selection = buildGenerationTagSelection(sorted, anchorTag, coreCandidates, weakCandidates, exploreTags, { intent: options.intent });
   const chosen = selection.chosenTags;
   const coreTags = selection.coreTags;
   const weakAndExploreTags = selection.weakTags;
