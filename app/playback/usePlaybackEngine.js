@@ -500,15 +500,15 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
         }).catch(() => ({ items: [], needsGeneration: false, hasPendingGeneration: false }));
 
         const refreshedIndex = findQueueIndex(refreshed.items || [], song);
-        const candidate = firstPlayableFromIndex(refreshed.items || [], refreshedIndex + 1, failedQueueKeyAtRef.current)
-          || refreshed.serverCurrent
-          || firstPlayable(refreshed.items || [], failedQueueKeyAtRef.current);
+        const candidate = firstPlayableFromIndex(refreshed.items || [], refreshedIndex + 1, failedQueueKeyAtRef.current);
 
         if (candidate) {
           return playSongInternalRef.current(candidate, { allowRecover: true, recoverDepth: 0 });
         }
 
         await unloadCurrentSound();
+        serverCurrentRef.current = null;
+        serverNextRef.current = null;
         setCurrent(null);
         setPlayback({ position: 0, duration: 1, isPlaying: false });
         setStatus(refreshed.hasPendingGeneration ? "loading" : "empty");
