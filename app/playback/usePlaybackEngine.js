@@ -118,6 +118,52 @@ function findByQueueKey(items, sample) {
   return (items || []).find((x) => queueKeyOf(x) === key) || null;
 }
 
+function findQueueIndex(items, sample) {
+  const key = queueKeyOf(sample);
+  if (!key) return -1;
+  return (items || []).findIndex((item) => queueKeyOf(item) === key);
+}
+
+function firstPlayableFromIndex(items, startIndex, failedMap) {
+  if (!Array.isArray(items) || items.length === 0) return null;
+  for (let i = Math.max(0, Number(startIndex) || 0); i < items.length; i += 1) {
+    const item = items[i];
+    if (!item?.audio_url) continue;
+    if (isAudioUrlLikelyExpired(item.audio_url)) continue;
+    const key = queueKeyOf(item);
+    if (!key || isBlockedKey(failedMap, key)) continue;
+    return item;
+  }
+  return null;
+}
+
+function mergeQueueHistory(existing, incoming, failedMap) {
+  const prev = normalizeQueueSongs(existing || [], failedMap);
+  const next = normalizeQueueSongs(incoming || [], failedMap);
+  if (prev.length === 0) return next;
+  if (next.length === 0) return prev;
+
+  const nextByKey = new Map(next.map((item) => [queueKeyOf(item), item]));
+  const seen = new Set();
+  const merged = [];
+
+  for (const item of prev) {
+    const key = queueKeyOf(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(nextByKey.get(key) || item);
+  }
+
+  for (const item of next) {
+    const key = queueKeyOf(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+  }
+
+  return merged;
+}
+
 function pickNextAfterCursor(items, cursorQueueId, failedMap) {
   const cursor = Number(cursorQueueId);
   if (!Array.isArray(items) || items.length === 0) return null;
@@ -139,7 +185,7 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
   const [queue, setQueue] = useState([]);
   const [current, setCurrent] = useState(null);
   const [playback, setPlayback] = useState({ position: 0, duration: 1, isPlaying: false });
-  const [recommendation, setRecommendation] = useState({ mode: "stable", skipStreak: 0, needsGeneration: false });
+  const [recommendation, setRecommendation] = useState({ mode: "stable", skipStreak: 0, needsGeneration: false, hasPendingGeneration: false });
   const [status, setStatus] = useState("idle");
   const [lastError, setLastError] = useState("");
 
@@ -212,9 +258,10 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
       throw new Error(data.error || "recommendation fetch failed");
     }
 
-    const items = normalizeQueueSongs(data.buffer || [], failedQueueKeyAtRef.current);
-    const serverCurrent = findByQueueKey(items, data.current_playing) || findByQueueKey(items, data.next);
-    const serverNext = findByQueueKey(items, data.next_prepared) || null;
+    const incomingItems = normalizeQueueSongs(data.buffer || [], failedQueueKeyAtRef.current);
+    const mergedItems = mergeQueueHistory(queueRef.current, incomingItems, failedQueueKeyAtRef.current);
+    const serverCurrent = findByQueueKey(mergedItems, data.current_playing) || findByQueueKey(mergedItems, data.next);
+    const serverNext = findByQueueKey(mergedItems, data.next_prepared) || null;
 
     serverCurrentRef.current = serverCurrent;
     serverNextRef.current = serverNext;
@@ -222,23 +269,24 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
     const nextRecommendation = {
       mode: String(data.mode || "stable"),
       skipStreak: Number(data.skip_streak || 0),
-      needsGeneration: Boolean(data.needs_generation)
+      needsGeneration: Boolean(data.needs_generation),
+      hasPendingGeneration: Boolean(data.has_pending_generation)
     };
 
     setRecommendation(nextRecommendation);
-    setQueue(items);
+    setQueue(mergedItems);
 
     const localCurrent = currentRef.current;
-    const localCurrentInItems = findByQueueKey(items, localCurrent);
+    const localCurrentInItems = findByQueueKey(mergedItems, localCurrent);
     if (localCurrentInItems) {
       setCurrent(localCurrentInItems);
     } else if (serverCurrent) {
       setCurrent(serverCurrent);
     } else {
-      setCurrent(firstPlayable(items, failedQueueKeyAtRef.current));
+      setCurrent(firstPlayable(mergedItems, failedQueueKeyAtRef.current));
     }
 
-    if (items.length > 0) {
+    if (mergedItems.length > 0) {
       setStatus((prev) => (prev === "paused" ? "paused" : "ready"));
     } else if (nextRecommendation.needsGeneration) {
       setStatus("empty");
@@ -248,10 +296,11 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
     }
 
     return {
-      items,
+      items: mergedItems,
       serverCurrent,
       serverNext,
       needsGeneration: nextRecommendation.needsGeneration,
+      hasPendingGeneration: nextRecommendation.hasPendingGeneration,
       mode: nextRecommendation.mode,
       skipStreak: nextRecommendation.skipStreak
     };
@@ -430,14 +479,30 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
           return playSongInternalRef.current(first, { allowRecover: true, recoverDepth: 0 });
         }
 
-        await sendFeedback(song, action);
+        const queueSnapshot = queueRef.current || [];
+        const currentIndex = findQueueIndex(queueSnapshot, song);
+        const localNext = firstPlayableFromIndex(queueSnapshot, currentIndex + 1, failedQueueKeyAtRef.current) || serverNextRef.current;
+        const feedbackPromise = sendFeedback(song, action);
+
+        if (localNext) {
+          const played = await playSongInternalRef.current(localNext, { allowRecover: true, recoverDepth: 0 });
+          await feedbackPromise;
+          requestRecommendations({ cursorQueueId: song.queue_id || null, buffer: 8 }).catch(() => ({ items: [], needsGeneration: false }));
+          if (played) return true;
+        } else {
+          setStatus("loading");
+          await feedbackPromise;
+        }
 
         const refreshed = await requestRecommendations({
           cursorQueueId: song.queue_id || null,
           buffer: 8
-        }).catch(() => ({ items: [], needsGeneration: false }));
+        }).catch(() => ({ items: [], needsGeneration: false, hasPendingGeneration: false }));
 
-        const candidate = refreshed.serverCurrent || firstPlayable(refreshed.items || [], failedQueueKeyAtRef.current);
+        const refreshedIndex = findQueueIndex(refreshed.items || [], song);
+        const candidate = firstPlayableFromIndex(refreshed.items || [], refreshedIndex + 1, failedQueueKeyAtRef.current)
+          || refreshed.serverCurrent
+          || firstPlayable(refreshed.items || [], failedQueueKeyAtRef.current);
 
         if (candidate) {
           return playSongInternalRef.current(candidate, { allowRecover: true, recoverDepth: 0 });
@@ -446,9 +511,9 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
         await unloadCurrentSound();
         setCurrent(null);
         setPlayback({ position: 0, duration: 1, isPlaying: false });
-        setStatus("empty");
+        setStatus(refreshed.hasPendingGeneration ? "loading" : "empty");
 
-        if (refreshed.needsGeneration && onNeedsGeneration) {
+        if ((refreshed.needsGeneration || refreshed.hasPendingGeneration) && onNeedsGeneration) {
           onNeedsGeneration();
         }
         return false;
@@ -467,23 +532,41 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
     return true;
   }, [sendFeedback]);
 
-  const appendQueue = useCallback((list, source = "manual") => {
+  const materializeQueueSongs = useCallback((list, source = "manual") => {
     const base = Array.isArray(list) ? list : [list];
     const now = Date.now();
-    const manual = base
+    return base
       .filter(Boolean)
       .map((song, idx) => ({
         ...song,
         queue_id: song.queue_id || `${source}-${song.id || "x"}-${now}-${idx}`,
         source
       }));
+  }, []);
 
+  const appendQueue = useCallback((list, source = "manual") => {
+    const manual = materializeQueueSongs(list, source);
     setQueue((prev) => normalizeQueueSongs([...prev, ...manual], failedQueueKeyAtRef.current));
     if (!currentRef.current && manual.length > 0) {
       const first = firstPlayable(manual, failedQueueKeyAtRef.current);
       if (first) setCurrent(first);
     }
-  }, []);
+    return manual;
+  }, [materializeQueueSongs]);
+
+  const insertQueueNext = useCallback((list, source = "manual") => {
+    const manual = materializeQueueSongs(list, source);
+    setQueue((prev) => {
+      const currentIndex = findQueueIndex(prev, currentRef.current);
+      const insertAt = currentIndex >= 0 ? currentIndex + 1 : prev.length;
+      return normalizeQueueSongs([...prev.slice(0, insertAt), ...manual, ...prev.slice(insertAt)], failedQueueKeyAtRef.current);
+    });
+    if (!currentRef.current && manual.length > 0) {
+      const first = firstPlayable(manual, failedQueueKeyAtRef.current);
+      if (first) setCurrent(first);
+    }
+    return manual;
+  }, [materializeQueueSongs]);
 
   const hardReset = useCallback(async () => {
     return runSerial(async () => {
@@ -494,7 +577,7 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
       setQueue([]);
       setCurrent(null);
       setPlayback({ position: 0, duration: 1, isPlaying: false });
-      setRecommendation({ mode: "stable", skipStreak: 0, needsGeneration: false });
+      setRecommendation({ mode: "stable", skipStreak: 0, needsGeneration: false, hasPendingGeneration: false });
       setLastError("");
       setStatus("idle");
       return true;
@@ -556,11 +639,13 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
     next,
     likeCurrent,
     appendQueue,
+    insertQueueNext,
     hardReset
   }), [
     appendQueue,
     current,
     hardReset,
+    insertQueueNext,
     lastError,
     likeCurrent,
     next,

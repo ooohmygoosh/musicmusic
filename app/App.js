@@ -11,7 +11,8 @@ import {
   Alert,
   PanResponder,
   ActivityIndicator,
-  Image
+  Image,
+  FlatList
 } from "react-native";
 import { Audio } from "expo-av";
 import { BlurMask, Canvas, Circle, Group } from "@shopify/react-native-skia";
@@ -92,14 +93,6 @@ function hexToRgba(hex, alpha) {
 
 function queueKeyOf(song) {
   return song?.queue_id || song?.id;
-}
-
-function orderQueueForDisplay(currentSong, list) {
-  if (!currentSong || !Array.isArray(list) || list.length === 0) return list || [];
-  const currentKey = queueKeyOf(currentSong);
-  const currentIndex = list.findIndex((item) => queueKeyOf(item) === currentKey);
-  if (currentIndex <= 0) return list;
-  return [...list.slice(currentIndex), ...list.slice(0, currentIndex)];
 }
 
 function cloneQueueSong(song, source = "manual") {
@@ -607,6 +600,7 @@ export default function App() {
   const progressLayoutRef = useRef(progressLayout);
   const seekingRef = useRef(false);
   const songsRef = useRef(songs);
+  const queueListRef = useRef(null);
   const profileTagsRef = useRef(profileTags);
   const prefetchLockRef = useRef(false);
   const autoGenerateRef = useRef(async () => false);
@@ -647,6 +641,13 @@ export default function App() {
     [profileTags]
   );
 
+  const currentQueueIndex = useMemo(() => {
+    const playerCurrent = playbackEngine.current;
+    const playerQueue = playbackEngine.queue || [];
+    if (!playerCurrent || playerQueue.length === 0) return -1;
+    return playerQueue.findIndex((item) => queueKeyOf(item) === queueKeyOf(playerCurrent));
+  }, [playbackEngine.current, playbackEngine.queue]);
+
   const existingTagMatch = useMemo(() => {
     const clean = newTagName.trim().toLowerCase();
     if (!clean) return null;
@@ -681,6 +682,18 @@ export default function App() {
   useEffect(() => { profileTagsRef.current = profileTags; }, [profileTags]);
   useEffect(() => { userIdRef.current = userId; }, [userId]);
   useEffect(() => { activeZoneRef.current = activeZoneId; }, [activeZoneId]);
+
+  useEffect(() => {
+    if (activeTab !== "player" || currentQueueIndex < 0) return undefined;
+    const timer = setTimeout(() => {
+      queueListRef.current?.scrollToIndex?.({
+        index: currentQueueIndex,
+        animated: true,
+        viewPosition: 0
+      });
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [activeTab, currentQueueIndex]);
 
   const loadTags = async () => {
     const res = await fetch(`${API_BASE}/tags`);
@@ -1349,6 +1362,28 @@ export default function App() {
     playbackEngine.appendQueue(list, source);
   };
 
+  const insertSongAsNext = async (song, source = "manual-next") => {
+    const inserted = playbackEngine.insertQueueNext(song, source);
+    const firstInserted = Array.isArray(inserted) ? inserted[0] : null;
+    if (!firstInserted) return;
+    if (playbackEngine.current) {
+      await playbackEngine.next("skip");
+    } else {
+      await play(firstInserted);
+    }
+  };
+
+  const insertSongsAsNext = async (list, source = "playlist-next") => {
+    const inserted = playbackEngine.insertQueueNext(list, source);
+    const firstInserted = Array.isArray(inserted) ? inserted[0] : null;
+    if (!firstInserted) return;
+    if (playbackEngine.current) {
+      await playbackEngine.next("skip");
+    } else {
+      await play(firstInserted);
+    }
+  };
+
   const testConnection = async () => {
     setHealth({ loading: true, ok: null, message: "" });
     try {
@@ -1544,7 +1579,6 @@ export default function App() {
   const renderPlayer = () => {
     const playerCurrent = playbackEngine.current;
     const playerQueue = playbackEngine.queue || [];
-    const displayedQueue = orderQueueForDisplay(playerCurrent, playerQueue);
     const hasPendingGeneration = Boolean(playbackEngine.recommendation?.hasPendingGeneration);
     const playerPlayback = playbackEngine.playback || { position: 0, duration: 1, isPlaying: false };
     const playerNeedsGeneration = Boolean(playbackEngine.recommendation?.needsGeneration);
@@ -1555,7 +1589,7 @@ export default function App() {
     const shouldShowQueueSkeleton = Boolean(
       playerStatus === "loading"
       || hasPendingGeneration
-      || (playerNeedsGeneration && displayedQueue.length > 0)
+      || (playerNeedsGeneration && playerQueue.length > 0)
     );
 
     const statusText = playerStatus === "loading"
@@ -1695,36 +1729,47 @@ export default function App() {
         ) : null}
 
         <View style={styles.section}>
-          {displayedQueue.length > 0 ? (
-            <>
-              {displayedQueue.map((item) => (
-                <TouchableOpacity
-                  key={String(queueKeyOf(item))}
-                  style={[styles.listItem, queueKeyOf(playerCurrent) === queueKeyOf(item) && styles.currentQueueItem]}
-                  onPress={() => play(item)}
-                >
-                  <View style={styles.songListMain}>
-                    <SongArtwork uri={item.cover_url} size={56} radius={18} label={item.title || "TPY"} />
-                    <View style={styles.songListText}>
-                      <Text style={styles.listTitle}>{item.title || "Untitled"}</Text>
-                      <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
+          {playerQueue.length > 0 ? (
+            <View style={styles.queueViewport}>
+              <FlatList
+                ref={queueListRef}
+                data={playerQueue}
+                keyExtractor={(item) => String(queueKeyOf(item))}
+                nestedScrollEnabled
+                showsVerticalScrollIndicator={false}
+                onScrollToIndexFailed={({ index }) => {
+                  setTimeout(() => {
+                    queueListRef.current?.scrollToIndex?.({ index, animated: true, viewPosition: 0 });
+                  }, 120);
+                }}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={[styles.listItem, queueKeyOf(playerCurrent) === queueKeyOf(item) && styles.currentQueueItem]}
+                    onPress={() => play(item)}
+                  >
+                    <View style={styles.songListMain}>
+                      <SongArtwork uri={item.cover_url} size={56} radius={18} label={item.title || "TPY"} />
+                      <View style={styles.songListText}>
+                        <Text style={styles.listTitle}>{item.title || "Untitled"}</Text>
+                        <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.chevron}>{">"}</Text>
+                  </TouchableOpacity>
+                )}
+                ListFooterComponent={shouldShowQueueSkeleton ? (
+                  <View style={[styles.listItem, styles.queueSkeletonItem]}>
+                    <View style={styles.songListMain}>
+                      <View style={styles.queueSkeletonArtwork} />
+                      <View style={styles.songListText}>
+                        <View style={[styles.queueSkeletonLine, styles.queueSkeletonLinePrimary]} />
+                        <View style={[styles.queueSkeletonLine, styles.queueSkeletonLineSecondary]} />
+                      </View>
                     </View>
                   </View>
-                  <Text style={styles.chevron}>{">"}</Text>
-                </TouchableOpacity>
-              ))}
-              {shouldShowQueueSkeleton ? (
-                <View style={[styles.listItem, styles.queueSkeletonItem]}>
-                  <View style={styles.songListMain}>
-                    <View style={styles.queueSkeletonArtwork} />
-                    <View style={styles.songListText}>
-                      <View style={[styles.queueSkeletonLine, styles.queueSkeletonLinePrimary]} />
-                      <View style={[styles.queueSkeletonLine, styles.queueSkeletonLineSecondary]} />
-                    </View>
-                  </View>
-                </View>
-              ) : null}
-            </>
+                ) : null}
+              />
+            </View>
           ) : (
             <View style={styles.queueEmptyBox}>
               {playerStatus === "loading" || hasPendingGeneration ? (
@@ -1736,7 +1781,7 @@ export default function App() {
                   </View>
                 </View>
               ) : (
-                <Text style={styles.placeholder}>Queue is empty. Tap Reload or generate songs in Portrait.</Text>
+                <Text style={styles.placeholder}>No songs ready. Tap Reload or generate songs in Portrait.</Text>
               )}
             </View>
           )}
@@ -1784,7 +1829,7 @@ export default function App() {
                   style={styles.playlistPlus}
                   onPress={async () => {
                     const list = songsInPlaylist.length > 0 ? songsInPlaylist : await loadPlaylistSongs(playlist.id);
-                    enqueueSongsToTail(list, "playlist-" + String(playlist.id));
+                    await insertSongsAsNext(list, "playlist-" + String(playlist.id));
                   }}
                 >
                   <Text style={styles.playlistPlusText}>+</Text>
@@ -1796,7 +1841,7 @@ export default function App() {
                   {songsInPlaylist.length === 0 ? (
                     <Text style={styles.placeholder}>This playlist is empty.</Text>
                   ) : songsInPlaylist.map((song) => (
-                    <TouchableOpacity key={String(playlist.id) + "-" + String(song.id)} style={styles.listItem} onPress={() => enqueueSongToTail(song, "playlist-song-" + String(playlist.id))}>
+                    <TouchableOpacity key={String(playlist.id) + "-" + String(song.id)} style={styles.listItem} onPress={() => insertSongAsNext(song, "playlist-song-" + String(playlist.id))}>
                       <View style={styles.songListMain}>
                         <SongArtwork uri={song.cover_url} size={56} radius={18} label={song.title || "TPY"} />
                         <View style={styles.songListText}>
@@ -1820,7 +1865,7 @@ export default function App() {
           <Text style={styles.placeholder}>No generated songs yet. Generate songs in Portrait first.</Text>
         ) : mySongs.map((song) => (
           <View key={String(song.id) + "-mine"} style={styles.playlistBox}>
-            <TouchableOpacity style={styles.listItem} onPress={() => play(song)}>
+            <TouchableOpacity style={styles.listItem} onPress={() => enqueueSongToTail(song, "my-song-" + String(song.id))}>
               <View style={styles.songListMain}>
                 <SongArtwork uri={song.cover_url} size={56} radius={18} label={song.title || "TPY"} />
                 <View style={styles.songListText}>
@@ -2096,6 +2141,7 @@ const styles = StyleSheet.create({
   listItem: { backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   currentQueueItem: { borderColor: "rgba(255,255,255,0.28)" },
   queueEmptyBox: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", padding: 14 },
+  queueViewport: { maxHeight: 392 },
   queueSkeletonItem: { opacity: 0.78 },
   queueSkeletonStandalone: { flexDirection: "row", alignItems: "center" },
   queueSkeletonArtwork: { width: 56, height: 56, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.12)" },
