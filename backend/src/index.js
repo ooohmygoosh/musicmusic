@@ -56,8 +56,13 @@ const RECOMMEND_REFILL_TARGET = Number(process.env.RECOMMEND_REFILL_TARGET || 6)
 const STABLE_EXPLORE_TAG_COUNT = Number(process.env.STABLE_EXPLORE_TAG_COUNT || 1);
 const DEEP_EXPLORE_TAG_COUNT = Number(process.env.DEEP_EXPLORE_TAG_COUNT || 2);
 const MAX_GENERATION_TAGS = Number(process.env.MAX_GENERATION_TAGS || 8);
-const USER_TOP_REFERENCE_COUNT = Number(process.env.USER_TOP_REFERENCE_COUNT || 6);
-const MIN_REFERENCE_OVERLAP = Number(process.env.MIN_REFERENCE_OVERLAP || 3);
+const TAG_CATEGORY_LIMITS = Object.freeze({
+  "\u573a\u666f": 2,
+  "\u98ce\u683c": 2,
+  "\u60c5\u7eea": 2,
+  "\u5176\u4ed6": 2
+});
+const RANDOMIZED_SECONDARY_WINDOW = Math.max(2, Number(process.env.RANDOMIZED_SECONDARY_WINDOW || 4));
 const OFFICIAL_ACCOUNT_ID = normalizeAccountId(process.env.OFFICIAL_ACCOUNT_ID || "official") || "official";
 const OFFICIAL_DISPLAY_NAME = String(process.env.OFFICIAL_DISPLAY_NAME || "Official").trim() || "Official";
 const OFFICIAL_AVATAR = String(process.env.OFFICIAL_AVATAR || "music").trim() || "music";
@@ -1414,30 +1419,30 @@ async function pickExplorationTagsForUser(userId, selectedIds, anchorTag, count 
     [Number(userId)]
   );
 
-  const typePriority = new Map([["\u98ce\u683c", 0], ["\u8282\u594f", 1], ["\u60c5\u7eea", 2], ["\u4e50\u5668", 3]]);
-  const anchorType = String(anchorTag?.type || "").trim();
-  const pool = shuffleList(rows)
+  const typePriority = new Map([["\u98ce\u683c", 0], ["\u60c5\u7eea", 1], ["\u5176\u4ed6", 2]]);
+  const anchorType = normalizeTagType(anchorTag?.type);
+  const pool = shuffleList(normalizeTagRows(rows))
     .filter((tag) => !selectedIds.has(Number(tag.id)))
     .filter((tag) => !isSceneTag(tag))
     .filter((tag) => !String(tag.type || "").includes("\u4eba\u58f0"))
-    .filter((tag) => String(tag.type || "").trim() !== anchorType)
+    .filter((tag) => normalizeTagType(tag.type) !== anchorType)
     .sort((a, b) => {
-      const pa = typePriority.has(String(a.type || "").trim()) ? typePriority.get(String(a.type || "").trim()) : 99;
-      const pb = typePriority.has(String(b.type || "").trim()) ? typePriority.get(String(b.type || "").trim()) : 99;
+      const pa = typePriority.has(normalizeTagType(a.type)) ? typePriority.get(normalizeTagType(a.type)) : 99;
+      const pb = typePriority.has(normalizeTagType(b.type)) ? typePriority.get(normalizeTagType(b.type)) : 99;
       const ra = recentTagIds.has(Number(a.id)) ? 1 : 0;
       const rb = recentTagIds.has(Number(b.id)) ? 1 : 0;
       if (ra !== rb) return ra - rb;
       if (pa !== pb) return pa - pb;
-      return Number(a.id) - Number(b.id);
+      return Number(b.weight || 0) - Number(a.weight || 0);
     });
 
   const picked = [];
   const usedTypes = new Set();
   for (const tag of pool) {
     if (picked.length >= target) break;
-    const type = String(tag.type || "").trim();
+    const type = normalizeTagType(tag.type);
     if (!type || usedTypes.has(type)) continue;
-    picked.push({ ...tag, weight: Math.min(PROMPT_WEAK_MAX_WEIGHT, EXPLORE_TAG_SEED_WEIGHT) });
+    picked.push({ ...tag, type, weight: Math.min(PROMPT_WEAK_MAX_WEIGHT, EXPLORE_TAG_SEED_WEIGHT) });
     selectedIds.add(Number(tag.id));
     usedTypes.add(type);
   }
@@ -1513,31 +1518,104 @@ function buildFallbackCoverHint(anchorTag, coreTags, weakTags) {
 
 function buildGenerationTagSelection(sortedTags, anchorTag, coreTags, weakTags, exploreTags) {
   const supplementLimit = Math.max(0, MAX_GENERATION_TAGS - 1);
-  const topReferenceTags = (sortedTags || [])
-    .filter((tag) => Number(tag.id) !== Number(anchorTag?.id || 0))
-    .slice(0, USER_TOP_REFERENCE_COUNT);
-  const requiredOverlap = Math.min(MIN_REFERENCE_OVERLAP, topReferenceTags.length, supplementLimit);
-  const topReferenceIdSet = new Set(topReferenceTags.map((tag) => Number(tag.id)).filter(Boolean));
-  const picked = [];
-  const pickedIds = new Set();
+  const anchorId = Number(anchorTag?.id || 0);
+  const anchorType = normalizeTagType(anchorTag?.type);
+  const categoryCounts = new Map();
+  if (anchorType) categoryCounts.set(anchorType, 1);
 
-  const addUnique = (pool, limit = supplementLimit) => {
+  const sourcePriority = new Map();
+  const sortedIndex = new Map();
+  const merged = new Map();
+  const register = (pool, priority) => {
     for (const tag of pool || []) {
-      if (picked.length >= limit) break;
       const id = Number(tag?.id || 0);
-      if (!id || pickedIds.has(id) || id === Number(anchorTag?.id || 0)) continue;
-      picked.push(tag);
-      pickedIds.add(id);
+      if (!id || id === anchorId) continue;
+      const normalized = { ...tag, type: normalizeTagType(tag.type) };
+      if (!sortedIndex.has(id)) sortedIndex.set(id, sortedIndex.size);
+      const existing = merged.get(id);
+      if (!existing || Number(normalized.weight || 0) > Number(existing.weight || 0)) {
+        merged.set(id, normalized);
+      }
+      if (!sourcePriority.has(id) || priority < sourcePriority.get(id)) {
+        sourcePriority.set(id, priority);
+      }
     }
   };
 
-  addUnique((coreTags || []).filter((tag) => topReferenceIdSet.has(Number(tag.id))), requiredOverlap);
-  addUnique((weakTags || []).filter((tag) => topReferenceIdSet.has(Number(tag.id))), requiredOverlap);
-  addUnique((sortedTags || []).filter((tag) => topReferenceIdSet.has(Number(tag.id))), requiredOverlap);
-  addUnique(exploreTags || []);
-  addUnique(coreTags || []);
-  addUnique(weakTags || []);
-  addUnique(sortedTags || []);
+  register(coreTags, 0);
+  register(exploreTags, 1);
+  register(weakTags, 2);
+  register(sortedTags, 3);
+
+  const ranked = [...merged.values()].sort((a, b) => {
+    const wa = Number(a.weight || 0);
+    const wb = Number(b.weight || 0);
+    if (wb !== wa) return wb - wa;
+    const pa = sourcePriority.get(Number(a.id)) ?? 99;
+    const pb = sourcePriority.get(Number(b.id)) ?? 99;
+    if (pa !== pb) return pa - pb;
+    return (sortedIndex.get(Number(a.id)) ?? 9999) - (sortedIndex.get(Number(b.id)) ?? 9999);
+  });
+
+  const byType = new Map();
+  for (const tag of ranked) {
+    const type = normalizeTagType(tag.type);
+    if (!byType.has(type)) byType.set(type, []);
+    byType.get(type).push(tag);
+  }
+
+  const picked = [];
+  const pickedIds = new Set();
+  const preferredStyleIds = [];
+  const preferredMoodIds = [];
+
+  const addTag = (tag) => {
+    const id = Number(tag?.id || 0);
+    const type = normalizeTagType(tag?.type);
+    if (!id || pickedIds.has(id) || picked.length >= supplementLimit) return false;
+    const limit = Number(TAG_CATEGORY_LIMITS[type] || 0);
+    const current = Number(categoryCounts.get(type) || 0);
+    if (limit > 0 && current >= limit) return false;
+    picked.push({ ...tag, type });
+    pickedIds.add(id);
+    categoryCounts.set(type, current + 1);
+    if (type === "\u98ce\u683c") preferredStyleIds.push(id);
+    if (type === "\u60c5\u7eea") preferredMoodIds.push(id);
+    return true;
+  };
+
+  const takePrimary = (type) => {
+    const pool = (byType.get(type) || []).filter((tag) => !pickedIds.has(Number(tag.id)));
+    if (pool.length === 0) return;
+    addTag(pool[0]);
+  };
+
+  const takeSecondary = (type) => {
+    const limit = Number(TAG_CATEGORY_LIMITS[type] || 0);
+    const current = Number(categoryCounts.get(type) || 0);
+    if (limit <= current) return;
+    const pool = (byType.get(type) || []).filter((tag) => !pickedIds.has(Number(tag.id)));
+    if (pool.length === 0) return;
+    const windowSize = Math.min(RANDOMIZED_SECONDARY_WINDOW, pool.length);
+    const randomPool = pool.slice(0, windowSize);
+    const chosen = randomPool[Math.floor(Math.random() * randomPool.length)] || pool[0];
+    addTag(chosen);
+  };
+
+  if (anchorType === "\u573a\u666f") takePrimary("\u573a\u666f");
+  takePrimary("\u98ce\u683c");
+  takePrimary("\u60c5\u7eea");
+  takePrimary("\u5176\u4ed6");
+
+  if (anchorType === "\u573a\u666f") takeSecondary("\u573a\u666f");
+  takeSecondary("\u98ce\u683c");
+  takeSecondary("\u60c5\u7eea");
+  takeSecondary("\u5176\u4ed6");
+
+  for (const tag of ranked) {
+    if (picked.length >= supplementLimit) break;
+    addTag(tag);
+  }
 
   const supplements = picked.slice(0, supplementLimit);
   const supplementIdSet = new Set(supplements.map((tag) => Number(tag.id)).filter(Boolean));
@@ -1545,11 +1623,11 @@ function buildGenerationTagSelection(sortedTags, anchorTag, coreTags, weakTags, 
   const trimmedWeakTags = supplements.filter((tag) => !trimmedCoreTags.some((core) => Number(core.id) === Number(tag.id)));
 
   return {
-    topReferenceTags,
-    requiredOverlap,
     chosenTags: [anchorTag, ...supplements].filter(Boolean).slice(0, MAX_GENERATION_TAGS),
     coreTags: trimmedCoreTags,
-    weakTags: trimmedWeakTags
+    weakTags: trimmedWeakTags,
+    preferredStyleIds,
+    preferredMoodIds
   };
 }
 
@@ -1624,8 +1702,6 @@ async function buildPrompt(userId, options = {}) {
     title_hint: optimized.title_hint || fallbackTitleHint,
     cover_hint: optimized.cover_hint || fallbackCoverHint,
     explore_tags: exploreTags,
-    top_reference_tags: selection.topReferenceTags,
-    required_overlap: selection.requiredOverlap
   };
 }
 
@@ -2024,8 +2100,8 @@ async function getUserRecommendationProfile(userId, options = {}) {
     coreTags,
     weakTags,
     exploreTags,
-    topReferenceTags: selection.topReferenceTags,
-    requiredOverlap: selection.requiredOverlap,
+    preferredStyleIds: selection.preferredStyleIds || [],
+    preferredMoodIds: selection.preferredMoodIds || [],
     weightByTagId
   };
 }
@@ -2044,8 +2120,8 @@ function rankCandidateLibrarySongs(rows, profile) {
   const coreIds = (profile?.coreTags || []).map((tag) => Number(tag.id)).filter(Boolean);
   const weakIds = (profile?.weakTags || []).map((tag) => Number(tag.id)).filter(Boolean);
   const exploreIds = (profile?.exploreTags || []).map((tag) => Number(tag.id)).filter(Boolean);
-  const topReferenceIds = (profile?.topReferenceTags || []).map((tag) => Number(tag.id)).filter(Boolean);
-  const requiredOverlap = Math.min(Number(profile?.requiredOverlap || 0), topReferenceIds.length);
+  const preferredStyleIds = (profile?.preferredStyleIds || []).map((id) => Number(id)).filter(Boolean);
+  const preferredMoodIds = (profile?.preferredMoodIds || []).map((id) => Number(id)).filter(Boolean);
   const weightByTagId = profile?.weightByTagId || new Map();
 
   return [...(rows || [])]
@@ -2055,8 +2131,10 @@ function rankCandidateLibrarySongs(rows, profile) {
       const anchorHit = anchorId ? songTagSet.has(anchorId) : false;
       if (requireAnchor && !anchorHit) return null;
 
-      const topReferenceHit = countMatchedTags(songTagSet, topReferenceIds);
-      if (requiredOverlap > 0 && topReferenceHit < requiredOverlap) return null;
+      const styleHit = countMatchedTags(songTagSet, preferredStyleIds);
+      const moodHit = countMatchedTags(songTagSet, preferredMoodIds);
+      if (preferredStyleIds.length > 0 && styleHit < 1) return null;
+      if (preferredMoodIds.length > 0 && moodHit < 1) return null;
 
       const coreHit = countMatchedTags(songTagSet, coreIds);
       const weakHit = countMatchedTags(songTagSet, weakIds);
@@ -2070,7 +2148,8 @@ function rankCandidateLibrarySongs(rows, profile) {
             : 0;
       const matchedWeight = songTagIds.reduce((sum, id) => sum + Number(weightByTagId.get(Number(id)) || 0), 0);
       const score = (anchorHit ? 1000 : 0)
-        + topReferenceHit * 140
+        + styleHit * 260
+        + moodHit * 260
         + coreTier * 400
         + coreHit * 120
         + weakHit * 18
@@ -2081,10 +2160,11 @@ function rankCandidateLibrarySongs(rows, profile) {
       return {
         ...row,
         anchor_hit: anchorHit,
+        style_hit: styleHit,
+        mood_hit: moodHit,
         core_hit: coreHit,
         weak_hit: weakHit,
         explore_hit: exploreHit,
-        top_reference_hit: topReferenceHit,
         core_tier: coreTier,
         score
       };
@@ -2092,6 +2172,8 @@ function rankCandidateLibrarySongs(rows, profile) {
     .filter(Boolean)
     .sort((a, b) => {
       if (b.core_tier !== a.core_tier) return b.core_tier - a.core_tier;
+      if (b.style_hit !== a.style_hit) return b.style_hit - a.style_hit;
+      if (b.mood_hit !== a.mood_hit) return b.mood_hit - a.mood_hit;
       if (b.core_hit !== a.core_hit) return b.core_hit - a.core_hit;
       if (b.score !== a.score) return b.score - a.score;
       if (Number(b.reuse_count || 0) !== Number(a.reuse_count || 0)) {
