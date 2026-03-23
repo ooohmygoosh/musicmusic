@@ -1,4 +1,4 @@
-import "dotenv/config";
+﻿import "dotenv/config";
 import crypto from "crypto";
 import Fastify from "fastify";
 import fs from "fs/promises";
@@ -719,7 +719,7 @@ app.get("/admin/favorites", async (request, reply) => {
 
 app.get("/admin/library-songs", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
-  const { q, available, type, creator_type, generation_source, visibility_scope } = request.query || {};
+  const { q, available, type, creator_type, generation_source, visibility_scope, sort_by, sort_dir } = request.query || {};
   const search = q ? `%${String(q).trim()}%` : null;
   const availableFilter =
     available === "true" ? true : available === "false" ? false : null;
@@ -727,9 +727,19 @@ app.get("/admin/library-songs", async (request, reply) => {
   const creatorTypeFilter = creator_type ? String(creator_type).trim() : null;
   const generationSourceFilter = generation_source ? String(generation_source).trim() : null;
   const visibilityScopeFilter = visibility_scope ? String(visibility_scope).trim() : null;
+  const sortByMap = {
+    created_at: "lib.created_at",
+    id: "lib.id",
+    deliveries: "deliveries",
+    likes: "likes",
+    reuse_count: "lib.reuse_count",
+    title: "lib.title"
+  };
+  const orderBy = sortByMap[String(sort_by || "created_at")] || "lib.created_at";
+  const orderDir = String(sort_dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
 
   const { rows } = await query(
-    "SELECT lib.id, lib.title, lib.cover_url, lib.prompt, lib.base_prompt, lib.cover_hint, lib.model, lib.duration, lib.style, lib.is_available, lib.reuse_count, lib.creator_type, lib.generation_source, lib.visibility_scope, lib.publish_status, lib.revenue_enabled, lib.official_fallback, lib.owner_user_id, owner.account_id AS owner_account_id, owner.display_name AS owner_display_name, COUNT(DISTINCT all_s.id)::int AS copies, COUNT(DISTINCT qd.id)::int AS deliveries, COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS likes, COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skips, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, COALESCE(array_remove(array_agg(DISTINCT t.type), NULL), '{}') AS tag_types, COALESCE((array_remove(array_agg(DISTINCT t.type), NULL))[1], 'Uncategorized') AS primary_type, sa.audio_url FROM songs lib LEFT JOIN users owner ON owner.id = lib.owner_user_id LEFT JOIN songs all_s ON COALESCE(all_s.source_song_id, all_s.id) = lib.id LEFT JOIN feedback f ON f.song_id = all_s.id LEFT JOIN user_song_queue qd ON qd.song_id = all_s.id LEFT JOIN song_tags st ON st.song_id = lib.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = lib.id ORDER BY id DESC LIMIT 1) sa ON true WHERE lib.source_song_id IS NULL AND ($1::text IS NULL OR lib.title ILIKE $1 OR lib.prompt ILIKE $1 OR lib.base_prompt ILIKE $1 OR owner.account_id ILIKE $1 OR owner.display_name ILIKE $1 OR EXISTS (SELECT 1 FROM song_tags st2 JOIN tags t2 ON t2.id = st2.tag_id WHERE st2.song_id = lib.id AND (t2.name ILIKE $1 OR t2.type ILIKE $1))) AND ($2::boolean IS NULL OR lib.is_available = $2) AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM song_tags st3 JOIN tags t3 ON t3.id = st3.tag_id WHERE st3.song_id = lib.id AND t3.type = $3)) AND ($4::text IS NULL OR lib.creator_type = $4) AND ($5::text IS NULL OR lib.generation_source = $5) AND ($6::text IS NULL OR lib.visibility_scope = $6) GROUP BY lib.id, owner.account_id, owner.display_name, sa.audio_url ORDER BY likes DESC, lib.reuse_count DESC, deliveries DESC, lib.created_at DESC LIMIT 300",
+    `SELECT lib.id, lib.created_at, lib.title, lib.cover_url, lib.prompt, lib.base_prompt, lib.cover_hint, lib.model, lib.duration, lib.style, lib.is_available, lib.is_public, lib.reuse_count, lib.creator_type, lib.generation_source, lib.visibility_scope, lib.publish_status, lib.revenue_enabled, lib.official_fallback, lib.owner_user_id, owner.account_id AS owner_account_id, owner.display_name AS owner_display_name, COUNT(DISTINCT all_s.id)::int AS copies, COUNT(DISTINCT qd.id)::int AS deliveries, COUNT(DISTINCT CASE WHEN f.action = 'like' THEN f.id END)::int AS likes, COUNT(DISTINCT CASE WHEN f.action = 'skip' THEN f.id END)::int AS skips, COALESCE(array_remove(array_agg(DISTINCT t.name), NULL), '{}') AS tags, COALESCE(array_remove(array_agg(DISTINCT t.type), NULL), '{}') AS tag_types, COALESCE((array_remove(array_agg(DISTINCT t.type), NULL))[1], 'Uncategorized') AS primary_type, sa.audio_url FROM songs lib LEFT JOIN users owner ON owner.id = lib.owner_user_id LEFT JOIN songs all_s ON COALESCE(all_s.source_song_id, all_s.id) = lib.id LEFT JOIN feedback f ON f.song_id = all_s.id LEFT JOIN user_song_queue qd ON qd.song_id = all_s.id LEFT JOIN song_tags st ON st.song_id = lib.id LEFT JOIN tags t ON t.id = st.tag_id LEFT JOIN LATERAL (SELECT audio_url FROM song_assets WHERE song_id = lib.id ORDER BY id DESC LIMIT 1) sa ON true WHERE lib.source_song_id IS NULL AND ($1::text IS NULL OR lib.title ILIKE $1 OR lib.prompt ILIKE $1 OR lib.base_prompt ILIKE $1 OR owner.account_id ILIKE $1 OR owner.display_name ILIKE $1 OR EXISTS (SELECT 1 FROM song_tags st2 JOIN tags t2 ON t2.id = st2.tag_id WHERE st2.song_id = lib.id AND (t2.name ILIKE $1 OR t2.type ILIKE $1))) AND ($2::boolean IS NULL OR lib.is_available = $2) AND ($3::text IS NULL OR EXISTS (SELECT 1 FROM song_tags st3 JOIN tags t3 ON t3.id = st3.tag_id WHERE st3.song_id = lib.id AND t3.type = $3)) AND ($4::text IS NULL OR lib.creator_type = $4) AND ($5::text IS NULL OR lib.generation_source = $5) AND ($6::text IS NULL OR lib.visibility_scope = $6) GROUP BY lib.id, owner.account_id, owner.display_name, sa.audio_url ORDER BY ${orderBy} ${orderDir}, lib.id DESC LIMIT 300`,
     [search, availableFilter, typeFilter, creatorTypeFilter, generationSourceFilter, visibilityScopeFilter]
   );
   return { items: rows };
@@ -738,14 +748,32 @@ app.get("/admin/library-songs", async (request, reply) => {
 app.patch("/admin/library-songs/:id", async (request, reply) => {
   if (!requireAdmin(request, reply)) return;
   const { id } = request.params;
-  const { is_available } = request.body || {};
-  if (typeof is_available !== "boolean") {
-    reply.code(400).send({ error: "is_available boolean required" });
+  const { is_available, is_public } = request.body || {};
+  const sets = [];
+  const values = [];
+
+  if (typeof is_available === "boolean") {
+    values.push(is_available);
+    sets.push(`is_available = $${values.length}`);
+  }
+  if (typeof is_public === "boolean") {
+    values.push(is_public);
+    sets.push(`is_public = $${values.length}`);
+    values.push(is_public ? "public" : "private");
+    sets.push(`visibility_scope = $${values.length}`);
+    values.push(is_public ? "published" : "draft");
+    sets.push(`publish_status = $${values.length}`);
+  }
+
+  if (sets.length === 0) {
+    reply.code(400).send({ error: "is_available or is_public boolean required" });
     return;
   }
+
+  values.push(Number(id));
   const { rows } = await query(
-    "UPDATE songs SET is_available = $1 WHERE id = $2 AND source_song_id IS NULL RETURNING id, is_available",
-    [is_available, Number(id)]
+    `UPDATE songs SET ${sets.join(", ")} WHERE id = $${values.length} AND source_song_id IS NULL RETURNING id, is_available, is_public, visibility_scope, publish_status`,
+    values
   );
   return { item: rows[0] || null };
 });

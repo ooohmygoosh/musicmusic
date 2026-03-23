@@ -242,3 +242,91 @@ button {
 .compact-row {
   margin-bottom: 0;
 }
+
+.library-table-wrap {
+  overflow-x: auto;
+}
+.library-table {
+  width: 100%;
+  min-width: 1180px;
+  border-collapse: collapse;
+}
+.library-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.library-row td,
+.library-table th {
+  vertical-align: middle;
+}
+.table-tags {
+  max-width: 220px;
+  color: #555;
+}
+.table-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chip-btn {
+  border: 1px solid #d4cabd;
+  background: #fff;
+  color: #4a4137;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.chip-btn.is-on {
+  background: #1f4b3d;
+  border-color: #1f4b3d;
+  color: #fff;
+}
+.chip-btn.is-off {
+  background: #f4e8e8;
+  border-color: #d9bcbc;
+  color: #7a2f2f;
+}
+.small {
+  padding: 7px 10px;
+  font-size: 12px;
+}
+.library-detail-row td {
+  padding: 0;
+  border-bottom: none;
+}
+.library-detail-card {
+  display: none;
+  padding: 16px;
+  background: #f9f6f1;
+  border: 1px solid #eee3d6;
+  border-radius: 0 0 12px 12px;
+  margin-bottom: 8px;
+}
+.library-detail-card.is-open {
+  display: block;
+}
+.detail-top {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+}
+.detail-cover {
+  width: 96px;
+  height: 96px;
+}
+.detail-columns {
+  flex: 1;
+  min-width: 0;
+}
+.detail-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin-bottom: 14px;
+}
+.detail-section {
+  margin-top: 10px;
+}
+@media (max-width: 640px) {
+  .detail-top { flex-direction: column; }
+}

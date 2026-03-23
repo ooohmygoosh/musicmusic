@@ -61,8 +61,40 @@
             <option value="场景">Scene</option>
             <option value="节奏">Tempo</option>
           </select>
+          <select id="sortByFilter">
+            <option value="created_at">Newest</option>
+            <option value="id">Song ID</option>
+            <option value="deliveries">Deliveries</option>
+            <option value="likes">Likes</option>
+            <option value="reuse_count">Reuse</option>
+            <option value="title">Title</option>
+          </select>
+          <select id="sortDirFilter">
+            <option value="desc">Desc</option>
+            <option value="asc">Asc</option>
+          </select>
         </div>
-        <div id="songList" class="list"></div>
+        <div class="table library-table-wrap">
+          <table class="library-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Select</th>
+                <th>ID</th>
+                <th>Created</th>
+                <th>Title</th>
+                <th>Tags</th>
+                <th>Owner</th>
+                <th>Source</th>
+                <th>Public</th>
+                <th>Disabled</th>
+                <th>Stats</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="songList"></tbody>
+          </table>
+        </div>
       </section>
     </div>
 
