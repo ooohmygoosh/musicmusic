@@ -183,14 +183,7 @@ function findZoneAtPoint(point, stageSize) {
 }
 
 function findZoneForBlock(block, point, stageSize) {
-  const zones = getFuncZones(stageSize);
-  const metrics = getBlockMetrics(block);
-  const left = point.x - metrics.width / 2;
-  const right = point.x + metrics.width / 2;
-  const top = point.y - metrics.height / 2;
-  const bottom = point.y + metrics.height / 2;
-  const match = zones.find((zone) => right >= zone.x && left <= zone.x + zone.width && bottom >= zone.y && top <= zone.y + zone.height);
-  return match ? match.id : findZoneAtPoint(point, stageSize);
+  return findZoneAtPoint(point, stageSize);
 }
 
 function sanitizeBlockPoint(block, point, stageSize) {
@@ -593,6 +586,7 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState(CATEGORY_ORDER[0] || "");
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [isTagSheetCollapsed, setIsTagSheetCollapsed] = useState(false);
+  const [isGenerateSheetCollapsed, setIsGenerateSheetCollapsed] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [tagMessage, setTagMessage] = useState("");
   const [health, setHealth] = useState({ loading: false, ok: null, message: "" });
@@ -605,6 +599,7 @@ export default function App() {
   const [seekPreviewPosition, setSeekPreviewPosition] = useState(null);
   const activeZoneRef = useRef(-1);
   const zonePulseTimerRef = useRef(null);
+  const blockPulseTimerRef = useRef(null);
   const [progressLayout, setProgressLayout] = useState(null);
   const progressTrackRef = useRef(null);
   const completeSentFor = useRef(null);
@@ -614,7 +609,8 @@ export default function App() {
   const activeTabRef = useRef(activeTab);
   const draggingIdRef = useRef(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
-  const dragStartBlockPosRef = useRef({ x: 0, y: 0 });
+  const dragStartBlockPosRef = useRef({ x: 0, y: 0 });
+
   const lastDragPointRef = useRef(null);
   const playbackRef = useRef(playback);
   const soundRef = useRef(sound);
@@ -639,23 +635,36 @@ export default function App() {
 
   const triggerZonePulse = useCallback((zoneId) => {
     if (zonePulseTimerRef.current) clearTimeout(zonePulseTimerRef.current);
+    if (blockPulseTimerRef.current) clearTimeout(blockPulseTimerRef.current);
     setZonePulseId(zoneId);
     zonePulseTimerRef.current = setTimeout(() => {
       setZonePulseId(-1);
       zonePulseTimerRef.current = null;
-    }, 220);
+    }, 120);
   }, []);
 
   const pulsePortraitBlock = useCallback((tagId) => {
     if (!Number.isFinite(Number(tagId))) return;
+    if (blockPulseTimerRef.current) clearTimeout(blockPulseTimerRef.current);
     setPortraitBlocks((prev) => {
       const next = prev.map(cloneBlock);
       const target = next.find((item) => Number(item.id) === Number(tagId));
       if (!target) return prev;
-      target.flash = 0.88;
+      target.flash = 0.62;
       blocksRef.current = next;
       return next;
     });
+    blockPulseTimerRef.current = setTimeout(() => {
+      setPortraitBlocks((currentBlocks) => {
+        const reset = currentBlocks.map(cloneBlock);
+        const flashing = reset.find((item) => Number(item.id) === Number(tagId));
+        if (!flashing) return currentBlocks;
+        flashing.flash = 0;
+        blocksRef.current = reset;
+        return reset;
+      });
+      blockPulseTimerRef.current = null;
+    }, 140);
   }, []);
 
   const refreshProfileSoon = useCallback(async () => {
@@ -732,6 +741,7 @@ export default function App() {
   useEffect(() => { activeZoneRef.current = activeZoneId; }, [activeZoneId]);
   useEffect(() => () => {
     if (zonePulseTimerRef.current) clearTimeout(zonePulseTimerRef.current);
+    if (blockPulseTimerRef.current) clearTimeout(blockPulseTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -898,10 +908,11 @@ export default function App() {
   const computeNextWeight = (currentWeight, zoneId) => {
     const value = clamp(Number(currentWeight || 0), 0, 1);
     if (zoneId === 2) {
-      const lowered = value * 0.4 - 0.08;
-      return lowered <= 0.04 ? 0 : Number(lowered.toFixed(3));
+      const lowered = value * 0.82 - 0.02;
+      return lowered <= 0.015 ? 0 : Number(lowered.toFixed(3));
     }
-    return Number(Math.min(1, value + 0.26).toFixed(3));
+    const raised = value + (1 - value) * 0.18 + 0.02;
+    return Number(Math.min(1, raised).toFixed(3));
   };
 
   const applyProfileTagActionById = async (tagIdInput, zoneId, fallbackWeight = 0, options = {}) => {
@@ -922,10 +933,10 @@ export default function App() {
       await persistProfileTagWeight(tagId, nextWeight);
     } finally {
       if (refreshAfter) {
-        await loadProfileTags(userIdRef.current);
+        await loadProfileTags(userIdRef.current);
+      }
     }
   };
-
   useEffect(() => { loadTags().catch(() => setTags([])); }, []);
 
   useEffect(() => () => {
@@ -962,7 +973,7 @@ export default function App() {
           block.currentPos.x += block.velocity.x;
           block.currentPos.y += block.velocity.y;
           block.currentSize += (block.targetSize - block.currentSize) * 0.25;
-          block.flash = Math.max(0, Number(block.flash || 0) * 0.34 - 0.22);
+          block.flash = Math.max(0, Number(block.flash || 0) * 0.18 - 0.18);
 
           if (block.needBackToAnchor && Math.hypot(dx, dy) < 2 && Math.hypot(block.velocity.x, block.velocity.y) < 0.4) {
             block.currentPos = { ...block.anchorPos };
@@ -1086,7 +1097,8 @@ export default function App() {
       const point = { x: evt.nativeEvent.locationX, y: evt.nativeEvent.locationY };
       const picked = pickBlockAtPoint(blocksRef.current, point);
       if (!picked) return;
-      draggingIdRef.current = picked.id;
+      draggingIdRef.current = picked.id;
+
       setIsPortraitDragging(true);
       lastDragPointRef.current = { ...picked.currentPos };
       dragOffsetRef.current = { x: picked.currentPos.x - point.x, y: picked.currentPos.y - point.y };
@@ -1988,43 +2000,50 @@ export default function App() {
           </View>
 
           <View style={[styles.sheetCard, styles.generateSectionCard]}>
-            <Text style={styles.groupTitle}>Generate songs</Text>
-            <TouchableOpacity
-              style={styles.secondarySoft}
-              onPress={async () => {
-                await generate({ prefetch: false, silent: false, preferLatest: true });
-                await playbackEngine.refresh({ buffer: 8 });
-              }}
-            >
-              <Text style={styles.secondaryText}>{generationLoading ? "Generating..." : "Generate songs from portrait"}</Text>
+            <TouchableOpacity style={styles.sheetHeader} onPress={() => setIsGenerateSheetCollapsed((prev) => !prev)}>
+              <Text style={styles.groupTitle}>Generate songs</Text>
+              <Text style={styles.sheetToggleText}>{isGenerateSheetCollapsed ? "Expand" : "Collapse"}</Text>
             </TouchableOpacity>
-            {generationLoading ? (
-              <View style={[styles.listItem, styles.queueSkeletonItem, styles.generateSkeleton]}>
-                <View style={styles.songListMain}>
-                  <View style={styles.queueSkeletonArtwork} />
-                  <View style={styles.songListText}>
-                    <View style={[styles.queueSkeletonLine, styles.queueSkeletonLinePrimary]} />
-                    <View style={[styles.queueSkeletonLine, styles.queueSkeletonLineSecondary]} />
+            {!isGenerateSheetCollapsed ? (
+              <>
+                <TouchableOpacity
+                  style={styles.secondarySoft}
+                  onPress={async () => {
+                    await generate({ prefetch: false, silent: false, preferLatest: true });
+                    await playbackEngine.refresh({ buffer: 8 });
+                  }}
+                >
+                  <Text style={styles.secondaryText}>{generationLoading ? "Generating..." : "Generate songs from portrait"}</Text>
+                </TouchableOpacity>
+                {generationLoading ? (
+                  <View style={[styles.listItem, styles.queueSkeletonItem, styles.generateSkeleton]}>
+                    <View style={styles.songListMain}>
+                      <View style={styles.queueSkeletonArtwork} />
+                      <View style={styles.songListText}>
+                        <View style={[styles.queueSkeletonLine, styles.queueSkeletonLinePrimary]} />
+                        <View style={[styles.queueSkeletonLine, styles.queueSkeletonLineSecondary]} />
+                      </View>
+                    </View>
                   </View>
-                </View>
-              </View>
-            ) : lastGeneratedSong ? (
-              <TouchableOpacity
-                style={styles.generatedInfoCard}
-                onPress={async () => {
-                  await insertSongAsNext(lastGeneratedSong, "portrait-generated");
-                  setActiveTab("player");
-                }}
-              >
-                <View style={styles.songListMain}>
-                  <SongArtwork uri={lastGeneratedSong.cover_url} size={56} radius={18} label={lastGeneratedSong.title || "TPY"} />
-                  <View style={styles.songListText}>
-                    <Text style={styles.listTitle}>{lastGeneratedSong.title || "Untitled"}</Text>
-                    <Text style={styles.listSub} numberOfLines={2}>{songTagText(lastGeneratedSong)}</Text>
-                    <Text style={styles.listSub}>{lastGeneratedSong.source || "generated"}</Text>
-                  </View>
-                </View>
-              </TouchableOpacity>
+                ) : lastGeneratedSong ? (
+                  <TouchableOpacity
+                    style={styles.generatedInfoCard}
+                    onPress={async () => {
+                      await insertSongAsNext(lastGeneratedSong, "portrait-generated");
+                      setActiveTab("player");
+                    }}
+                  >
+                    <View style={styles.songListMain}>
+                      <SongArtwork uri={lastGeneratedSong.cover_url} size={56} radius={18} label={lastGeneratedSong.title || "TPY"} />
+                      <View style={styles.songListText}>
+                        <Text style={styles.listTitle}>{lastGeneratedSong.title || "Untitled"}</Text>
+                        <Text style={styles.listSub} numberOfLines={2}>{songTagText(lastGeneratedSong)}</Text>
+                        <Text style={styles.listSub}>{lastGeneratedSong.source || "generated"}</Text>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
+              </>
             ) : null}
           </View>
         </View>

@@ -1072,7 +1072,12 @@ app.post("/user-tags/weight", async (request, reply) => {
     reply.code(404).send({ error: "user tag relation not found" });
     return;
   }
-  return { ok: true, item: rows[0] };
+  await normalizeUserWeights(user_id);
+  const refreshed = await query(
+    "SELECT user_id, tag_id, weight, COALESCE(is_active, true) AS is_active, last_updated FROM user_tags WHERE user_id = $1 AND tag_id = $2 LIMIT 1",
+    [Number(user_id), Number(tag_id)]
+  );
+  return { ok: true, item: refreshed.rows[0] || rows[0] };
 });
 
 app.post("/user-tags/anchor", async (request, reply) => {
@@ -1122,6 +1127,8 @@ app.post("/user-tags/anchor", async (request, reply) => {
     "UPDATE user_tags SET weight = 0.5, initial_weight = GREATEST(COALESCE(initial_weight, 0), 0.5), is_active = true, last_updated = NOW() WHERE user_id = $1 AND tag_id = $2",
     [Number(user_id), Number(tag.id)]
   );
+
+  await normalizeUserWeights(user_id, { lockedSceneTagId: Number(tag.id), lockedSceneWeight: 0.5 });
 
   return { ok: true, anchor_tag_id: Number(tag.id) };
 });
@@ -1278,20 +1285,68 @@ async function absorbExplorationTags(userId, songId, behavior) {
   }
 }
 
-async function normalizeUserWeights(userId) {
+async function normalizeUserWeights(userId, options = {}) {
+  const forcedAnchorTagId = Number(options.lockedSceneTagId || 0);
+  const forcedAnchorWeight = Math.max(0, Math.min(1, Number(options.lockedSceneWeight || 0.5)));
   const { rows } = await query(
-    "SELECT tag_id, weight FROM user_tags WHERE user_id = $1 AND COALESCE(is_active, true) = true",
-    [userId]
+    "SELECT ut.tag_id, ut.weight, COALESCE(ut.is_active, true) AS is_active, t.type FROM user_tags ut JOIN tags t ON t.id = ut.tag_id WHERE ut.user_id = $1",
+    [Number(userId)]
   );
-  if (rows.length === 0) return;
-  const total = rows.reduce((sum, row) => sum + Number(row.weight || 0), 0);
+  const allRows = normalizeTagRows(rows || []);
+  if (allRows.length === 0) return;
+
+  const activeRows = allRows.filter((row) => row.is_active !== false && Number(row.weight || 0) > 0);
+  if (activeRows.length === 0) {
+    await query(
+      "UPDATE user_tags SET weight = 0, is_active = false, last_updated = NOW() WHERE user_id = $1",
+      [Number(userId)]
+    );
+    return;
+  }
+
+  const inferredAnchor = activeRows
+    .filter((row) => isSceneTag(row))
+    .sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0))[0] || null;
+  const lockedAnchor = forcedAnchorTagId > 0
+    ? activeRows.find((row) => Number(row.tag_id) === forcedAnchorTagId && isSceneTag(row)) || null
+    : (inferredAnchor && Number(inferredAnchor.weight || 0) >= 0.49 ? inferredAnchor : null);
+
+  if (lockedAnchor) {
+    const anchorId = Number(lockedAnchor.tag_id);
+    const nonSceneActive = activeRows.filter((row) => Number(row.tag_id) !== anchorId && !isSceneTag(row));
+    const nonSceneTotal = nonSceneActive.reduce((sum, row) => sum + Number(row.weight || 0), 0);
+    const otherBudget = nonSceneActive.length > 0 ? Math.max(0, 1 - forcedAnchorWeight) : 0;
+
+    for (const row of allRows) {
+      const rowId = Number(row.tag_id);
+      let nextWeight = 0;
+      let nextActive = false;
+
+      if (rowId === anchorId) {
+        nextWeight = forcedAnchorWeight;
+        nextActive = true;
+      } else if (!isSceneTag(row) && row.is_active !== false && Number(row.weight || 0) > 0) {
+        nextWeight = nonSceneTotal > 0 ? Number(((Number(row.weight || 0) / nonSceneTotal) * otherBudget).toFixed(6)) : 0;
+        nextActive = nextWeight > 0;
+      }
+
+      await query(
+        "UPDATE user_tags SET weight = $1, is_active = $2, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4",
+        [nextWeight, nextActive, Number(userId), rowId]
+      );
+    }
+    return;
+  }
+
+  const total = activeRows.reduce((sum, row) => sum + Number(row.weight || 0), 0);
   if (total <= 0) return;
 
-  for (const row of rows) {
-    const normalized = Number(row.weight || 0) / total;
+  for (const row of allRows) {
+    const currentWeight = row.is_active !== false && Number(row.weight || 0) > 0 ? Number(row.weight || 0) : 0;
+    const normalized = currentWeight > 0 ? Number((currentWeight / total).toFixed(6)) : 0;
     await query(
-      "UPDATE user_tags SET weight = $1, last_updated = NOW() WHERE user_id = $2 AND tag_id = $3",
-      [normalized, userId, row.tag_id]
+      "UPDATE user_tags SET weight = $1, is_active = $2, last_updated = NOW() WHERE user_id = $3 AND tag_id = $4",
+      [normalized, normalized > 0, Number(userId), Number(row.tag_id)]
     );
   }
 }
@@ -2718,7 +2773,8 @@ app.post("/feedback", async (request, reply) => {
   } catch (err) {
     reply.code(500).send({ error: "feedback insert failed", detail: String(err) });
     return;
-  }  if (queue_id && Number.isFinite(Number(queue_id))) {
+  }
+  if (queue_id && Number.isFinite(Number(queue_id))) {
     await query(
       "UPDATE user_song_queue SET acted_at = NOW(), is_hidden = CASE WHEN $1 = 'skip' THEN true ELSE is_hidden END WHERE id = $2 AND user_id = $3",
       [normalizedAction, Number(queue_id), Number(user_id)]
@@ -2752,14 +2808,7 @@ app.post("/feedback", async (request, reply) => {
     }
   }
 
-  const totalUpdates = await query(
-    "SELECT COALESCE(SUM(update_count), 0) AS total FROM user_tags WHERE user_id = $1",
-    [Number(user_id)]
-  );
-  const total = Number(totalUpdates.rows[0]?.total || 0);
-  if (total > 0 && total % NORMALIZE_EVERY === 0) {
-    await normalizeUserWeights(user_id);
-  }
+  await normalizeUserWeights(user_id);
 
   return { ok: true };
 });
