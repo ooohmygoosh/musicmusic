@@ -20,11 +20,10 @@ import { API_BASE } from "./config";
 import { usePlaybackEngine } from "./playback/usePlaybackEngine";
 
 const TABS = [
-  { key: "player", label: "\u6b4c\u66f2", icon: "\u25c9" },
-  { key: "favorites", label: "\u6536\u85cf", icon: "\u2661" },
-
-  { key: "galaxy", label: "\u753b\u50cf", icon: "\u2726" },
-  { key: "settings", label: "\u8bbe\u7f6e", icon: "\u2318" }
+  { key: "player", label: "\u6b4c\u66f2" },
+  { key: "favorites", label: "\u6536\u85cf" },
+  { key: "galaxy", label: "\u753b\u50cf" },
+  { key: "settings", label: "\u8bbe\u7f6e" }
 ];
 
 const TYPE_COLORS = {
@@ -40,9 +39,9 @@ const PORTRAIT_MIN_SIZE = 14;
 const PORTRAIT_MAX_SIZE = 108;
 const PORTRAIT_ORIGIN_SIZE = 40;
 const PORTRAIT_STEP_SIZE = 24;
-const PORTRAIT_TOP_INSET = 94;
+const PORTRAIT_TOP_INSET = 82;
 const PORTRAIT_SIDE_INSET = 10;
-const PORTRAIT_BOTTOM_INSET = 124;
+const PORTRAIT_BOTTOM_INSET = 164;
 const REPULSION_GAP = 18;
 const STABLE_SPRING = 0.028;
 const STABLE_DAMPING = 0.72;
@@ -68,10 +67,10 @@ const LANGUAGE_OPTIONS = [
 
 const I18N = {
   zh: {
-    guest: "\u8bbf\u5ba2", missingAccountTitle: "\u7f3a\u5c11\u8d26\u53f7", missingAccountBody: "\u8bf7\u8f93\u5165\u8d26\u53f7 ID\u3002", missingPasswordTitle: "\u7f3a\u5c11\u5bc6\u7801", missingPasswordBody: "\u8bf7\u8f93\u5165\u5bc6\u7801\u3002", missingUsernameTitle: "\u7f3a\u5c11\u6635\u79f0", missingUsernameBody: "\u6ce8\u518c\u65f6\u8bf7\u5148\u8f93\u5165\u6635\u79f0\u3002", missingAvatarTitle: "\u7f3a\u5c11\u5934\u50cf", missingAvatarBody: "\u8bf7\u9009\u62e9\u4e00\u4e2a\u5934\u50cf\u3002", weakPasswordTitle: "\u5bc6\u7801\u592a\u77ed", weakPasswordBody: "\u5bc6\u7801\u81f3\u5c11\u9700\u8981 6 \u4f4d\u3002", passwordMismatchTitle: "\u5bc6\u7801\u4e0d\u4e00\u81f4", passwordMismatchBody: "\u4e24\u6b21\u8f93\u5165\u7684\u5bc6\u7801\u4e0d\u4e00\u81f4\u3002", loginFailed: "\u767b\u5f55\u5931\u8d25", registerFailed: "\u6ce8\u518c\u5931\u8d25", generationFailed: "\u751f\u6210\u5931\u8d25", noSongsReadyTitle: "\u6682\u65e0\u53ef\u64ad\u6b4c\u66f2", noSongsReadyBody: "\u8bf7\u5148\u5728\u753b\u50cf\u9875\u751f\u6210\u6b4c\u66f2\u3002", noPlaylistTitle: "\u8fd8\u6ca1\u6709\u6b4c\u5355", noPlaylistBody: "\u8bf7\u5148\u5230\u6536\u85cf\u9875\u521b\u5efa\u4e00\u4e2a\u6b4c\u5355\u3002", anchorUpdateFailed: "\u4e3b\u952e\u573a\u666f\u66f4\u65b0\u5931\u8d25", authEyebrow: "\u5929\u8c31\u4e50", authTitle: "\u767b\u5f55\u540e\u7ee7\u7eed\u4f60\u7684\u97f3\u4e50\u7a7a\u95f4", authSubtitle: "\u6ce8\u518c\u9700\u8f93\u5165\u6635\u79f0\u3001\u8d26\u53f7\u3001\u5bc6\u7801\u548c\u5934\u50cf\uff0c\u767b\u5f55\u53ea\u9700\u8d26\u53f7\u548c\u5bc6\u7801\u3002", loginRestore: "\u767b\u5f55\u5e76\u6062\u590d", registerContinue: "\u6ce8\u518c\u5e76\u7ee7\u7eed", username: "\u6635\u79f0", chooseAvatar: "\u9009\u62e9\u5934\u50cf", accountId: "\u8d26\u53f7 ID", password: "\u5bc6\u7801", confirmPassword: "\u786e\u8ba4\u5bc6\u7801", pickInitialTags: "\u9009\u62e9\u521d\u59cb\u6807\u7b7e", pickInitialTagsSub: "\u8bf7\u81f3\u5c11\u4ece\u4e24\u4e2a\u4e0d\u540c\u5206\u7c7b\u4e2d\u9009\u62e9\u6807\u7b7e\u3002", done: "\u5df2\u5b8c\u6210", stepLabel: "\u7b2c {current} \u6b65 / \u5171 {total} \u6b65", allCategoriesCompleted: "\u6240\u6709\u5206\u7c7b\u5df2\u9009\u5b8c\u3002", back: "\u4e0a\u4e00\u6b65", next: "\u4e0b\u4e00\u6b65", enterApp: "\u8fdb\u5165 App", sceneAnchor: "\u4e3b\u952e\u573a\u666f", noPlayableSongs: "\u6682\u65e0\u53ef\u64ad\u6b4c\u66f2\uff0c\u8bf7\u5148\u53bb\u753b\u50cf\u9875\u751f\u6210\u3002", favorite: "\u6536\u85cf", play: "\u64ad\u653e", pause: "\u6682\u505c", refresh: "\u5237\u65b0", saveToPlaylist: "\u4fdd\u5b58\u5230\u6b4c\u5355", songsCount: "{count} \u9996", cancel: "\u53d6\u6d88", noSongsReady: "\u6682\u65e0\u6b4c\u66f2", newPlaylist: "\u65b0\u5efa\u6b4c\u5355", newPlaylistPlaceholder: "\u4f8b\u5982\uff1a\u591c\u665a\u901a\u52e4 / \u51cc\u6668", create: "\u521b\u5efa", myPlaylists: "\u6211\u7684\u6b4c\u5355", noPlaylistYet: "\u6682\u65e0\u6b4c\u5355\u3002", playlistEmpty: "\u8fd9\u4e2a\u6b4c\u5355\u8fd8\u662f\u7a7a\u7684\u3002", myGeneratedSongs: "\u6211\u751f\u6210\u7684\u6b4c", noGeneratedSongs: "\u8fd8\u6ca1\u6709\u751f\u6210\u6b4c\u66f2\uff0c\u53bb\u753b\u50cf\u9875\u751f\u6210\u5427\u3002", public: "\u516c\u5f00", private: "\u79c1\u6709", enabled: "\u542f\u7528", disabled: "\u505c\u7528", revenueOn: "\u5206\u8d26\u5f00\u542f", revenueOff: "\u5206\u8d26\u5173\u95ed", noTagsYet: "\u8fd8\u6ca1\u6709\u6807\u7b7e", noTagsYetSub: "\u53ef\u4ee5\u5728\u4e0b\u65b9\u6dfb\u52a0\u6807\u7b7e\uff0c\u6216\u5148\u5b8c\u6210\u521d\u59cb\u6807\u7b7e\u9009\u62e9\u3002", softer: "\u51cf\u5f31", lowerWeight: "\u964d\u4f4e\u6743\u91cd", stronger: "\u589e\u5f3a", raiseWeight: "\u63d0\u9ad8\u6743\u91cd", addTag: "\u6dfb\u52a0\u6807\u7b7e", expand: "\u5c55\u5f00", collapse: "\u6536\u8d77", tagName: "\u6807\u7b7e\u540d\u79f0", existingCategoryFound: "\u5df2\u6709\u5206\u7c7b\uff1a{type}\uff0c\u5c06\u76f4\u63a5\u52a0\u5165\u753b\u50cf\u3002", newTagHint: "\u5168\u65b0\u6807\u7b7e\u9700\u5148\u63d0\u4ea4\uff0c\u518d\u9009\u62e9\u6240\u5c5e\u5206\u7c7b\u3002", addToPortrait: "\u52a0\u5165\u6211\u7684\u753b\u50cf", chooseCategoryFor: "\u4e3a\u201c{tag}\u201d\u9009\u62e9\u5206\u7c7b", confirm: "\u786e\u5b9a", generateSongs: "\u751f\u6210\u6b4c\u66f2", generating: "\u751f\u6210\u4e2d...", generateFromPortrait: "\u6839\u636e\u753b\u50cf\u751f\u6210\u6b4c\u66f2", generated: "\u5df2\u751f\u6210", currentAccount: "\u5f53\u524d\u8d26\u53f7", accountAction: "\u8d26\u53f7\u64cd\u4f5c", logout: "\u9000\u51fa\u767b\u5f55", language: "\u8bed\u8a00", languageHint: "\u5f53\u524d\u53ea\u5207\u6362 App \u5185\u6587\u6848\u3002"
+    guest: "\u8bbf\u5ba2", missingAccountTitle: "\u7f3a\u5c11\u8d26\u53f7", missingAccountBody: "\u8bf7\u8f93\u5165\u8d26\u53f7 ID\u3002", missingPasswordTitle: "\u7f3a\u5c11\u5bc6\u7801", missingPasswordBody: "\u8bf7\u8f93\u5165\u5bc6\u7801\u3002", missingUsernameTitle: "\u7f3a\u5c11\u6635\u79f0", missingUsernameBody: "\u6ce8\u518c\u65f6\u8bf7\u5148\u8f93\u5165\u6635\u79f0\u3002", missingAvatarTitle: "\u7f3a\u5c11\u5934\u50cf", missingAvatarBody: "\u8bf7\u9009\u62e9\u4e00\u4e2a\u5934\u50cf\u3002", weakPasswordTitle: "\u5bc6\u7801\u592a\u77ed", weakPasswordBody: "\u5bc6\u7801\u81f3\u5c11\u9700\u8981 6 \u4f4d\u3002", passwordMismatchTitle: "\u5bc6\u7801\u4e0d\u4e00\u81f4", passwordMismatchBody: "\u4e24\u6b21\u8f93\u5165\u7684\u5bc6\u7801\u4e0d\u4e00\u81f4\u3002", loginFailed: "\u767b\u5f55\u5931\u8d25", registerFailed: "\u6ce8\u518c\u5931\u8d25", generationFailed: "\u751f\u6210\u5931\u8d25", noSongsReadyTitle: "\u6682\u65e0\u53ef\u64ad\u6b4c\u66f2", noSongsReadyBody: "\u8bf7\u5148\u5728\u753b\u50cf\u9875\u751f\u6210\u6b4c\u66f2\u3002", noPlaylistTitle: "\u8fd8\u6ca1\u6709\u6b4c\u5355", noPlaylistBody: "\u8bf7\u5148\u5230\u6536\u85cf\u9875\u521b\u5efa\u4e00\u4e2a\u6b4c\u5355\u3002", anchorUpdateFailed: "\u573a\u666f\u66f4\u65b0\u5931\u8d25", authEyebrow: "\u5929\u8c31\u4e50", authTitle: "\u767b\u5f55\u540e\u7ee7\u7eed\u4f60\u7684\u97f3\u4e50\u7a7a\u95f4", authSubtitle: "\u6ce8\u518c\u9700\u8f93\u5165\u6635\u79f0\u3001\u8d26\u53f7\u3001\u5bc6\u7801\u548c\u5934\u50cf\uff0c\u767b\u5f55\u53ea\u9700\u8d26\u53f7\u548c\u5bc6\u7801\u3002", loginRestore: "\u767b\u5f55", registerContinue: "\u6ce8\u518c", username: "\u6635\u79f0", chooseAvatar: "\u9009\u62e9\u5934\u50cf", accountId: "\u8d26\u53f7 ID", password: "\u5bc6\u7801", confirmPassword: "\u786e\u8ba4\u5bc6\u7801", pickInitialTags: "\u9009\u62e9\u521d\u59cb\u6807\u7b7e", pickInitialTagsSub: "\u8bf7\u81f3\u5c11\u4ece\u4e24\u4e2a\u4e0d\u540c\u5206\u7c7b\u4e2d\u9009\u62e9\u6807\u7b7e\u3002", done: "\u5df2\u5b8c\u6210", stepLabel: "\u7b2c {current} \u6b65 / \u5171 {total} \u6b65", allCategoriesCompleted: "\u6240\u6709\u5206\u7c7b\u5df2\u9009\u5b8c\u3002", back: "\u4e0a\u4e00\u6b65", next: "\u4e0b\u4e00\u6b65", enterApp: "\u8fdb\u5165 App", sceneAnchor: "\u573a\u666f", noPlayableSongs: "\u6682\u65e0\u53ef\u64ad\u6b4c\u66f2\uff0c\u8bf7\u5148\u53bb\u753b\u50cf\u9875\u751f\u6210\u3002", favorite: "\u6536\u85cf", play: "\u64ad\u653e", pause: "\u6682\u505c", refresh: "\u5237\u65b0", saveToPlaylist: "\u4fdd\u5b58\u5230\u6b4c\u5355", songsCount: "{count} \u9996", cancel: "\u53d6\u6d88", noSongsReady: "\u6682\u65e0\u6b4c\u66f2", newPlaylist: "\u65b0\u5efa\u6b4c\u5355", newPlaylistPlaceholder: "\u4f8b\u5982\uff1a\u591c\u665a\u901a\u52e4 / \u51cc\u6668", create: "\u521b\u5efa", myPlaylists: "\u6211\u7684\u6b4c\u5355", noPlaylistYet: "\u6682\u65e0\u6b4c\u5355\u3002", playlistEmpty: "\u8fd9\u4e2a\u6b4c\u5355\u8fd8\u662f\u7a7a\u7684\u3002", myGeneratedSongs: "\u6211\u751f\u6210\u7684\u6b4c", noGeneratedSongs: "\u8fd8\u6ca1\u6709\u751f\u6210\u6b4c\u66f2\uff0c\u53bb\u753b\u50cf\u9875\u751f\u6210\u5427\u3002", public: "\u516c\u5f00", private: "\u79c1\u6709", enabled: "\u542f\u7528", disabled: "\u505c\u7528", revenueOn: "\u5206\u8d26\u5f00\u542f", revenueOff: "\u5206\u8d26\u5173\u95ed", noTagsYet: "\u8fd8\u6ca1\u6709\u6807\u7b7e", noTagsYetSub: "\u53ef\u4ee5\u5728\u4e0b\u65b9\u6dfb\u52a0\u6807\u7b7e\uff0c\u6216\u5148\u5b8c\u6210\u521d\u59cb\u6807\u7b7e\u9009\u62e9\u3002", softer: "\u51cf\u5f31", lowerWeight: "\u964d\u4f4e\u6743\u91cd", stronger: "\u589e\u5f3a", raiseWeight: "\u63d0\u9ad8\u6743\u91cd", addTag: "\u6dfb\u52a0\u6807\u7b7e", expand: "\u5c55\u5f00", collapse: "\u6536\u8d77", tagName: "\u6807\u7b7e\u540d\u79f0", existingCategoryFound: "\u5df2\u6709\u5206\u7c7b\uff1a{type}\uff0c\u5c06\u76f4\u63a5\u52a0\u5165\u753b\u50cf\u3002", newTagHint: "\u5168\u65b0\u6807\u7b7e\u9700\u5148\u63d0\u4ea4\uff0c\u518d\u9009\u62e9\u6240\u5c5e\u5206\u7c7b\u3002", addToPortrait: "\u52a0\u5165\u6211\u7684\u753b\u50cf", chooseCategoryFor: "\u4e3a\u201c{tag}\u201d\u9009\u62e9\u5206\u7c7b", confirm: "\u786e\u5b9a", generateSongs: "\u751f\u6210\u6b4c\u66f2", generating: "\u751f\u6210\u4e2d...", generateFromPortrait: "\u6839\u636e\u753b\u50cf\u751f\u6210\u6b4c\u66f2", generated: "\u5df2\u751f\u6210", currentAccount: "\u5f53\u524d\u8d26\u53f7", accountAction: "\u8d26\u53f7\u64cd\u4f5c", logout: "\u9000\u51fa\u767b\u5f55", language: "\u8bed\u8a00", languageHint: "\u5f53\u524d\u53ea\u5207\u6362 App \u5185\u6587\u6848\u3002", tools: "\u5de5\u5177", expandPanel: "\u5c55\u5f00\u9762\u677f", collapsePanel: "\u6536\u8d77\u9762\u677f"
   },
   en: {
-    guest: "Guest", missingAccountTitle: "Missing account", missingAccountBody: "Please enter your account ID.", missingPasswordTitle: "Missing password", missingPasswordBody: "Please enter your password.", missingUsernameTitle: "Missing username", missingUsernameBody: "Please enter a username for registration.", missingAvatarTitle: "Missing avatar", missingAvatarBody: "Please choose an avatar.", weakPasswordTitle: "Weak password", weakPasswordBody: "Password must be at least 6 characters.", passwordMismatchTitle: "Password mismatch", passwordMismatchBody: "The two passwords do not match.", loginFailed: "Login failed", registerFailed: "Register failed", generationFailed: "Generation failed", noSongsReadyTitle: "No songs ready", noSongsReadyBody: "Please generate songs in Portrait first.", noPlaylistTitle: "No playlist", noPlaylistBody: "Create one in Favorites first.", anchorUpdateFailed: "Anchor update failed", authEyebrow: "TPY MUSIC", authTitle: "Sign in to restore your music space", authSubtitle: "Register with username, account, password and avatar. Login uses account and password.", loginRestore: "Login & restore", registerContinue: "Register & continue", username: "Username", chooseAvatar: "Choose avatar", accountId: "Account ID", password: "Password", confirmPassword: "Confirm password", pickInitialTags: "Pick initial tags", pickInitialTagsSub: "Please choose tags from at least two categories.", done: "Done", stepLabel: "Step {current} / {total}", allCategoriesCompleted: "All categories completed.", back: "Back", next: "Next", enterApp: "Enter App", sceneAnchor: "Scene anchor", noPlayableSongs: "No playable songs. Go to Portrait to generate.", favorite: "Favorite", play: "Play", pause: "Pause", refresh: "Refresh", saveToPlaylist: "Save to playlist", songsCount: "Songs {count}", cancel: "Cancel", noSongsReady: "No songs ready.", newPlaylist: "New playlist", newPlaylistPlaceholder: "e.g. Late night / Commute", create: "Create", myPlaylists: "My playlists", noPlaylistYet: "No playlist yet.", playlistEmpty: "This playlist is empty.", myGeneratedSongs: "My generated songs", noGeneratedSongs: "No generated songs yet. Generate songs in Portrait first.", public: "Public", private: "Private", enabled: "Enabled", disabled: "Disabled", revenueOn: "Revenue on", revenueOff: "Revenue off", noTagsYet: "No tags yet", noTagsYetSub: "Add tags below, or complete onboarding tags first.", softer: "Softer", lowerWeight: "Lower weight", stronger: "Stronger", raiseWeight: "Raise weight", addTag: "Add tag", expand: "Expand", collapse: "Collapse", tagName: "Tag name", existingCategoryFound: "Existing category found: {type}. It will be added directly.", newTagHint: "For a new tag, submit first and then choose its category.", addToPortrait: "Add to my portrait", chooseCategoryFor: "Choose a category for ?{tag}?", confirm: "Confirm", generateSongs: "Generate songs", generating: "Generating...", generateFromPortrait: "Generate songs from portrait", generated: "generated", currentAccount: "Current account", accountAction: "Account action", logout: "Log out", language: "Language", languageHint: "Switch UI copy inside the app."
+    guest: "Guest", missingAccountTitle: "Missing account", missingAccountBody: "Please enter your account ID.", missingPasswordTitle: "Missing password", missingPasswordBody: "Please enter your password.", missingUsernameTitle: "Missing username", missingUsernameBody: "Please enter a username for registration.", missingAvatarTitle: "Missing avatar", missingAvatarBody: "Please choose an avatar.", weakPasswordTitle: "Weak password", weakPasswordBody: "Password must be at least 6 characters.", passwordMismatchTitle: "Password mismatch", passwordMismatchBody: "The two passwords do not match.", loginFailed: "Login failed", registerFailed: "Register failed", generationFailed: "Generation failed", noSongsReadyTitle: "No songs ready", noSongsReadyBody: "Please generate songs in Portrait first.", noPlaylistTitle: "No playlist", noPlaylistBody: "Create one in Favorites first.", anchorUpdateFailed: "Scene update failed", authEyebrow: "TPY MUSIC", authTitle: "Sign in to restore your music space", authSubtitle: "Register with username, account, password and avatar. Login uses account and password.", loginRestore: "Login", registerContinue: "Register", username: "Username", chooseAvatar: "Choose avatar", accountId: "Account ID", password: "Password", confirmPassword: "Confirm password", pickInitialTags: "Pick initial tags", pickInitialTagsSub: "Please choose tags from at least two categories.", done: "Done", stepLabel: "Step {current} / {total}", allCategoriesCompleted: "All categories completed.", back: "Back", next: "Next", enterApp: "Enter App", sceneAnchor: "Scene", noPlayableSongs: "No playable songs. Go to Portrait to generate.", favorite: "Favorite", play: "Play", pause: "Pause", refresh: "Refresh", saveToPlaylist: "Save to playlist", songsCount: "Songs {count}", cancel: "Cancel", noSongsReady: "No songs ready.", newPlaylist: "New playlist", newPlaylistPlaceholder: "e.g. Late night / Commute", create: "Create", myPlaylists: "My playlists", noPlaylistYet: "No playlist yet.", playlistEmpty: "This playlist is empty.", myGeneratedSongs: "My generated songs", noGeneratedSongs: "No generated songs yet. Generate songs in Portrait first.", public: "Public", private: "Private", enabled: "Enabled", disabled: "Disabled", revenueOn: "Revenue on", revenueOff: "Revenue off", noTagsYet: "No tags yet", noTagsYetSub: "Add tags below, or complete onboarding tags first.", softer: "Softer", lowerWeight: "Lower weight", stronger: "Stronger", raiseWeight: "Raise weight", addTag: "Add tag", expand: "Expand", collapse: "Collapse", tagName: "Tag name", existingCategoryFound: "Existing category found: {type}. It will be added directly.", newTagHint: "For a new tag, submit first and then choose its category.", addToPortrait: "Add to my portrait", chooseCategoryFor: "Choose a category for \"{tag}\"", confirm: "Confirm", generateSongs: "Generate songs", generating: "Generating...", generateFromPortrait: "Generate songs from portrait", generated: "generated", currentAccount: "Current account", accountAction: "Account action", logout: "Log out", language: "Language", languageHint: "Switch UI copy inside the app.", tools: "Tools", expandPanel: "Expand panel", collapsePanel: "Collapse panel"
   }
 };
 
@@ -608,6 +607,7 @@ export default function App() {
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [isTagSheetCollapsed, setIsTagSheetCollapsed] = useState(false);
   const [isGenerateSheetCollapsed, setIsGenerateSheetCollapsed] = useState(false);
+  const [isUtilitySheetCollapsed, setIsUtilitySheetCollapsed] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [tagMessage, setTagMessage] = useState("");
   const [health, setHealth] = useState({ loading: false, ok: null, message: "" });
@@ -1568,15 +1568,12 @@ export default function App() {
       <PortraitBackdrop blocks={portraitBlocks} stageSize={{ width, height }} />
       <ScrollView contentContainerStyle={styles.authShell} showsVerticalScrollIndicator={false}>
         <View style={styles.authCard}>
-          <Text style={styles.authEyebrow}>{t("authEyebrow")}</Text>
-          <Text style={styles.authTitle}>{t("authTitle")}</Text>
-          <Text style={styles.authSubtitle}>{t("authSubtitle")}</Text>
           <View style={styles.authModeRow}>
             <TouchableOpacity style={[styles.authMode, authMode === "login" && styles.authModeActive]} onPress={() => setAuthMode("login")}>
-              <Text style={[styles.authModeText, authMode === "login" && styles.authModeTextActive]}>{language === "en" ? "Login" : "??"}</Text>
+              <Text style={[styles.authModeText, authMode === "login" && styles.authModeTextActive]}>{language === "en" ? "Login" : "登录"}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.authMode, authMode === "register" && styles.authModeActive]} onPress={() => setAuthMode("register")}>
-              <Text style={[styles.authModeText, authMode === "register" && styles.authModeTextActive]}>{language === "en" ? "Register" : "??"}</Text>
+              <Text style={[styles.authModeText, authMode === "register" && styles.authModeTextActive]}>{language === "en" ? "Register" : "注册"}</Text>
             </TouchableOpacity>
           </View>
           {authMode === "register" ? (
@@ -1825,6 +1822,7 @@ export default function App() {
                 ) : null}
               />
               <View pointerEvents="none" style={styles.queueTopFade}>
+                <View style={styles.queueTopFadeGlass} />
                 <View style={styles.queueTopFadeLayerStrong} />
                 <View style={styles.queueTopFadeLayerMid} />
                 <View style={styles.queueTopFadeLayerSoft} />
@@ -1988,10 +1986,19 @@ export default function App() {
           pointerEvents={isPortraitDragging ? "none" : "auto"}
           style={[
             styles.galaxySheet,
-            isTagSheetCollapsed && isGenerateSheetCollapsed && styles.galaxySheetCollapsed,
+            isUtilitySheetCollapsed && styles.galaxySheetCollapsed,
             isPortraitDragging && styles.galaxySheetDragging
           ]}
         >
+          <TouchableOpacity
+            style={[styles.utilitySheetToggle, isUtilitySheetCollapsed && styles.utilitySheetToggleCollapsed]}
+            onPress={() => setIsUtilitySheetCollapsed((prev) => !prev)}
+          >
+            <Text style={styles.utilitySheetTitle}>{t("tools")}</Text>
+            <Text style={styles.utilitySheetArrow}>{isUtilitySheetCollapsed ? "\u25be" : "\u25b4"}</Text>
+          </TouchableOpacity>
+
+          {!isUtilitySheetCollapsed ? (<>
           <View style={[styles.sheetCard, isTagSheetCollapsed && styles.sheetCardCollapsed]}>
             <TouchableOpacity style={[styles.sheetHeader, isTagSheetCollapsed && styles.sheetHeaderCollapsed]} onPress={() => setIsTagSheetCollapsed((prev) => !prev)}>
               <Text style={[styles.groupTitle, isTagSheetCollapsed && styles.groupTitleCollapsed]}>{t("addTag")}</Text>
@@ -2004,7 +2011,7 @@ export default function App() {
                 {existingTagMatch ? (
                   <Text style={styles.hintText}>{t("existingCategoryFound", { type: existingTagMatch.type })}</Text>
                 ) : (
-                  <Text style={styles.hintText}>{t("newTagHint")}</Text>
+                  null
                 )}
                 <TouchableOpacity style={styles.primary} onPress={submitUserTag}>
                   <Text style={styles.primaryText}>{t("addToPortrait")}</Text>
@@ -2012,7 +2019,7 @@ export default function App() {
 
                 {showCategoryPicker ? (
                   <View style={styles.categoryPickerCard}>
-                    <Text style={styles.categoryPickerTitle}>{"Choose a category for \"" + pendingTagName + "\""}</Text>
+                    <Text style={styles.categoryPickerTitle}>{t("chooseCategoryFor", { tag: pendingTagName })}</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryPickerRow}>
                       {CATEGORY_ORDER.map((type) => (
                         <TouchableOpacity key={type} style={[styles.categoryChip, selectedCategory === type && styles.categoryChipActive]} onPress={() => setSelectedCategory(type)}>
@@ -2088,6 +2095,7 @@ export default function App() {
               </>
             ) : null}
           </View>
+          </>) : null}
         </View>
       </View>
     );
@@ -2105,8 +2113,7 @@ export default function App() {
       </View>
       <View style={styles.groupCard}>
         <Text style={styles.groupTitle}>{t("language")}</Text>
-        <Text style={styles.hintText}>{t("languageHint")}</Text>
-        <View style={styles.rowGap}>
+                <View style={styles.rowGap}>
           {LANGUAGE_OPTIONS.map((option) => (
             <TouchableOpacity
               key={option.key}
@@ -2144,8 +2151,7 @@ export default function App() {
         <View style={styles.tabBar}>
           {TABS.map((tab) => (
             <TouchableOpacity key={tab.key} style={styles.tabItem} onPress={() => setActiveTab(tab.key)}>
-              <Text style={[styles.tabIcon, activeTab === tab.key && styles.tabIconActive]}>{tab.icon}</Text>
-              <Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>{tab.label}</Text>
+                            <Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>{tab.label}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -2244,10 +2250,11 @@ const styles = StyleSheet.create({
   queueEmptyBox: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", padding: 14 },
   queueContent: { paddingTop: 20, paddingBottom: 4 },
   queueViewport: { maxHeight: 392, position: "relative" },
-  queueTopFade: { position: "absolute", top: 0, left: 0, right: 0, height: 34, overflow: "hidden", borderTopLeftRadius: 28, borderTopRightRadius: 28 },
-  queueTopFadeLayerStrong: { position: "absolute", top: 0, left: 0, right: 0, height: 12, backgroundColor: "rgba(218,198,210,0.24)" },
-  queueTopFadeLayerMid: { position: "absolute", top: 6, left: 0, right: 0, height: 14, backgroundColor: "rgba(155,178,230,0.16)" },
-  queueTopFadeLayerSoft: { position: "absolute", top: 14, left: 0, right: 0, height: 20, backgroundColor: "rgba(11,17,27,0.08)" },
+  queueTopFade: { position: "absolute", top: 0, left: 0, right: 0, height: 66, overflow: "hidden", borderTopLeftRadius: 28, borderTopRightRadius: 28 },
+  queueTopFadeGlass: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(233,239,248,0.08)", borderTopLeftRadius: 28, borderTopRightRadius: 28, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.08)" },
+  queueTopFadeLayerStrong: { position: "absolute", top: -2, left: -8, right: -8, height: 30, backgroundColor: "rgba(255,214,223,0.2)" },
+  queueTopFadeLayerMid: { position: "absolute", top: 14, left: -10, right: -10, height: 26, backgroundColor: "rgba(134,172,235,0.18)" },
+  queueTopFadeLayerSoft: { position: "absolute", top: 30, left: 0, right: 0, height: 36, backgroundColor: "rgba(255,255,255,0.04)" },
   queueSkeletonItem: { opacity: 0.78 },
   queueSkeletonStandalone: { flexDirection: "row", alignItems: "center" },
   queueSkeletonArtwork: { width: 56, height: 56, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.12)" },
@@ -2266,7 +2273,7 @@ const styles = StyleSheet.create({
   placeholder: { color: "rgba(255,255,255,0.62)", fontSize: 14 },
   galaxyScreen: { flex: 1 },
   galaxyHeader: { paddingHorizontal: 18, paddingTop: 12 },
-  zoneRow: { position: "absolute", top: 56, left: PORTRAIT_SIDE_INSET, right: PORTRAIT_SIDE_INSET, flexDirection: "row", justifyContent: "space-between" },
+  zoneRow: { position: "absolute", top: 42, left: PORTRAIT_SIDE_INSET, right: PORTRAIT_SIDE_INSET, flexDirection: "row", justifyContent: "space-between" },
   zoneCard: { flex: 1, minHeight: 72, backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 22, paddingHorizontal: 12, paddingVertical: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", marginHorizontal: 5 },
   zoneCardActive: { backgroundColor: "rgba(255,255,255,0.22)", borderColor: "rgba(255,255,255,0.22)" },
   zoneDeleteActive: { backgroundColor: "rgba(255,86,86,0.24)", borderColor: "rgba(255,127,127,0.34)" },
@@ -2284,9 +2291,13 @@ const styles = StyleSheet.create({
   emptyGalaxy: { position: "absolute", left: 26, right: 26, top: "38%", backgroundColor: "rgba(11,17,27,0.56)", padding: 18, borderRadius: 24, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   emptyGalaxyTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" },
   emptyGalaxyText: { color: "rgba(255,255,255,0.72)", fontSize: 13, lineHeight: 20, marginTop: 6 },
-  galaxySheet: { position: "absolute", left: 14, right: 14, bottom: 96, backgroundColor: "rgba(11,17,27,0.68)", borderRadius: 30, padding: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  galaxySheetCollapsed: { paddingHorizontal: 10, paddingVertical: 8, backgroundColor: "rgba(11,17,27,0.18)", borderRadius: 24 },
+  galaxySheet: { position: "absolute", left: 14, right: 14, bottom: 96, backgroundColor: "rgba(11,17,27,0.52)", borderRadius: 30, padding: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  galaxySheetCollapsed: { paddingHorizontal: 12, paddingVertical: 12, backgroundColor: "rgba(11,17,27,0.18)", borderRadius: 24 },
   galaxySheetDragging: { opacity: 0.3 },
+  utilitySheetToggle: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", marginBottom: 10 },
+  utilitySheetToggleCollapsed: { marginBottom: 0 },
+  utilitySheetTitle: { color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 },
+  utilitySheetArrow: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
   sheetCard: { backgroundColor: "rgba(11,17,26,0.74)", borderRadius: 26, padding: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   sheetHeaderCollapsed: { marginBottom: 0 },
@@ -2320,10 +2331,8 @@ const styles = StyleSheet.create({
   errorText: { color: "#FF8D7C", marginTop: 10, fontSize: 13 },
   tabBarShell: { position: "absolute", left: 0, right: 0, bottom: 12, alignItems: "center" },
   tabBar: { flexDirection: "row", width: "92%", backgroundColor: "rgba(14,18,28,0.86)", borderRadius: 28, paddingHorizontal: 10, paddingVertical: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  tabItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 6 },
-  tabIcon: { fontSize: 16, color: "rgba(255,255,255,0.42)", marginBottom: 4 },
-  tabIconActive: { color: "#FFFFFF" },
-  tabText: { fontSize: 11, color: "rgba(255,255,255,0.42)", fontWeight: "600" },
+  tabItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 8 },
+  tabText: { fontSize: 12, color: "rgba(255,255,255,0.42)", fontWeight: "600" },
   tabTextActive: { color: "#FFFFFF", fontWeight: "800" },
   workMetaRow: { flexDirection: "row", justifyContent: "space-between", gap: 10, marginTop: 10, paddingHorizontal: 4 },
   workMetaText: { color: "rgba(255,255,255,0.64)", fontSize: 12, flex: 1 },
