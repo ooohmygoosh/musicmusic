@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -658,6 +658,12 @@ export default function App() {
       blocksRef.current = next;
       return next;
     });
+  }, []);
+
+  const refreshProfileSoon = useCallback(async () => {
+    if (!userIdRef.current) return false;
+    await loadProfileTags(userIdRef.current).catch(() => {});
+    return true;
   }, []);
 
   const groupedTags = useMemo(() => {
