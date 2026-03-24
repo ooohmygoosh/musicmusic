@@ -353,6 +353,15 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
     return false;
   }, [onNeedsGeneration, unloadCurrentSound]);
 
+  const primeWaitingState = useCallback(async () => {
+    await unloadCurrentSound();
+    serverCurrentRef.current = null;
+    serverNextRef.current = null;
+    setCurrent(null);
+    setPlayback({ position: 0, duration: 1, isPlaying: false });
+    setStatus("loading");
+  }, [unloadCurrentSound]);
+
   const sendFeedback = useCallback(async (song, action) => {
     if (!userId || !song?.id || !action) return;
     await withTimeout(
@@ -566,7 +575,9 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
 
         const queueSnapshot = queueRef.current || [];
         const candidate = findPlayableAfterSong(queueSnapshot, song, serverNextRef.current, failedQueueKeyAtRef.current);
-        if (!candidate) setStatus("loading");
+        if (!candidate) {
+          await primeWaitingState();
+        }
 
         return advanceToCandidate(candidate, {
           sourceSong: song,
@@ -576,7 +587,7 @@ export function usePlaybackEngine({ apiBase, userId, onNeedsGeneration }) {
     } finally {
       if (isInteractiveAction) interactiveLockRef.current = false;
     }
-  }, [advanceToCandidate, requestRecommendations, runSerial]);
+  }, [advanceToCandidate, primeWaitingState, requestRecommendations, runSerial]);
 
   nextRef.current = next;
 

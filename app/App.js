@@ -614,9 +614,7 @@ export default function App() {
   const activeTabRef = useRef(activeTab);
   const draggingIdRef = useRef(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
-  const dragStartBlockPosRef = useRef({ x: 0, y: 0 });
-  const dragActionCommittedRef = useRef(false);
-  const pendingProfileRefreshRef = useRef(false);
+  const dragStartBlockPosRef = useRef({ x: 0, y: 0 });
   const lastDragPointRef = useRef(null);
   const playbackRef = useRef(playback);
   const soundRef = useRef(sound);
@@ -654,7 +652,7 @@ export default function App() {
       const next = prev.map(cloneBlock);
       const target = next.find((item) => Number(item.id) === Number(tagId));
       if (!target) return prev;
-      target.flash = 1;
+      target.flash = 0.88;
       blocksRef.current = next;
       return next;
     });
@@ -924,10 +922,7 @@ export default function App() {
       await persistProfileTagWeight(tagId, nextWeight);
     } finally {
       if (refreshAfter) {
-        await loadProfileTags(userIdRef.current);
-      } else {
-        pendingProfileRefreshRef.current = true;
-      }
+        await loadProfileTags(userIdRef.current);
     }
   };
 
@@ -967,7 +962,7 @@ export default function App() {
           block.currentPos.x += block.velocity.x;
           block.currentPos.y += block.velocity.y;
           block.currentSize += (block.targetSize - block.currentSize) * 0.25;
-          block.flash = Math.max(0, Number(block.flash || 0) * 0.72 - 0.06);
+          block.flash = Math.max(0, Number(block.flash || 0) * 0.34 - 0.22);
 
           if (block.needBackToAnchor && Math.hypot(dx, dy) < 2 && Math.hypot(block.velocity.x, block.velocity.y) < 0.4) {
             block.currentPos = { ...block.anchorPos };
@@ -1001,28 +996,6 @@ export default function App() {
 
   const moveDraggedBlock = (id, point) => {
     const stage = stageSizeRef.current;
-    const liveBlock = (blocksRef.current || []).find((item) => item.id === id);
-    let shouldAutoFinish = false;
-    if (liveBlock) {
-      const fallbackPoint = lastDragPointRef.current || liveBlock.currentPos;
-      const isValidPoint = point
-        && Number.isFinite(point.x)
-        && Number.isFinite(point.y)
-        && point.x >= -48
-        && point.x <= stage.width + 48
-        && point.y >= -48
-        && point.y <= stage.height + 48;
-      const candidatePoint = isValidPoint ? point : fallbackPoint;
-      const settledPoint = sanitizeDragPoint(liveBlock, candidatePoint, stage);
-      const zoneId = findZoneForBlock(liveBlock, settledPoint, stage);
-      if (!dragActionCommittedRef.current && zoneId !== -1) {
-        dragActionCommittedRef.current = true;
-        shouldAutoFinish = true;
-        applyProfileTagActionById(Number(liveBlock.id), zoneId, Number(liveBlock.tag?.weight || 0), { refreshAfter: false }).catch(() => {
-          dragActionCommittedRef.current = false;
-        });
-      }
-    }
     setPortraitBlocks((prev) => {
       const next = prev.map(cloneBlock);
       const target = next.find((item) => item.id === id);
@@ -1054,10 +1027,6 @@ export default function App() {
       blocksRef.current = next;
       return next;
     });
-
-    if (shouldAutoFinish && draggingIdRef.current === id) {
-      finishDraggedBlock(id);
-    }
   };
 
   const finishDraggedBlock = (id) => {
@@ -1080,24 +1049,17 @@ export default function App() {
       activeZone = zoneId;
       affectedTagId = Number(target.id);
       affectedWeight = Number(target.tag?.weight || 0);
-      target.isDragging = false;
-      target.isEntering = false;
       target.currentPos = settledPoint;
+      target.anchorPos = zoneId === -1 ? settledPoint : sanitizeBlockPoint(target, target.anchorPos, stage);
+      target.isDragging = false;
+      target.needBackToAnchor = zoneId !== -1;
+      target.isEntering = false;
       target.velocity = { x: 0, y: 0 };
-
-      if (zoneId === 2 || zoneId === 3) {
-        target.needBackToAnchor = true;
-      } else {
-        target.anchorPos = settledPoint;
-        target.needBackToAnchor = false;
-      }
-
-      applyRepulsion(next, stage, 0.09, 1);
+      applyRepulsion(next, stage, 0.11, 1);
       blocksRef.current = next;
       return next;
     });
 
-    const actionWasCommitted = dragActionCommittedRef.current;
     draggingIdRef.current = null;
     dragOffsetRef.current = { x: 0, y: 0 };
     dragStartBlockPosRef.current = { x: 0, y: 0 };
@@ -1106,17 +1068,11 @@ export default function App() {
     setActiveZoneId(-1);
     setIsPortraitDragging(false);
 
-    if (!actionWasCommitted && Number.isFinite(affectedTagId) && activeZone !== -1) {
+    if (Number.isFinite(affectedTagId) && activeZone !== -1) {
       triggerZonePulse(activeZone);
       pulsePortraitBlock(affectedTagId);
       applyProfileTagActionById(affectedTagId, activeZone, affectedWeight).catch(() => {});
-    } else if (actionWasCommitted && pendingProfileRefreshRef.current) {
-      if (activeZone !== -1) triggerZonePulse(activeZone);
-      if (Number.isFinite(affectedTagId)) pulsePortraitBlock(affectedTagId);
-      pendingProfileRefreshRef.current = false;
-      loadProfileTags(userIdRef.current).catch(() => {});
     }
-    dragActionCommittedRef.current = false;
   };
 
   const portraitResponder = useRef(PanResponder.create({
@@ -1130,8 +1086,7 @@ export default function App() {
       const point = { x: evt.nativeEvent.locationX, y: evt.nativeEvent.locationY };
       const picked = pickBlockAtPoint(blocksRef.current, point);
       if (!picked) return;
-      draggingIdRef.current = picked.id;
-      dragActionCommittedRef.current = false;
+      draggingIdRef.current = picked.id;
       setIsPortraitDragging(true);
       lastDragPointRef.current = { ...picked.currentPos };
       dragOffsetRef.current = { x: picked.currentPos.x - point.x, y: picked.currentPos.y - point.y };
@@ -1383,10 +1338,12 @@ export default function App() {
 
   const handleAutoNext = async (action) => {
     await playbackEngine.next(action === "complete" ? "complete" : "skip");
+    await refreshProfileSoon();
   };
 
   const handleNext = async () => {
     await playbackEngine.next("skip");
+    await refreshProfileSoon();
   };
 
   const createPlaylist = async () => {
@@ -1943,7 +1900,7 @@ export default function App() {
 
         <View style={styles.zoneRow} pointerEvents="box-none">
           {zones.map((zone) => {
-            const zoneLit = activeZoneId === zone.id || zonePulseId === zone.id;
+            const zoneLit = zonePulseId === zone.id || (isPortraitDragging && activeZoneId === zone.id);
             return (
               <View
                 key={zone.id}
@@ -1981,87 +1938,95 @@ export default function App() {
             isPortraitDragging && styles.galaxySheetDragging
           ]}
         >
-          <TouchableOpacity style={styles.sheetHeader} onPress={() => setIsTagSheetCollapsed((prev) => !prev)}>
-            <Text style={styles.groupTitle}>Add tag</Text>
-            <Text style={styles.sheetToggleText}>{isTagSheetCollapsed ? "Expand" : "Collapse"}</Text>
-          </TouchableOpacity>
+          <View style={styles.sheetCard}>
+            <TouchableOpacity style={styles.sheetHeader} onPress={() => setIsTagSheetCollapsed((prev) => !prev)}>
+              <Text style={styles.groupTitle}>Add tag</Text>
+              <Text style={styles.sheetToggleText}>{isTagSheetCollapsed ? "Expand" : "Collapse"}</Text>
+            </TouchableOpacity>
 
-          {!isTagSheetCollapsed ? (
-            <>
-              <TextInput value={newTagName} onChangeText={setNewTagName} placeholder="Tag name" placeholderTextColor="#B9C2CE" style={styles.input} />
-              {existingTagMatch ? (
-                <Text style={styles.hintText}>{"Existing category found: " + existingTagMatch.type + ". It will be added directly."}</Text>
-              ) : (
-                <Text style={styles.hintText}>For a new tag, submit first and then choose its category.</Text>
-              )}
-              <TouchableOpacity style={styles.primary} onPress={submitUserTag}>
-                <Text style={styles.primaryText}>Add to my portrait</Text>
-              </TouchableOpacity>
-
-              {showCategoryPicker ? (
-                <View style={styles.categoryPickerCard}>
-                  <Text style={styles.categoryPickerTitle}>{"Choose a category for \"" + pendingTagName + "\""}</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryPickerRow}>
-                    {CATEGORY_ORDER.map((type) => (
-                      <TouchableOpacity key={type} style={[styles.categoryChip, selectedCategory === type && styles.categoryChipActive]} onPress={() => setSelectedCategory(type)}>
-                        <Text style={[styles.categoryChipText, selectedCategory === type && styles.categoryChipTextActive]}>{type}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                  <View style={styles.rowGap}>
-                    <TouchableOpacity
-                      style={[styles.secondarySoft, styles.flex]}
-                      onPress={() => {
-                        setShowCategoryPicker(false);
-                        setPendingTagName("");
-                      }}
-                    >
-                      <Text style={styles.secondaryText}>Cancel</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.primary, styles.flex]} onPress={confirmCustomTagType}>
-                      <Text style={styles.primaryText}>Confirm</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ) : null}
-              {tagMessage ? <Text style={styles.hintText}>{tagMessage}</Text> : null}
-
-              <View style={styles.generateSection}>
-                <Text style={styles.groupTitle}>Generate songs</Text>
-                <TouchableOpacity
-                  style={styles.secondarySoft}
-                  onPress={async () => {
-                    await generate({ prefetch: false, silent: false, preferLatest: true });
-                    await playbackEngine.refresh({ buffer: 8 });
-                  }}
-                >
-                  <Text style={styles.secondaryText}>{generationLoading ? "Generating..." : "Generate songs from portrait"}</Text>
+            {!isTagSheetCollapsed ? (
+              <>
+                <TextInput value={newTagName} onChangeText={setNewTagName} placeholder="Tag name" placeholderTextColor="#B9C2CE" style={styles.input} />
+                {existingTagMatch ? (
+                  <Text style={styles.hintText}>{"Existing category found: " + existingTagMatch.type + ". It will be added directly."}</Text>
+                ) : (
+                  <Text style={styles.hintText}>For a new tag, submit first and then choose its category.</Text>
+                )}
+                <TouchableOpacity style={styles.primary} onPress={submitUserTag}>
+                  <Text style={styles.primaryText}>Add to my portrait</Text>
                 </TouchableOpacity>
-                {generationLoading ? (
-                  <View style={[styles.listItem, styles.queueSkeletonItem, styles.generateSkeleton]}>
-                    <View style={styles.songListMain}>
-                      <View style={styles.queueSkeletonArtwork} />
-                      <View style={styles.songListText}>
-                        <View style={[styles.queueSkeletonLine, styles.queueSkeletonLinePrimary]} />
-                        <View style={[styles.queueSkeletonLine, styles.queueSkeletonLineSecondary]} />
-                      </View>
-                    </View>
-                  </View>
-                ) : lastGeneratedSong ? (
-                  <View style={styles.generatedInfoCard}>
-                    <View style={styles.songListMain}>
-                      <SongArtwork uri={lastGeneratedSong.cover_url} size={56} radius={18} label={lastGeneratedSong.title || "TPY"} />
-                      <View style={styles.songListText}>
-                        <Text style={styles.listTitle}>{lastGeneratedSong.title || "Untitled"}</Text>
-                        <Text style={styles.listSub} numberOfLines={2}>{songTagText(lastGeneratedSong)}</Text>
-                        <Text style={styles.listSub}>{lastGeneratedSong.source || "generated"}</Text>
-                      </View>
+
+                {showCategoryPicker ? (
+                  <View style={styles.categoryPickerCard}>
+                    <Text style={styles.categoryPickerTitle}>{"Choose a category for \"" + pendingTagName + "\""}</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryPickerRow}>
+                      {CATEGORY_ORDER.map((type) => (
+                        <TouchableOpacity key={type} style={[styles.categoryChip, selectedCategory === type && styles.categoryChipActive]} onPress={() => setSelectedCategory(type)}>
+                          <Text style={[styles.categoryChipText, selectedCategory === type && styles.categoryChipTextActive]}>{type}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                    <View style={styles.rowGap}>
+                      <TouchableOpacity
+                        style={[styles.secondarySoft, styles.flex]}
+                        onPress={() => {
+                          setShowCategoryPicker(false);
+                          setPendingTagName("");
+                        }}
+                      >
+                        <Text style={styles.secondaryText}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.primary, styles.flex]} onPress={confirmCustomTagType}>
+                        <Text style={styles.primaryText}>Confirm</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
                 ) : null}
+                {tagMessage ? <Text style={styles.hintText}>{tagMessage}</Text> : null}
+              </>
+            ) : null}
+          </View>
+
+          <View style={[styles.sheetCard, styles.generateSectionCard]}>
+            <Text style={styles.groupTitle}>Generate songs</Text>
+            <TouchableOpacity
+              style={styles.secondarySoft}
+              onPress={async () => {
+                await generate({ prefetch: false, silent: false, preferLatest: true });
+                await playbackEngine.refresh({ buffer: 8 });
+              }}
+            >
+              <Text style={styles.secondaryText}>{generationLoading ? "Generating..." : "Generate songs from portrait"}</Text>
+            </TouchableOpacity>
+            {generationLoading ? (
+              <View style={[styles.listItem, styles.queueSkeletonItem, styles.generateSkeleton]}>
+                <View style={styles.songListMain}>
+                  <View style={styles.queueSkeletonArtwork} />
+                  <View style={styles.songListText}>
+                    <View style={[styles.queueSkeletonLine, styles.queueSkeletonLinePrimary]} />
+                    <View style={[styles.queueSkeletonLine, styles.queueSkeletonLineSecondary]} />
+                  </View>
+                </View>
               </View>
-            </>
-          ) : null}
+            ) : lastGeneratedSong ? (
+              <TouchableOpacity
+                style={styles.generatedInfoCard}
+                onPress={async () => {
+                  await insertSongAsNext(lastGeneratedSong, "portrait-generated");
+                  setActiveTab("player");
+                }}
+              >
+                <View style={styles.songListMain}>
+                  <SongArtwork uri={lastGeneratedSong.cover_url} size={56} radius={18} label={lastGeneratedSong.title || "TPY"} />
+                  <View style={styles.songListText}>
+                    <Text style={styles.listTitle}>{lastGeneratedSong.title || "Untitled"}</Text>
+                    <Text style={styles.listSub} numberOfLines={2}>{songTagText(lastGeneratedSong)}</Text>
+                    <Text style={styles.listSub}>{lastGeneratedSong.source || "generated"}</Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
       </View>
     );
@@ -2253,9 +2218,11 @@ const styles = StyleSheet.create({
   galaxySheet: { position: "absolute", left: 14, right: 14, bottom: 96, backgroundColor: "rgba(11,17,27,0.68)", borderRadius: 30, padding: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   galaxySheetCollapsed: { paddingBottom: 10 },
   galaxySheetDragging: { opacity: 0.3 },
+  sheetCard: { backgroundColor: "rgba(11,17,26,0.74)", borderRadius: 26, padding: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   sheetToggleText: { color: "rgba(255,255,255,0.86)", fontSize: 13, fontWeight: "700" },
   generateSection: { marginTop: 16, gap: 10 },
+  generateSectionCard: { marginTop: 12 },
   generateSkeleton: { marginTop: 8 },
   generatedInfoCard: { marginTop: 8, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   categoryPickerCard: { marginTop: 14, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)" },
