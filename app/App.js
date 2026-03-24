@@ -60,6 +60,27 @@ const FALLBACK_BLOBS = [
   { x: 0.9, y: 0.76, r: 0.16, color: "rgba(255,196,107,0.28)" }
 ];
 
+
+const LANGUAGE_OPTIONS = [
+  { key: "zh", label: "\u4e2d\u6587" },
+  { key: "en", label: "English" }
+];
+
+const I18N = {
+  zh: {
+    guest: "\u8bbf\u5ba2", missingAccountTitle: "\u7f3a\u5c11\u8d26\u53f7", missingAccountBody: "\u8bf7\u8f93\u5165\u8d26\u53f7 ID\u3002", missingPasswordTitle: "\u7f3a\u5c11\u5bc6\u7801", missingPasswordBody: "\u8bf7\u8f93\u5165\u5bc6\u7801\u3002", missingUsernameTitle: "\u7f3a\u5c11\u6635\u79f0", missingUsernameBody: "\u6ce8\u518c\u65f6\u8bf7\u5148\u8f93\u5165\u6635\u79f0\u3002", missingAvatarTitle: "\u7f3a\u5c11\u5934\u50cf", missingAvatarBody: "\u8bf7\u9009\u62e9\u4e00\u4e2a\u5934\u50cf\u3002", weakPasswordTitle: "\u5bc6\u7801\u592a\u77ed", weakPasswordBody: "\u5bc6\u7801\u81f3\u5c11\u9700\u8981 6 \u4f4d\u3002", passwordMismatchTitle: "\u5bc6\u7801\u4e0d\u4e00\u81f4", passwordMismatchBody: "\u4e24\u6b21\u8f93\u5165\u7684\u5bc6\u7801\u4e0d\u4e00\u81f4\u3002", loginFailed: "\u767b\u5f55\u5931\u8d25", registerFailed: "\u6ce8\u518c\u5931\u8d25", generationFailed: "\u751f\u6210\u5931\u8d25", noSongsReadyTitle: "\u6682\u65e0\u53ef\u64ad\u6b4c\u66f2", noSongsReadyBody: "\u8bf7\u5148\u5728\u753b\u50cf\u9875\u751f\u6210\u6b4c\u66f2\u3002", noPlaylistTitle: "\u8fd8\u6ca1\u6709\u6b4c\u5355", noPlaylistBody: "\u8bf7\u5148\u5230\u6536\u85cf\u9875\u521b\u5efa\u4e00\u4e2a\u6b4c\u5355\u3002", anchorUpdateFailed: "\u4e3b\u952e\u573a\u666f\u66f4\u65b0\u5931\u8d25", authEyebrow: "\u5929\u8c31\u4e50", authTitle: "\u767b\u5f55\u540e\u7ee7\u7eed\u4f60\u7684\u97f3\u4e50\u7a7a\u95f4", authSubtitle: "\u6ce8\u518c\u9700\u8f93\u5165\u6635\u79f0\u3001\u8d26\u53f7\u3001\u5bc6\u7801\u548c\u5934\u50cf\uff0c\u767b\u5f55\u53ea\u9700\u8d26\u53f7\u548c\u5bc6\u7801\u3002", loginRestore: "\u767b\u5f55\u5e76\u6062\u590d", registerContinue: "\u6ce8\u518c\u5e76\u7ee7\u7eed", username: "\u6635\u79f0", chooseAvatar: "\u9009\u62e9\u5934\u50cf", accountId: "\u8d26\u53f7 ID", password: "\u5bc6\u7801", confirmPassword: "\u786e\u8ba4\u5bc6\u7801", pickInitialTags: "\u9009\u62e9\u521d\u59cb\u6807\u7b7e", pickInitialTagsSub: "\u8bf7\u81f3\u5c11\u4ece\u4e24\u4e2a\u4e0d\u540c\u5206\u7c7b\u4e2d\u9009\u62e9\u6807\u7b7e\u3002", done: "\u5df2\u5b8c\u6210", stepLabel: "\u7b2c {current} \u6b65 / \u5171 {total} \u6b65", allCategoriesCompleted: "\u6240\u6709\u5206\u7c7b\u5df2\u9009\u5b8c\u3002", back: "\u4e0a\u4e00\u6b65", next: "\u4e0b\u4e00\u6b65", enterApp: "\u8fdb\u5165 App", sceneAnchor: "\u4e3b\u952e\u573a\u666f", noPlayableSongs: "\u6682\u65e0\u53ef\u64ad\u6b4c\u66f2\uff0c\u8bf7\u5148\u53bb\u753b\u50cf\u9875\u751f\u6210\u3002", favorite: "\u6536\u85cf", play: "\u64ad\u653e", pause: "\u6682\u505c", refresh: "\u5237\u65b0", saveToPlaylist: "\u4fdd\u5b58\u5230\u6b4c\u5355", songsCount: "{count} \u9996", cancel: "\u53d6\u6d88", noSongsReady: "\u6682\u65e0\u6b4c\u66f2", newPlaylist: "\u65b0\u5efa\u6b4c\u5355", newPlaylistPlaceholder: "\u4f8b\u5982\uff1a\u591c\u665a\u901a\u52e4 / \u51cc\u6668", create: "\u521b\u5efa", myPlaylists: "\u6211\u7684\u6b4c\u5355", noPlaylistYet: "\u6682\u65e0\u6b4c\u5355\u3002", playlistEmpty: "\u8fd9\u4e2a\u6b4c\u5355\u8fd8\u662f\u7a7a\u7684\u3002", myGeneratedSongs: "\u6211\u751f\u6210\u7684\u6b4c", noGeneratedSongs: "\u8fd8\u6ca1\u6709\u751f\u6210\u6b4c\u66f2\uff0c\u53bb\u753b\u50cf\u9875\u751f\u6210\u5427\u3002", public: "\u516c\u5f00", private: "\u79c1\u6709", enabled: "\u542f\u7528", disabled: "\u505c\u7528", revenueOn: "\u5206\u8d26\u5f00\u542f", revenueOff: "\u5206\u8d26\u5173\u95ed", noTagsYet: "\u8fd8\u6ca1\u6709\u6807\u7b7e", noTagsYetSub: "\u53ef\u4ee5\u5728\u4e0b\u65b9\u6dfb\u52a0\u6807\u7b7e\uff0c\u6216\u5148\u5b8c\u6210\u521d\u59cb\u6807\u7b7e\u9009\u62e9\u3002", softer: "\u51cf\u5f31", lowerWeight: "\u964d\u4f4e\u6743\u91cd", stronger: "\u589e\u5f3a", raiseWeight: "\u63d0\u9ad8\u6743\u91cd", addTag: "\u6dfb\u52a0\u6807\u7b7e", expand: "\u5c55\u5f00", collapse: "\u6536\u8d77", tagName: "\u6807\u7b7e\u540d\u79f0", existingCategoryFound: "\u5df2\u6709\u5206\u7c7b\uff1a{type}\uff0c\u5c06\u76f4\u63a5\u52a0\u5165\u753b\u50cf\u3002", newTagHint: "\u5168\u65b0\u6807\u7b7e\u9700\u5148\u63d0\u4ea4\uff0c\u518d\u9009\u62e9\u6240\u5c5e\u5206\u7c7b\u3002", addToPortrait: "\u52a0\u5165\u6211\u7684\u753b\u50cf", chooseCategoryFor: "\u4e3a\u201c{tag}\u201d\u9009\u62e9\u5206\u7c7b", confirm: "\u786e\u5b9a", generateSongs: "\u751f\u6210\u6b4c\u66f2", generating: "\u751f\u6210\u4e2d...", generateFromPortrait: "\u6839\u636e\u753b\u50cf\u751f\u6210\u6b4c\u66f2", generated: "\u5df2\u751f\u6210", currentAccount: "\u5f53\u524d\u8d26\u53f7", accountAction: "\u8d26\u53f7\u64cd\u4f5c", logout: "\u9000\u51fa\u767b\u5f55", language: "\u8bed\u8a00", languageHint: "\u5f53\u524d\u53ea\u5207\u6362 App \u5185\u6587\u6848\u3002"
+  },
+  en: {
+    guest: "Guest", missingAccountTitle: "Missing account", missingAccountBody: "Please enter your account ID.", missingPasswordTitle: "Missing password", missingPasswordBody: "Please enter your password.", missingUsernameTitle: "Missing username", missingUsernameBody: "Please enter a username for registration.", missingAvatarTitle: "Missing avatar", missingAvatarBody: "Please choose an avatar.", weakPasswordTitle: "Weak password", weakPasswordBody: "Password must be at least 6 characters.", passwordMismatchTitle: "Password mismatch", passwordMismatchBody: "The two passwords do not match.", loginFailed: "Login failed", registerFailed: "Register failed", generationFailed: "Generation failed", noSongsReadyTitle: "No songs ready", noSongsReadyBody: "Please generate songs in Portrait first.", noPlaylistTitle: "No playlist", noPlaylistBody: "Create one in Favorites first.", anchorUpdateFailed: "Anchor update failed", authEyebrow: "TPY MUSIC", authTitle: "Sign in to restore your music space", authSubtitle: "Register with username, account, password and avatar. Login uses account and password.", loginRestore: "Login & restore", registerContinue: "Register & continue", username: "Username", chooseAvatar: "Choose avatar", accountId: "Account ID", password: "Password", confirmPassword: "Confirm password", pickInitialTags: "Pick initial tags", pickInitialTagsSub: "Please choose tags from at least two categories.", done: "Done", stepLabel: "Step {current} / {total}", allCategoriesCompleted: "All categories completed.", back: "Back", next: "Next", enterApp: "Enter App", sceneAnchor: "Scene anchor", noPlayableSongs: "No playable songs. Go to Portrait to generate.", favorite: "Favorite", play: "Play", pause: "Pause", refresh: "Refresh", saveToPlaylist: "Save to playlist", songsCount: "Songs {count}", cancel: "Cancel", noSongsReady: "No songs ready.", newPlaylist: "New playlist", newPlaylistPlaceholder: "e.g. Late night / Commute", create: "Create", myPlaylists: "My playlists", noPlaylistYet: "No playlist yet.", playlistEmpty: "This playlist is empty.", myGeneratedSongs: "My generated songs", noGeneratedSongs: "No generated songs yet. Generate songs in Portrait first.", public: "Public", private: "Private", enabled: "Enabled", disabled: "Disabled", revenueOn: "Revenue on", revenueOff: "Revenue off", noTagsYet: "No tags yet", noTagsYetSub: "Add tags below, or complete onboarding tags first.", softer: "Softer", lowerWeight: "Lower weight", stronger: "Stronger", raiseWeight: "Raise weight", addTag: "Add tag", expand: "Expand", collapse: "Collapse", tagName: "Tag name", existingCategoryFound: "Existing category found: {type}. It will be added directly.", newTagHint: "For a new tag, submit first and then choose its category.", addToPortrait: "Add to my portrait", chooseCategoryFor: "Choose a category for ?{tag}?", confirm: "Confirm", generateSongs: "Generate songs", generating: "Generating...", generateFromPortrait: "Generate songs from portrait", generated: "generated", currentAccount: "Current account", accountAction: "Account action", logout: "Log out", language: "Language", languageHint: "Switch UI copy inside the app."
+  }
+};
+
+function translate(language, key, vars = {}) {
+  const base = I18N[language]?.[key] ?? I18N.zh[key] ?? key;
+  return Object.entries(vars).reduce((text, [name, value]) => text.replaceAll(`{${name}}`, String(value)), base);
+}
+
+
 function formatTime(ms) {
   if (!ms || Number.isNaN(ms)) return "0:00";
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -548,6 +569,7 @@ function SongArtwork({ uri, size = 56, radius, label = "TPY" }) {
 export default function App() {
   const { width, height } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState("player");
+  const [language, setLanguage] = useState("zh");
   const [authMode, setAuthMode] = useState("login");
   const [accountId, setAccountId] = useState("");
   const [accountName, setAccountName] = useState("");
@@ -622,7 +644,8 @@ export default function App() {
   const autoGenerateRef = useRef(async () => false);
   const userId = session?.userId || null;
   const userIdRef = useRef(userId);
-  const displayName = session?.name || session?.accountId || session?.deviceId || "\u8bbf\u5ba2";
+  const displayName = session?.name || session?.accountId || session?.deviceId || translate(language, "guest");
+  const t = useCallback((key, vars = {}) => translate(language, key, vars), [language]);
   const playbackEngine = usePlaybackEngine({
     apiBase: API_BASE,
     userId,
@@ -1184,13 +1207,13 @@ export default function App() {
   const submitAuth = async () => {
     const cleanId = accountId.trim().toLowerCase();
     const cleanName = accountName.trim();
-    if (!cleanId) return Alert.alert("Missing account", "Please enter your account ID.");
-    if (!accountPassword) return Alert.alert("Missing password", "Please enter your password.");
+    if (!cleanId) return Alert.alert(t("missingAccountTitle"), t("missingAccountBody"));
+    if (!accountPassword) return Alert.alert(t("missingPasswordTitle"), t("missingPasswordBody"));
     if (authMode === "register") {
-      if (!cleanName) return Alert.alert("Missing username", "Please enter a username for registration.");
-      if (!selectedAvatar) return Alert.alert("Missing avatar", "Please choose an avatar.");
-      if (accountPassword.length < 6) return Alert.alert("Weak password", "Password must be at least 6 characters.");
-      if (accountPassword !== accountPasswordConfirm) return Alert.alert("Password mismatch", "The two passwords do not match.");
+      if (!cleanName) return Alert.alert(t("missingUsernameTitle"), t("missingUsernameBody"));
+      if (!selectedAvatar) return Alert.alert(t("missingAvatarTitle"), t("missingAvatarBody"));
+      if (accountPassword.length < 6) return Alert.alert(t("weakPasswordTitle"), t("weakPasswordBody"));
+      if (accountPassword !== accountPasswordConfirm) return Alert.alert(t("passwordMismatchTitle"), t("passwordMismatchBody"));
     }
     setAuthLoading(true);
     try {
@@ -1199,7 +1222,7 @@ export default function App() {
       setAccountPassword("");
       setAccountPasswordConfirm("");
     } catch (err) {
-      Alert.alert(authMode === "login" ? "Login failed" : "Register failed", String(err.message || err));
+      Alert.alert(authMode === "login" ? t("loginFailed") : t("registerFailed"), String(err.message || err));
     } finally {
       setAuthLoading(false);
     }
@@ -1300,7 +1323,7 @@ export default function App() {
 
       throw new Error("generation timed out");
     } catch (err) {
-      if (!silent) Alert.alert("Generation failed", String(err));
+      if (!silent) Alert.alert(t("generationFailed"), String(err));
       return songs;
     } finally {
       if (!prefetch) setGenerationLoading(false);
@@ -1387,7 +1410,7 @@ export default function App() {
     }
 
     if (recommendationState.needsGeneration) {
-      Alert.alert("No songs ready", "Please generate songs in Portrait first.");
+      Alert.alert(t("noSongsReadyTitle"), t("noSongsReadyBody"));
       setActiveTab("galaxy");
     }
     return false;
@@ -1545,21 +1568,21 @@ export default function App() {
       <PortraitBackdrop blocks={portraitBlocks} stageSize={{ width, height }} />
       <ScrollView contentContainerStyle={styles.authShell} showsVerticalScrollIndicator={false}>
         <View style={styles.authCard}>
-          <Text style={styles.authEyebrow}>TPY MUSIC</Text>
-          <Text style={styles.authTitle}>Sign in to restore your music space</Text>
-          <Text style={styles.authSubtitle}>Register with username, account, password and avatar. Login uses account and password.</Text>
+          <Text style={styles.authEyebrow}>{t("authEyebrow")}</Text>
+          <Text style={styles.authTitle}>{t("authTitle")}</Text>
+          <Text style={styles.authSubtitle}>{t("authSubtitle")}</Text>
           <View style={styles.authModeRow}>
             <TouchableOpacity style={[styles.authMode, authMode === "login" && styles.authModeActive]} onPress={() => setAuthMode("login")}>
-              <Text style={[styles.authModeText, authMode === "login" && styles.authModeTextActive]}>Login</Text>
+              <Text style={[styles.authModeText, authMode === "login" && styles.authModeTextActive]}>{language === "en" ? "Login" : "??"}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.authMode, authMode === "register" && styles.authModeActive]} onPress={() => setAuthMode("register")}>
-              <Text style={[styles.authModeText, authMode === "register" && styles.authModeTextActive]}>Register</Text>
+              <Text style={[styles.authModeText, authMode === "register" && styles.authModeTextActive]}>{language === "en" ? "Register" : "??"}</Text>
             </TouchableOpacity>
           </View>
           {authMode === "register" ? (
             <>
-              <TextInput value={accountName} onChangeText={setAccountName} placeholder="Username" placeholderTextColor="#B9C2CE" style={styles.input} />
-              <Text style={styles.avatarPickerLabel}>Choose avatar</Text>
+              <TextInput value={accountName} onChangeText={setAccountName} placeholder={t("username")} placeholderTextColor="#B9C2CE" style={styles.input} />
+              <Text style={styles.avatarPickerLabel}>{t("chooseAvatar")}</Text>
               <View style={styles.avatarPickerRow}>
                 {AUTH_AVATARS.map((avatar) => (
                   <TouchableOpacity key={avatar} style={[styles.avatarChip, selectedAvatar === avatar && styles.avatarChipActive]} onPress={() => setSelectedAvatar(avatar)}>
@@ -1569,13 +1592,13 @@ export default function App() {
               </View>
             </>
           ) : null}
-          <TextInput value={accountId} onChangeText={(value) => setAccountId(value.replace(/\s+/g, "").toLowerCase())} placeholder="Account ID" placeholderTextColor="#B9C2CE" autoCapitalize="none" style={styles.input} />
-          <TextInput value={accountPassword} onChangeText={setAccountPassword} placeholder="Password" placeholderTextColor="#B9C2CE" secureTextEntry style={styles.input} />
+          <TextInput value={accountId} onChangeText={(value) => setAccountId(value.replace(/\s+/g, "").toLowerCase())} placeholder={t("accountId")} placeholderTextColor="#B9C2CE" autoCapitalize="none" style={styles.input} />
+          <TextInput value={accountPassword} onChangeText={setAccountPassword} placeholder={t("password")} placeholderTextColor="#B9C2CE" secureTextEntry style={styles.input} />
           {authMode === "register" ? (
-            <TextInput value={accountPasswordConfirm} onChangeText={setAccountPasswordConfirm} placeholder="Confirm password" placeholderTextColor="#B9C2CE" secureTextEntry style={styles.input} />
+            <TextInput value={accountPasswordConfirm} onChangeText={setAccountPasswordConfirm} placeholder={t("confirmPassword")} placeholderTextColor="#B9C2CE" secureTextEntry style={styles.input} />
           ) : null}
           <TouchableOpacity style={styles.primary} onPress={submitAuth} disabled={authLoading}>
-            {authLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>{authMode === "login" ? "Login & restore" : "Register & continue"}</Text>}
+            {authLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>{authMode === "login" ? t("loginRestore") : t("registerContinue")}</Text>}
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -1586,11 +1609,11 @@ export default function App() {
     <SafeAreaView style={styles.page}>
       <PortraitBackdrop blocks={portraitBlocks} stageSize={{ width, height }} />
       <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-        <ScreenTitle title="Pick initial tags" subtitle="Please choose tags from at least two categories." />
+        <ScreenTitle title={t("pickInitialTags")} subtitle={t("pickInitialTagsSub")} />
         <View style={styles.groupCard}>
           <View style={styles.onboardingProgressHeader}>
-            <Text style={styles.groupTitle}>{currentOnboarding ? currentOnboarding[0] : "Done"}</Text>
-            <Text style={styles.hintText}>{"Step " + Math.min(onboardingStep + 1, onboardingGroups.length || 1) + " / " + Math.max(1, onboardingGroups.length)}</Text>
+            <Text style={styles.groupTitle}>{currentOnboarding ? currentOnboarding[0] : t("done")}</Text>
+            <Text style={styles.hintText}>{t("stepLabel", { current: Math.min(onboardingStep + 1, onboardingGroups.length || 1), total: Math.max(1, onboardingGroups.length) })}</Text>
           </View>
           <View style={styles.onboardingProgressTrack}>
             <View style={[styles.onboardingProgressFill, { width: String(((Math.min(onboardingStep + 1, onboardingGroups.length || 1)) / Math.max(1, onboardingGroups.length)) * 100) + "%" }]} />
@@ -1612,19 +1635,19 @@ export default function App() {
               ))}
             </View>
           ) : (
-            <Text style={styles.placeholder}>All categories completed.</Text>
+            <Text style={styles.placeholder}>{t("allCategoriesCompleted")}</Text>
           )}
           <View style={styles.rowGap}>
             <TouchableOpacity style={[styles.secondarySoft, styles.flex]} onPress={() => setOnboardingStep((prev) => Math.max(0, prev - 1))}>
-              <Text style={styles.secondaryText}>Back</Text>
+              <Text style={styles.secondaryText}>{t("back")}</Text>
             </TouchableOpacity>
             {onboardingStep < onboardingGroups.length - 1 ? (
               <TouchableOpacity style={[styles.primary, styles.flex]} onPress={() => setOnboardingStep((prev) => Math.min(onboardingGroups.length - 1, prev + 1))}>
-                <Text style={styles.primaryText}>Next</Text>
+                <Text style={styles.primaryText}>{t("next")}</Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity style={[styles.primary, styles.flex]} onPress={submitOnboarding}>
-                <Text style={styles.primaryText}>Enter App</Text>
+                <Text style={styles.primaryText}>{t("enterApp")}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -1651,7 +1674,7 @@ export default function App() {
     return (
       <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
         <View style={styles.anchorStrip}>
-          <Text style={styles.anchorStripLabel}>Scene anchor</Text>
+          <Text style={styles.anchorStripLabel}>{t("sceneAnchor")}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.anchorChipRow}>
             {sceneOptions.length > 0 ? sceneOptions.map((tag) => {
               const selected = Number(activeSceneAnchor?.tag_id || activeSceneAnchor?.id || 0) === Number(tag.id);
@@ -1663,7 +1686,7 @@ export default function App() {
                     try {
                       await persistSceneAnchor(tag.id);
                     } catch (err) {
-                      Alert.alert("Anchor update failed", String(err?.message || err));
+                      Alert.alert(t("anchorUpdateFailed"), String(err?.message || err));
                     }
                   }}
                 >
@@ -1690,7 +1713,7 @@ export default function App() {
           <Text style={styles.playerSub} numberOfLines={2}>{songTagText(playerCurrent)}</Text>
           {!playerCurrent && playerNeedsGeneration ? (
             <TouchableOpacity style={styles.secondarySoft} onPress={() => setActiveTab("galaxy")}>
-              <Text style={styles.secondaryText}>No playable songs. Go to Portrait to generate.</Text>
+              <Text style={styles.secondaryText}>{t("noPlayableSongs")}</Text>
             </TouchableOpacity>
           ) : null}
 
@@ -1715,27 +1738,27 @@ export default function App() {
                 await refreshProfileSoon();
                 const list = await loadPlaylists(userId);
                 if (list.length === 0) {
-                  Alert.alert("No playlist", "Create one in Favorites first.");
+                  Alert.alert(t("noPlaylistTitle"), t("noPlaylistBody"));
                   setActiveTab("favorites");
                   return;
                 }
                 setShowPlaylistPicker(true);
               }}
             >
-              <Text style={styles.controlText}>Favorite</Text>
+              <Text style={styles.controlText}>{t("favorite")}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.playBtn} onPress={togglePlay}>
-              <Text style={styles.playText}>{playerCurrent ? (playerPlayback.isPlaying ? "Pause" : "Play") : "Refresh"}</Text>
+              <Text style={styles.playText}>{playerCurrent ? (playerPlayback.isPlaying ? t("pause") : t("play")) : t("refresh")}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.controlBtn} onPress={handleNext}>
-              <Text style={styles.controlText}>Next</Text>
+              <Text style={styles.controlText}>{t("next")}</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {showPlaylistPicker ? (
           <View style={styles.groupCard}>
-            <Text style={styles.groupTitle}>Save to playlist</Text>
+            <Text style={styles.groupTitle}>{t("saveToPlaylist")}</Text>
             {playlists.map((playlist) => (
               <TouchableOpacity
                 key={playlist.id}
@@ -1748,13 +1771,13 @@ export default function App() {
               >
                 <View>
                   <Text style={styles.listTitle}>{playlist.name}</Text>
-                  <Text style={styles.listSub}>{"Songs " + (playlist.song_count || 0)}</Text>
+                  <Text style={styles.listSub}>{t("songsCount", { count: playlist.song_count || 0 })}</Text>
                 </View>
                 <Text style={styles.chevron}>{">"}</Text>
               </TouchableOpacity>
             ))}
             <TouchableOpacity style={styles.secondarySoft} onPress={() => setShowPlaylistPicker(false)}>
-              <Text style={styles.secondaryText}>Cancel</Text>
+              <Text style={styles.secondaryText}>{t("cancel")}</Text>
             </TouchableOpacity>
           </View>
         ) : null}
@@ -1801,7 +1824,11 @@ export default function App() {
                   </View>
                 ) : null}
               />
-              <View pointerEvents="none" style={styles.queueTopFade} />
+              <View pointerEvents="none" style={styles.queueTopFade}>
+                <View style={styles.queueTopFadeLayerStrong} />
+                <View style={styles.queueTopFadeLayerMid} />
+                <View style={styles.queueTopFadeLayerSoft} />
+              </View>
             </View>
           ) : (
             <View style={styles.queueEmptyBox}>
@@ -1814,7 +1841,7 @@ export default function App() {
                   </View>
                 </View>
               ) : (
-                <Text style={styles.placeholder}>No songs ready.</Text>
+                <Text style={styles.placeholder}>{t("noSongsReady")}</Text>
               )}
             </View>
           )}
@@ -1826,17 +1853,17 @@ export default function App() {
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
 
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>New playlist</Text>
-        <TextInput value={newPlaylistName} onChangeText={setNewPlaylistName} placeholder="e.g. Late night / Commute" placeholderTextColor="#B9C2CE" style={styles.input} />
+        <Text style={styles.groupTitle}>{t("newPlaylist")}</Text>
+        <TextInput value={newPlaylistName} onChangeText={setNewPlaylistName} placeholder={t("newPlaylistPlaceholder")} placeholderTextColor="#B9C2CE" style={styles.input} />
         <TouchableOpacity style={styles.primary} onPress={createPlaylist}>
-          <Text style={styles.primaryText}>Create</Text>
+          <Text style={styles.primaryText}>{t("create")}</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>My playlists</Text>
+        <Text style={styles.groupTitle}>{t("myPlaylists")}</Text>
         {playlists.length === 0 ? (
-          <Text style={styles.placeholder}>No playlist yet.</Text>
+          <Text style={styles.placeholder}>{t("noPlaylistYet")}</Text>
         ) : playlists.map((playlist) => {
           const expanded = selectedPlaylistId === playlist.id;
           const songsInPlaylist = playlistSongsMap[playlist.id] || [];
@@ -1871,7 +1898,7 @@ export default function App() {
               {expanded ? (
                 <View style={{ marginTop: 10 }}>
                   {songsInPlaylist.length === 0 ? (
-                    <Text style={styles.placeholder}>This playlist is empty.</Text>
+                    <Text style={styles.placeholder}>{t("playlistEmpty")}</Text>
                   ) : songsInPlaylist.map((song) => (
                     <TouchableOpacity key={String(playlist.id) + "-" + String(song.id)} style={styles.listItem} onPress={() => insertSongAsNext(song, "playlist-song-" + String(playlist.id))}>
                       <View style={styles.songListMain}>
@@ -1892,9 +1919,9 @@ export default function App() {
       </View>
 
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>My generated songs</Text>
+        <Text style={styles.groupTitle}>{t("myGeneratedSongs")}</Text>
         {mySongs.length === 0 ? (
-          <Text style={styles.placeholder}>No generated songs yet. Generate songs in Portrait first.</Text>
+          <Text style={styles.placeholder}>{t("noGeneratedSongs")}</Text>
         ) : mySongs.map((song) => (
           <View key={String(song.id) + "-mine"} style={styles.playlistBox}>
             <TouchableOpacity style={styles.listItem} onPress={() => enqueueSongToTail(song, "my-song-" + String(song.id))}>
@@ -1903,13 +1930,13 @@ export default function App() {
                 <View style={styles.songListText}>
                   <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
                   <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
-                  <Text style={styles.listSub} numberOfLines={1}>{`${song.is_public ? "Public" : "Private"} - ${song.is_available ? "Enabled" : "Disabled"} - ${song.generation_source || "portrait_manual"}`}</Text>
+                  <Text style={styles.listSub} numberOfLines={1}>{`${song.is_public ? t("public") : t("private")} - ${song.is_available ? t("enabled") : t("disabled")} - ${song.generation_source || "portrait_manual"}`}</Text>
                 </View>
               </View>
               <Text style={styles.chevron}>{">"}</Text>
             </TouchableOpacity>
             <View style={styles.workMetaRow}>
-              <Text style={styles.workMetaText}>{`ID ${song.id} - ${song.creator_type || "user"} - ${song.revenue_enabled ? "Revenue on" : "Revenue off"}`}</Text>
+              <Text style={styles.workMetaText}>{`ID ${song.id} - ${song.creator_type || "user"} - ${song.revenue_enabled ? t("revenueOn") : t("revenueOff")}`}</Text>
               <Text style={styles.workMetaText}>{new Date(song.created_at).toLocaleString()}</Text>
             </View>
           </View>
@@ -1939,8 +1966,8 @@ export default function App() {
                   zone.id === 3 && zoneLit && styles.zoneBiggerActive
                 ]}
               >
-                <Text style={styles.zoneLabel}>{zone.label}</Text>
-                <Text style={styles.zoneHint}>{zone.hint}</Text>
+                <Text style={styles.zoneLabel}>{zone.key === "smaller" ? t("softer") : t("stronger")}</Text>
+                <Text style={styles.zoneHint}>{zone.key === "smaller" ? t("lowerWeight") : t("raiseWeight")}</Text>
               </View>
             );
           })}
@@ -1949,8 +1976,8 @@ export default function App() {
         <View style={styles.galaxyStage} {...portraitResponder.panHandlers}>
           {portraitBlocks.length === 0 ? (
             <View style={styles.emptyGalaxy}>
-              <Text style={styles.emptyGalaxyTitle}>No tags yet</Text>
-              <Text style={styles.emptyGalaxyText}>Add tags below, or complete onboarding tags first.</Text>
+              <Text style={styles.emptyGalaxyTitle}>{t("noTagsYet")}</Text>
+              <Text style={styles.emptyGalaxyText}>{t("noTagsYetSub")}</Text>
             </View>
           ) : portraitBlocks.map((block) => (
             <PortraitTag key={block.id} block={block} isDragging={block.id === draggingIdRef.current} />
@@ -1967,20 +1994,20 @@ export default function App() {
         >
           <View style={[styles.sheetCard, isTagSheetCollapsed && styles.sheetCardCollapsed]}>
             <TouchableOpacity style={[styles.sheetHeader, isTagSheetCollapsed && styles.sheetHeaderCollapsed]} onPress={() => setIsTagSheetCollapsed((prev) => !prev)}>
-              <Text style={[styles.groupTitle, isTagSheetCollapsed && styles.groupTitleCollapsed]}>Add tag</Text>
-              <Text style={styles.sheetToggleText}>{isTagSheetCollapsed ? "Expand" : "Collapse"}</Text>
+              <Text style={[styles.groupTitle, isTagSheetCollapsed && styles.groupTitleCollapsed]}>{t("addTag")}</Text>
+              <Text style={styles.sheetToggleText}>{isTagSheetCollapsed ? t("expand") : t("collapse")}</Text>
             </TouchableOpacity>
 
             {!isTagSheetCollapsed ? (
               <>
-                <TextInput value={newTagName} onChangeText={setNewTagName} placeholder="Tag name" placeholderTextColor="#B9C2CE" style={styles.input} />
+                <TextInput value={newTagName} onChangeText={setNewTagName} placeholder={t("tagName")} placeholderTextColor="#B9C2CE" style={styles.input} />
                 {existingTagMatch ? (
-                  <Text style={styles.hintText}>{"Existing category found: " + existingTagMatch.type + ". It will be added directly."}</Text>
+                  <Text style={styles.hintText}>{t("existingCategoryFound", { type: existingTagMatch.type })}</Text>
                 ) : (
-                  <Text style={styles.hintText}>For a new tag, submit first and then choose its category.</Text>
+                  <Text style={styles.hintText}>{t("newTagHint")}</Text>
                 )}
                 <TouchableOpacity style={styles.primary} onPress={submitUserTag}>
-                  <Text style={styles.primaryText}>Add to my portrait</Text>
+                  <Text style={styles.primaryText}>{t("addToPortrait")}</Text>
                 </TouchableOpacity>
 
                 {showCategoryPicker ? (
@@ -2001,10 +2028,10 @@ export default function App() {
                           setPendingTagName("");
                         }}
                       >
-                        <Text style={styles.secondaryText}>Cancel</Text>
+                        <Text style={styles.secondaryText}>{t("cancel")}</Text>
                       </TouchableOpacity>
                       <TouchableOpacity style={[styles.primary, styles.flex]} onPress={confirmCustomTagType}>
-                        <Text style={styles.primaryText}>Confirm</Text>
+                        <Text style={styles.primaryText}>{t("confirm")}</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -2016,8 +2043,8 @@ export default function App() {
 
           <View style={[styles.sheetCard, styles.generateSectionCard, isGenerateSheetCollapsed && styles.sheetCardCollapsed]}>
             <TouchableOpacity style={[styles.sheetHeader, isGenerateSheetCollapsed && styles.sheetHeaderCollapsed]} onPress={() => setIsGenerateSheetCollapsed((prev) => !prev)}>
-              <Text style={[styles.groupTitle, isGenerateSheetCollapsed && styles.groupTitleCollapsed]}>Generate songs</Text>
-              <Text style={styles.sheetToggleText}>{isGenerateSheetCollapsed ? "Expand" : "Collapse"}</Text>
+              <Text style={[styles.groupTitle, isGenerateSheetCollapsed && styles.groupTitleCollapsed]}>{t("generateSongs")}</Text>
+              <Text style={styles.sheetToggleText}>{isGenerateSheetCollapsed ? t("expand") : t("collapse")}</Text>
             </TouchableOpacity>
             {!isGenerateSheetCollapsed ? (
               <>
@@ -2028,7 +2055,7 @@ export default function App() {
                     await playbackEngine.refresh({ buffer: 8 });
                   }}
                 >
-                  <Text style={styles.secondaryText}>{generationLoading ? "Generating..." : "Generate songs from portrait"}</Text>
+                  <Text style={styles.secondaryText}>{generationLoading ? t("generating") : t("generateFromPortrait")}</Text>
                 </TouchableOpacity>
                 {generationLoading ? (
                   <View style={[styles.listItem, styles.queueSkeletonItem, styles.generateSkeleton]}>
@@ -2053,7 +2080,7 @@ export default function App() {
                       <View style={styles.songListText}>
                         <Text style={styles.listTitle}>{lastGeneratedSong.title || "Untitled"}</Text>
                         <Text style={styles.listSub} numberOfLines={2}>{songTagText(lastGeneratedSong)}</Text>
-                        <Text style={styles.listSub}>{lastGeneratedSong.source || "generated"}</Text>
+                        <Text style={styles.listSub}>{lastGeneratedSong.source || t("generated")}</Text>
                       </View>
                     </View>
                   </TouchableOpacity>
@@ -2068,24 +2095,33 @@ export default function App() {
   const renderSettings = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>Current account</Text>
+        <Text style={styles.groupTitle}>{t("currentAccount")}</Text>
         <View style={styles.accountCard}>
           <View style={styles.accountAvatar}><Text style={styles.accountAvatarText}>{session?.avatar || "\uD83C\uDFA7"}</Text></View>
           <Text style={styles.accountName}>{displayName}</Text>
-          <Text style={styles.accountMeta}>{"Account ID: " + String(session?.accountId || session?.deviceId || "")}</Text>
-          <Text style={styles.accountMeta}>{"User ID: " + String(session?.userId || "")}</Text>
+          <Text style={styles.accountMeta}>{(language === "en" ? "Account ID: " : "\u8d26\u53f7 ID\uff1a") + String(session?.accountId || session?.deviceId || "")}</Text>
+          <Text style={styles.accountMeta}>{(language === "en" ? "User ID: " : "\u7528\u6237 ID\uff1a") + String(session?.userId || "")}</Text>
         </View>
       </View>
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>Refresh data</Text>
-        <TouchableOpacity style={styles.secondarySoft} onPress={refreshAllData}>
-          <Text style={styles.secondaryText}>Refresh songs/favorites/playlists/tags</Text>
-        </TouchableOpacity>
+        <Text style={styles.groupTitle}>{t("language")}</Text>
+        <Text style={styles.hintText}>{t("languageHint")}</Text>
+        <View style={styles.rowGap}>
+          {LANGUAGE_OPTIONS.map((option) => (
+            <TouchableOpacity
+              key={option.key}
+              style={[styles.secondarySoft, styles.flex, language === option.key && styles.languageOptionActive]}
+              onPress={() => setLanguage(option.key)}
+            >
+              <Text style={[styles.secondaryText, language === option.key && styles.languageOptionTextActive]}>{option.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
       <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>Account action</Text>
+        <Text style={styles.groupTitle}>{t("accountAction")}</Text>
         <TouchableOpacity style={styles.dangerButton} onPress={logout}>
-          <Text style={styles.dangerText}>Log out</Text>
+          <Text style={styles.dangerText}>{t("logout")}</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>
@@ -2155,7 +2191,7 @@ const styles = StyleSheet.create({
   secondaryText: { color: "#F8FAFD", fontSize: 14, fontWeight: "700" },
   groupCard: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 28, padding: 18, marginBottom: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   groupTitle: { color: "#FFFFFF", fontSize: 21, fontWeight: "800", marginBottom: 12, letterSpacing: -0.4 },
-  groupTitleCollapsed: { marginBottom: 0, fontSize: 18 },
+  groupTitleCollapsed: { marginBottom: 0, fontSize: 17 },
   seedWrap: { flexDirection: "row", flexWrap: "wrap" },
   seedTag: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 12, marginRight: 8, marginBottom: 8, minWidth: 110 },
   seedTagSelected: { backgroundColor: "rgba(255,255,255,0.92)" },
@@ -2208,7 +2244,10 @@ const styles = StyleSheet.create({
   queueEmptyBox: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", padding: 14 },
   queueContent: { paddingTop: 20, paddingBottom: 4 },
   queueViewport: { maxHeight: 392, position: "relative" },
-  queueTopFade: { position: "absolute", top: 0, left: 0, right: 0, height: 26, backgroundColor: "rgba(11,17,27,0.24)" },
+  queueTopFade: { position: "absolute", top: 0, left: 0, right: 0, height: 34, overflow: "hidden", borderTopLeftRadius: 28, borderTopRightRadius: 28 },
+  queueTopFadeLayerStrong: { position: "absolute", top: 0, left: 0, right: 0, height: 12, backgroundColor: "rgba(218,198,210,0.24)" },
+  queueTopFadeLayerMid: { position: "absolute", top: 6, left: 0, right: 0, height: 14, backgroundColor: "rgba(155,178,230,0.16)" },
+  queueTopFadeLayerSoft: { position: "absolute", top: 14, left: 0, right: 0, height: 20, backgroundColor: "rgba(11,17,27,0.08)" },
   queueSkeletonItem: { opacity: 0.78 },
   queueSkeletonStandalone: { flexDirection: "row", alignItems: "center" },
   queueSkeletonArtwork: { width: 56, height: 56, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.12)" },
@@ -2246,15 +2285,15 @@ const styles = StyleSheet.create({
   emptyGalaxyTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" },
   emptyGalaxyText: { color: "rgba(255,255,255,0.72)", fontSize: 13, lineHeight: 20, marginTop: 6 },
   galaxySheet: { position: "absolute", left: 14, right: 14, bottom: 96, backgroundColor: "rgba(11,17,27,0.68)", borderRadius: 30, padding: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  galaxySheetCollapsed: { paddingBottom: 10 },
+  galaxySheetCollapsed: { paddingHorizontal: 10, paddingVertical: 8, backgroundColor: "rgba(11,17,27,0.18)", borderRadius: 24 },
   galaxySheetDragging: { opacity: 0.3 },
   sheetCard: { backgroundColor: "rgba(11,17,26,0.74)", borderRadius: 26, padding: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   sheetHeaderCollapsed: { marginBottom: 0 },
-  sheetCardCollapsed: { paddingVertical: 14 },
+  sheetCardCollapsed: { paddingVertical: 12, paddingHorizontal: 16, borderRadius: 22 },
   sheetToggleText: { color: "rgba(255,255,255,0.86)", fontSize: 13, fontWeight: "700" },
   generateSection: { marginTop: 16, gap: 10 },
-  generateSectionCard: { marginTop: 12 },
+  generateSectionCard: { marginTop: 10 },
   generateSkeleton: { marginTop: 8 },
   generatedInfoCard: { marginTop: 8, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   categoryPickerCard: { marginTop: 14, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)" },
@@ -2274,6 +2313,8 @@ const styles = StyleSheet.create({
   accountMeta: { color: "rgba(255,255,255,0.68)", fontSize: 14, marginTop: 3 },
   dangerButton: { backgroundColor: "rgba(145,38,38,0.88)", borderRadius: 18, paddingVertical: 15, alignItems: "center" },
   dangerText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
+  languageOptionActive: { backgroundColor: "rgba(255,255,255,0.9)" },
+  languageOptionTextActive: { color: "#111217" },
   hintText: { color: "rgba(255,255,255,0.68)", fontSize: 13, lineHeight: 20, marginTop: 10 },
   okText: { color: "#72D595", marginTop: 10, fontSize: 13 },
   errorText: { color: "#FF8D7C", marginTop: 10, fontSize: 13 },
