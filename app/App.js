@@ -409,10 +409,9 @@ function pickBlockAtPoint(blocks, point) {
   return best ? best.block : null;
 }
 
-function ScreenTitle({ eyebrow, title, subtitle, light = false }) {
+function ScreenTitle({ title, subtitle, light = false }) {
   return (
     <View style={styles.titleBlock}>
-      {eyebrow ? <Text style={[styles.eyebrow, light && styles.eyebrowLight]}>{eyebrow}</Text> : null}
       <Text style={[styles.title, light && styles.titleLight]}>{title}</Text>
       {subtitle ? <Text style={[styles.subtitle, light && styles.subtitleLight]}>{subtitle}</Text> : null}
     </View>
@@ -688,23 +687,62 @@ export default function App() {
     [profileTags]
   );
 
-  const sceneOptions = useMemo(
-    () => tags.filter((tag) => String(tag.type || "") === "\u573a\u666f"),
-    [tags]
-  );
+  const sceneOptions = useMemo(() => {
+    const merged = new Map();
+    for (const tag of profileTags) {
+      if (String(tag.type || "") !== "\u573a\u666f") continue;
+      const id = Number(tag.tag_id || tag.id || 0);
+      if (!id) continue;
+      merged.set(id, { id, name: tag.name, type: tag.type });
+    }
+    for (const tag of tags) {
+      if (String(tag.type || "") !== "\u573a\u666f") continue;
+      const id = Number(tag.id || tag.tag_id || 0);
+      if (!id || merged.has(id)) continue;
+      merged.set(id, { id, name: tag.name, type: tag.type });
+    }
+    return Array.from(merged.values());
+  }, [profileTags, tags]);
 
   const activeSceneAnchor = useMemo(
     () => sortProfileTags(profileTags.filter((item) => String(item.type || "") === "\u573a\u666f" && item.is_active !== false && Number(item.weight || 0) > 0))[0] || null,
     [profileTags]
   );
 
+  const displayQueue = useMemo(() => {
+    const history = Array.isArray(songs) ? songs : [];
+    const liveQueue = Array.isArray(playbackEngine.queue) ? playbackEngine.queue : [];
+    const ordered = [];
+    const seen = new Set();
+
+    const pushItem = (item) => {
+      const key = String(queueKeyOf(item) || "");
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      ordered.push(item);
+    };
+
+    history.forEach(pushItem);
+
+    for (const liveItem of liveQueue) {
+      const key = String(queueKeyOf(liveItem) || "");
+      if (!key) continue;
+      const index = ordered.findIndex((item) => String(queueKeyOf(item) || "") === key);
+      if (index >= 0) {
+        ordered[index] = { ...ordered[index], ...liveItem };
+      } else {
+        pushItem(liveItem);
+      }
+    }
+
+    return ordered;
+  }, [songs, playbackEngine.queue]);
+
   const currentQueueIndex = useMemo(() => {
     const playerCurrent = playbackEngine.current;
-    const playerQueue = playbackEngine.queue || [];
-    if (!playerCurrent || playerQueue.length === 0) return -1;
-    return playerQueue.findIndex((item) => queueKeyOf(item) === queueKeyOf(playerCurrent));
-  }, [playbackEngine.current, playbackEngine.queue]);
-
+    if (!playerCurrent || displayQueue.length === 0) return -1;
+    return displayQueue.findIndex((item) => queueKeyOf(item) === queueKeyOf(playerCurrent));
+  }, [displayQueue, playbackEngine.current]);
   const existingTagMatch = useMemo(() => {
     const clean = newTagName.trim().toLowerCase();
     if (!clean) return null;
@@ -825,13 +863,18 @@ export default function App() {
       needsGeneration: Boolean(data.needs_generation)
     });
 
-    setSongs(items);
-    if (!current && items.length > 0) {
-      setCurrent(items[0]);
-    }
     return items;
   };
 
+  const refreshSongHistory = async (uid) => {
+    if (!uid) return [];
+    const res = await fetch(`${API_BASE}/songs?user_id=${uid}&include_history=true`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "song history fetch failed");
+    const items = Array.isArray(data.items) ? data.items : [];
+    setSongs(items);
+    return items;
+  };
   const refreshFavorites = async (uid) => {
     if (!uid) return [];
     const res = await fetch(`${API_BASE}/favorites?user_id=${uid}`);
@@ -869,7 +912,7 @@ export default function App() {
   const bootstrapUser = async (user, nameOverride) => {
     setSession({ userId: user.id, deviceId: user.device_id, accountId: user.account_id || user.device_id, name: nameOverride || user.display_name || accountName.trim() || user.account_id || user.device_id, avatar: user.avatar || selectedAvatar });
     const profile = await loadProfileTags(user.id);
-    await Promise.all([playbackEngine.refresh({ buffer: 8 }), refreshFavorites(user.id), refreshMySongs(user.id), loadPlaylists(user.id)]);
+    await Promise.all([playbackEngine.refresh({ buffer: 8 }), refreshSongHistory(user.id), refreshFavorites(user.id), refreshMySongs(user.id), loadPlaylists(user.id)]);
     const active = (profile || []).filter((item) => item.is_active !== false);
     setNeedsOnboarding(active.length === 0);
     setOnboardingStep(0);
@@ -1171,7 +1214,8 @@ export default function App() {
       body: JSON.stringify({ user_id: userId, tag_ids: Array.from(seedSelection) })
     });
     await loadProfileTags(userId);
-    await refreshSongs(userId, { preferLatest: true });
+    await playbackEngine.refresh({ buffer: 8 });
+    await refreshSongHistory(userId);
     await refreshFavorites(userId);
     await loadPlaylists(userId);
     setNeedsOnboarding(false);
@@ -1248,6 +1292,7 @@ export default function App() {
         if ((status === "done" || status === "reused") && (item.song?.id || data.song_id)) {
           if (item.song) setLastGeneratedSong(item.song);
           await refreshMySongs(userId);
+          await refreshSongHistory(userId);
           return refreshSongs(userId, { preferLatest });
         }
         await wait(3000);
@@ -1350,12 +1395,12 @@ export default function App() {
 
   const handleAutoNext = async (action) => {
     await playbackEngine.next(action === "complete" ? "complete" : "skip");
-    await refreshProfileSoon();
+    await Promise.all([refreshProfileSoon(), refreshSongHistory(userId)]);
   };
 
   const handleNext = async () => {
     await playbackEngine.next("skip");
-    await refreshProfileSoon();
+    await Promise.all([refreshProfileSoon(), refreshSongHistory(userId)]);
   };
 
   const createPlaylist = async () => {
@@ -1407,7 +1452,7 @@ export default function App() {
 
   const refreshAllData = async () => {
     if (!userId) return;
-    await Promise.all([loadTags(), loadProfileTags(userId), playbackEngine.refresh({ buffer: 8 }), refreshFavorites(userId), refreshMySongs(userId), loadPlaylists(userId)]);
+    await Promise.all([loadTags(), loadProfileTags(userId), playbackEngine.refresh({ buffer: 8 }), refreshSongHistory(userId), refreshFavorites(userId), refreshMySongs(userId), loadPlaylists(userId)]);
     setHealth({ loading: false, ok: true, message: "\u6570\u636e\u5df2\u5237\u65b0" });
   };
 
@@ -1541,7 +1586,7 @@ export default function App() {
     <SafeAreaView style={styles.page}>
       <PortraitBackdrop blocks={portraitBlocks} stageSize={{ width, height }} />
       <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-        <ScreenTitle eyebrow="First run" title="Pick initial tags" subtitle="Please choose tags from at least two categories." />
+        <ScreenTitle title="Pick initial tags" subtitle="Please choose tags from at least two categories." />
         <View style={styles.groupCard}>
           <View style={styles.onboardingProgressHeader}>
             <Text style={styles.groupTitle}>{currentOnboarding ? currentOnboarding[0] : "Done"}</Text>
@@ -1590,7 +1635,6 @@ export default function App() {
 
   const renderPlayer = () => {
     const playerCurrent = playbackEngine.current;
-    const playerQueue = playbackEngine.queue || [];
     const hasPendingGeneration = Boolean(playbackEngine.recommendation?.hasPendingGeneration);
     const playerPlayback = playbackEngine.playback || { position: 0, duration: 1, isPlaying: false };
     const playerNeedsGeneration = Boolean(playbackEngine.recommendation?.needsGeneration);
@@ -1601,61 +1645,35 @@ export default function App() {
     const shouldShowQueueSkeleton = Boolean(
       playerStatus === "loading"
       || hasPendingGeneration
-      || (playerNeedsGeneration && playerQueue.length > 0)
+      || (playerNeedsGeneration && displayQueue.length > 0)
     );
-
-    const statusText = playerStatus === "loading"
-      ? "Loading queue..."
-      : playerStatus === "error"
-        ? "Playback error"
-        : playerStatus === "empty"
-          ? "No songs ready"
-          : playerStatus === "paused"
-            ? "Paused"
-            : playerStatus === "playing"
-              ? "Playing"
-              : "Ready";
 
     return (
       <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-        <ScreenTitle eyebrow={"Hi, " + displayName} title="Songs" subtitle="Play, favorite and keep music flowing." />
-
-        {sceneOptions.length > 0 ? (
-          <View style={styles.anchorStrip}>
-            <Text style={styles.anchorStripLabel}>Scene anchor</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.anchorChipRow}>
-              {sceneOptions.map((tag) => {
-                const selected = Number(activeSceneAnchor?.tag_id || activeSceneAnchor?.id || 0) === Number(tag.id);
-                return (
-                  <TouchableOpacity
-                    key={String(tag.id)}
-                    style={[styles.anchorChip, selected && styles.anchorChipActive]}
-                    onPress={async () => {
-                      try {
-                        await persistSceneAnchor(tag.id);
-                      } catch (err) {
-                        Alert.alert("Anchor update failed", String(err?.message || err));
-                      }
-                    }}
-                  >
-                    <Text style={[styles.anchorChipText, selected && styles.anchorChipTextActive]}>{tag.name}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        ) : null}
-
-        <View style={styles.playerStatusRow}>
-          <View style={[styles.playerStatusPill, playerStatus === "error" && styles.playerStatusPillError]}>
-            <Text style={styles.playerStatusText}>{statusText}</Text>
-          </View>
-          <TouchableOpacity style={styles.playerStatusAction} onPress={() => playbackEngine.refresh({ buffer: 8 })}>
-            <Text style={styles.playerStatusActionText}>Reload</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.playerStatusAction} onPress={() => playbackEngine.hardReset()}>
-            <Text style={styles.playerStatusActionText}>Reset</Text>
-          </TouchableOpacity>
+        <View style={styles.anchorStrip}>
+          <Text style={styles.anchorStripLabel}>Scene anchor</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.anchorChipRow}>
+            {sceneOptions.length > 0 ? sceneOptions.map((tag) => {
+              const selected = Number(activeSceneAnchor?.tag_id || activeSceneAnchor?.id || 0) === Number(tag.id);
+              return (
+                <TouchableOpacity
+                  key={String(tag.id)}
+                  style={[styles.anchorChip, selected && styles.anchorChipActive]}
+                  onPress={async () => {
+                    try {
+                      await persistSceneAnchor(tag.id);
+                    } catch (err) {
+                      Alert.alert("Anchor update failed", String(err?.message || err));
+                    }
+                  }}
+                >
+                  <Text style={[styles.anchorChipText, selected && styles.anchorChipTextActive]}>{tag.name}</Text>
+                </TouchableOpacity>
+              );
+            }) : [0, 1, 2].map((index) => (
+              <View key={"scene-skeleton-" + index} style={styles.anchorChipSkeleton} />
+            ))}
+          </ScrollView>
         </View>
 
         {playerStatus === "error" && playerError ? (
@@ -1742,14 +1760,15 @@ export default function App() {
         ) : null}
 
         <View style={styles.section}>
-          {playerQueue.length > 0 ? (
+          {displayQueue.length > 0 ? (
             <View style={styles.queueViewport}>
               <FlatList
                 ref={queueListRef}
-                data={playerQueue}
+                data={displayQueue}
                 keyExtractor={(item) => String(queueKeyOf(item))}
                 nestedScrollEnabled
                 showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.queueContent}
                 onScrollToIndexFailed={({ index }) => {
                   setTimeout(() => {
                     queueListRef.current?.scrollToIndex?.({ index, animated: true, viewPosition: 0 });
@@ -1782,10 +1801,11 @@ export default function App() {
                   </View>
                 ) : null}
               />
+              <View pointerEvents="none" style={styles.queueTopFade} />
             </View>
           ) : (
             <View style={styles.queueEmptyBox}>
-              {playerStatus === "loading" || hasPendingGeneration ? (
+              {shouldShowQueueSkeleton ? (
                 <View style={styles.queueSkeletonStandalone}>
                   <View style={styles.queueSkeletonArtwork} />
                   <View style={styles.songListText}>
@@ -1794,7 +1814,7 @@ export default function App() {
                   </View>
                 </View>
               ) : (
-                <Text style={styles.placeholder}>No songs ready. Tap Reload or generate songs in Portrait.</Text>
+                <Text style={styles.placeholder}>No songs ready.</Text>
               )}
             </View>
           )}
@@ -1802,10 +1822,8 @@ export default function App() {
       </ScrollView>
     );
   };
-
   const renderFavorites = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="Library" title="Playlists and my songs" subtitle="Manage playlists, and play your generated songs directly from here." />
 
       <View style={styles.groupCard}>
         <Text style={styles.groupTitle}>New playlist</Text>
@@ -1906,9 +1924,6 @@ export default function App() {
     return (
       <View style={styles.galaxyScreen} onLayout={(event) => setPortraitStageSize(event.nativeEvent.layout)}>
         <PortraitBackdrop blocks={portraitBlocks} stageSize={effectiveStageSize} />
-        <View style={styles.galaxyHeader}>
-          <ScreenTitle eyebrow="Portrait" title="Energy portrait" subtitle="Top 15 tags float by weight. Drag a tag into Softer or Stronger to tune it." light />
-        </View>
 
         <View style={styles.zoneRow} pointerEvents="box-none">
           {zones.map((zone) => {
@@ -1946,13 +1961,13 @@ export default function App() {
           pointerEvents={isPortraitDragging ? "none" : "auto"}
           style={[
             styles.galaxySheet,
-            isTagSheetCollapsed && styles.galaxySheetCollapsed,
+            isTagSheetCollapsed && isGenerateSheetCollapsed && styles.galaxySheetCollapsed,
             isPortraitDragging && styles.galaxySheetDragging
           ]}
         >
-          <View style={styles.sheetCard}>
-            <TouchableOpacity style={styles.sheetHeader} onPress={() => setIsTagSheetCollapsed((prev) => !prev)}>
-              <Text style={styles.groupTitle}>Add tag</Text>
+          <View style={[styles.sheetCard, isTagSheetCollapsed && styles.sheetCardCollapsed]}>
+            <TouchableOpacity style={[styles.sheetHeader, isTagSheetCollapsed && styles.sheetHeaderCollapsed]} onPress={() => setIsTagSheetCollapsed((prev) => !prev)}>
+              <Text style={[styles.groupTitle, isTagSheetCollapsed && styles.groupTitleCollapsed]}>Add tag</Text>
               <Text style={styles.sheetToggleText}>{isTagSheetCollapsed ? "Expand" : "Collapse"}</Text>
             </TouchableOpacity>
 
@@ -1999,9 +2014,9 @@ export default function App() {
             ) : null}
           </View>
 
-          <View style={[styles.sheetCard, styles.generateSectionCard]}>
-            <TouchableOpacity style={styles.sheetHeader} onPress={() => setIsGenerateSheetCollapsed((prev) => !prev)}>
-              <Text style={styles.groupTitle}>Generate songs</Text>
+          <View style={[styles.sheetCard, styles.generateSectionCard, isGenerateSheetCollapsed && styles.sheetCardCollapsed]}>
+            <TouchableOpacity style={[styles.sheetHeader, isGenerateSheetCollapsed && styles.sheetHeaderCollapsed]} onPress={() => setIsGenerateSheetCollapsed((prev) => !prev)}>
+              <Text style={[styles.groupTitle, isGenerateSheetCollapsed && styles.groupTitleCollapsed]}>Generate songs</Text>
               <Text style={styles.sheetToggleText}>{isGenerateSheetCollapsed ? "Expand" : "Collapse"}</Text>
             </TouchableOpacity>
             {!isGenerateSheetCollapsed ? (
@@ -2052,7 +2067,6 @@ export default function App() {
   };
   const renderSettings = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="Account" title="Settings and status" subtitle="Manage account, test network and refresh app data." />
       <View style={styles.groupCard}>
         <Text style={styles.groupTitle}>Current account</Text>
         <View style={styles.accountCard}>
@@ -2061,13 +2075,6 @@ export default function App() {
           <Text style={styles.accountMeta}>{"Account ID: " + String(session?.accountId || session?.deviceId || "")}</Text>
           <Text style={styles.accountMeta}>{"User ID: " + String(session?.userId || "")}</Text>
         </View>
-      </View>
-      <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>Network test</Text>
-        <TouchableOpacity style={styles.secondarySoft} onPress={testConnection}>
-          <Text style={styles.secondaryText}>{health.loading ? "Testing..." : "Test API"}</Text>
-        </TouchableOpacity>
-        {health.message ? <Text style={health.ok ? styles.okText : styles.errorText}>{health.message}</Text> : null}
       </View>
       <View style={styles.groupCard}>
         <Text style={styles.groupTitle}>Refresh data</Text>
@@ -2148,6 +2155,7 @@ const styles = StyleSheet.create({
   secondaryText: { color: "#F8FAFD", fontSize: 14, fontWeight: "700" },
   groupCard: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 28, padding: 18, marginBottom: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   groupTitle: { color: "#FFFFFF", fontSize: 21, fontWeight: "800", marginBottom: 12, letterSpacing: -0.4 },
+  groupTitleCollapsed: { marginBottom: 0, fontSize: 18 },
   seedWrap: { flexDirection: "row", flexWrap: "wrap" },
   seedTag: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 12, marginRight: 8, marginBottom: 8, minWidth: 110 },
   seedTagSelected: { backgroundColor: "rgba(255,255,255,0.92)" },
@@ -2194,10 +2202,13 @@ const styles = StyleSheet.create({
   anchorChipActive: { backgroundColor: "#FFFFFF", borderColor: "#FFFFFF" },
   anchorChipText: { color: "rgba(255,255,255,0.85)", fontSize: 13, fontWeight: "700" },
   anchorChipTextActive: { color: "#0B111B" },
+  anchorChipSkeleton: { width: 82, height: 38, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.1)" },
   listItem: { backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   currentQueueItem: { borderColor: "rgba(255,255,255,0.28)" },
   queueEmptyBox: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", padding: 14 },
-  queueViewport: { maxHeight: 392 },
+  queueContent: { paddingTop: 20, paddingBottom: 4 },
+  queueViewport: { maxHeight: 392, position: "relative" },
+  queueTopFade: { position: "absolute", top: 0, left: 0, right: 0, height: 26, backgroundColor: "rgba(11,17,27,0.24)" },
   queueSkeletonItem: { opacity: 0.78 },
   queueSkeletonStandalone: { flexDirection: "row", alignItems: "center" },
   queueSkeletonArtwork: { width: 56, height: 56, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.12)" },
@@ -2239,6 +2250,8 @@ const styles = StyleSheet.create({
   galaxySheetDragging: { opacity: 0.3 },
   sheetCard: { backgroundColor: "rgba(11,17,26,0.74)", borderRadius: 26, padding: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  sheetHeaderCollapsed: { marginBottom: 0 },
+  sheetCardCollapsed: { paddingVertical: 14 },
   sheetToggleText: { color: "rgba(255,255,255,0.86)", fontSize: 13, fontWeight: "700" },
   generateSection: { marginTop: 16, gap: 10 },
   generateSectionCard: { marginTop: 12 },
@@ -2276,6 +2289,10 @@ const styles = StyleSheet.create({
   rowGap: { flexDirection: "row", gap: 10 },
   flex: { flex: 1 }
 });
+
+
+
+
 
 
 
