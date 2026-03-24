@@ -1412,25 +1412,11 @@ export default function App() {
   };
 
   const insertSongAsNext = async (song, source = "manual-next") => {
-    const inserted = playbackEngine.insertQueueNext(song, source);
-    const firstInserted = Array.isArray(inserted) ? inserted[0] : null;
-    if (!firstInserted) return;
-    if (playbackEngine.current) {
-      await playbackEngine.next("skip");
-    } else {
-      await play(firstInserted);
-    }
+    await playbackEngine.insertQueueNextAndPlay(song, source);
   };
 
   const insertSongsAsNext = async (list, source = "playlist-next") => {
-    const inserted = playbackEngine.insertQueueNext(list, source);
-    const firstInserted = Array.isArray(inserted) ? inserted[0] : null;
-    if (!firstInserted) return;
-    if (playbackEngine.current) {
-      await playbackEngine.next("skip");
-    } else {
-      await play(firstInserted);
-    }
+    await playbackEngine.insertQueueNextAndPlay(list, source);
   };
 
   const testConnection = async () => {
