@@ -124,6 +124,18 @@ function deriveBlockSize(tag, index) {
   return scale[seed % scale.length];
 }
 
+function weightDrivenBlockSize(tag, index, rankedTags) {
+  const list = Array.isArray(rankedTags) ? rankedTags : [];
+  const currentWeight = Number(tag?.weight || 0);
+  const maxWeight = Math.max(...list.map((item) => Number(item?.weight || 0)), currentWeight, 0.0001);
+  const minWeight = Math.min(...list.map((item) => Number(item?.weight || 0)), currentWeight);
+  const spread = Math.max(0.0001, maxWeight - minWeight);
+  const normalized = clamp((currentWeight - minWeight) / spread, 0, 1);
+  const rankBoost = list.length <= 1 ? 1 : 1 - index / Math.max(1, list.length - 1);
+  const blended = clamp(normalized * 0.72 + rankBoost * 0.28, 0, 1);
+  return clamp(PORTRAIT_MIN_SIZE + blended * (PORTRAIT_MAX_SIZE - PORTRAIT_MIN_SIZE), PORTRAIT_MIN_SIZE, PORTRAIT_MAX_SIZE);
+}
+
 function sortProfileTags(tags) {
   return [...(tags || [])].sort((a, b) => {
     const activeDelta = Number(b?.is_active !== false) - Number(a?.is_active !== false);
@@ -325,7 +337,8 @@ function buildPortraitBlocks(tags, stageSize, prevBlocks = []) {
     const x = centerX + Math.cos(angle) * ring * 1.2;
     const y = centerY + Math.sin(angle) * ring * 0.88;
     const previous = prevMap.get(tag.tag_id);
-    const startSize = previous ? clamp(previous.currentSize, PORTRAIT_MIN_SIZE, PORTRAIT_MAX_SIZE) : deriveBlockSize(tag, index);
+    const rankedSize = weightDrivenBlockSize(tag, index, limited);
+    const startSize = previous ? clamp(previous.currentSize, PORTRAIT_MIN_SIZE, PORTRAIT_MAX_SIZE) : rankedSize;
 
     const baseBlock = {
       id: tag.tag_id,
@@ -337,7 +350,8 @@ function buildPortraitBlocks(tags, stageSize, prevBlocks = []) {
       maxSize: PORTRAIT_MAX_SIZE,
       originSize: PORTRAIT_ORIGIN_SIZE,
       currentSize: startSize,
-      targetSize: previous ? clamp(previous.targetSize, PORTRAIT_MIN_SIZE, PORTRAIT_MAX_SIZE) : startSize,
+      targetSize: rankedSize,
+      flash: previous ? Number(previous.flash || 0) : 0,
       anchorPos: previous ? { ...previous.anchorPos } : { x, y },
       currentPos: previous ? { ...previous.currentPos } : { x, y },
       velocity: previous ? { ...previous.velocity } : { x: 0, y: 0 },
@@ -371,6 +385,7 @@ function buildPortraitBlocks(tags, stageSize, prevBlocks = []) {
       const copied = {
         ...block,
         tag: block.tag,
+        flash: Number(block.flash || 0),
         isDragging: false,
         isEntering: false,
         isExiting: true,
@@ -429,6 +444,7 @@ function PortraitBackdrop({ blocks, stageSize }) {
     glow: item.color,
     currentPos: { x: width * item.x, y: height * item.y },
     currentSize: clamp(item.r * 160, PORTRAIT_MIN_SIZE, PORTRAIT_MAX_SIZE),
+    flash: 0,
     tag: { name: "" }
   }));
 
@@ -450,10 +466,10 @@ function PortraitBackdrop({ blocks, stageSize }) {
             const mistY = clamp(block.currentPos.y - driftY * 0.28, -height * 0.18, height * 1.22);
             return (
               <Group key={block.id}>
-                <Circle cx={bloomX} cy={bloomY} r={bloomRadius} color={hexToRgba(block.color, 0.31)}>
+                <Circle cx={bloomX} cy={bloomY} r={bloomRadius * (1 + (block.flash || 0) * 0.08)} color={hexToRgba(block.color, 0.31 + (block.flash || 0) * 0.18)}>
                   <BlurMask blur={206} style="normal" />
                 </Circle>
-                <Circle cx={mistX} cy={mistY} r={mistRadius} color={hexToRgba(block.glow || block.color, 0.2)}>
+                <Circle cx={mistX} cy={mistY} r={mistRadius * (1 + (block.flash || 0) * 0.06)} color={hexToRgba(block.glow || block.color, 0.2 + (block.flash || 0) * 0.16)}>
                   <BlurMask blur={246} style="normal" />
                 </Circle>
               </Group>
@@ -473,6 +489,8 @@ function PortraitTag({ block, isDragging }) {
   const metrics = getBlockMetrics(block);
   const left = block.currentPos.x - metrics.width / 2;
   const top = block.currentPos.y - metrics.height / 2;
+  const typeFontSize = clamp(10 + block.currentSize * 0.055, 10, 16);
+  const tagFontSize = clamp(13 + block.currentSize * 0.085, 13, 24);
 
   return (
     <React.Fragment>
@@ -484,6 +502,7 @@ function PortraitTag({ block, isDragging }) {
           {
             left: left + 18,
             top: top + 10,
+            fontSize: typeFontSize,
             opacity: isDragging ? 0.96 : 0.82,
             transform: [{ scale: isDragging ? 1.04 : 1 }]
           }
@@ -501,6 +520,7 @@ function PortraitTag({ block, isDragging }) {
             left: left + 18,
             top: top + 28,
             maxWidth: Math.max(72, metrics.width - 36),
+            fontSize: tagFontSize,
             opacity: isDragging ? 1 : 0.94,
             transform: [{ scale: isDragging ? 1.04 : 1 }]
           }
@@ -561,6 +581,7 @@ export default function App() {
   const [currentSoundId, setCurrentSoundId] = useState(null);
   const [playback, setPlayback] = useState({ position: 0, duration: 1, isPlaying: false });
   const [generationLoading, setGenerationLoading] = useState(false);
+  const [lastGeneratedSong, setLastGeneratedSong] = useState(null);
   const [recommendationState, setRecommendationState] = useState({
     mode: "stable",
     skipStreak: 0,
@@ -578,10 +599,12 @@ export default function App() {
   const [portraitStageSize, setPortraitStageSize] = useState({ width: 1, height: 1 });
   const [portraitBlocks, setPortraitBlocks] = useState([]);
   const [activeZoneId, setActiveZoneId] = useState(-1);
+  const [zonePulseId, setZonePulseId] = useState(-1);
   const [isPortraitDragging, setIsPortraitDragging] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekPreviewPosition, setSeekPreviewPosition] = useState(null);
   const activeZoneRef = useRef(-1);
+  const zonePulseTimerRef = useRef(null);
   const [progressLayout, setProgressLayout] = useState(null);
   const progressTrackRef = useRef(null);
   const completeSentFor = useRef(null);
@@ -614,7 +637,28 @@ export default function App() {
       autoGenerateRef.current().catch(() => {});
     }
   });
-  const effectiveStageSize = portraitStageSize.width > 20 && portraitStageSize.height > 20 ? portraitStageSize : { width, height: Math.max(620, height - 28) };
+    const effectiveStageSize = portraitStageSize.width > 20 && portraitStageSize.height > 20 ? portraitStageSize : { width, height: Math.max(620, height - 28) };
+
+  const triggerZonePulse = useCallback((zoneId) => {
+    if (zonePulseTimerRef.current) clearTimeout(zonePulseTimerRef.current);
+    setZonePulseId(zoneId);
+    zonePulseTimerRef.current = setTimeout(() => {
+      setZonePulseId(-1);
+      zonePulseTimerRef.current = null;
+    }, 220);
+  }, []);
+
+  const pulsePortraitBlock = useCallback((tagId) => {
+    if (!Number.isFinite(Number(tagId))) return;
+    setPortraitBlocks((prev) => {
+      const next = prev.map(cloneBlock);
+      const target = next.find((item) => Number(item.id) === Number(tagId));
+      if (!target) return prev;
+      target.flash = 1;
+      blocksRef.current = next;
+      return next;
+    });
+  }, []);
 
   const groupedTags = useMemo(() => {
     const map = new Map();
@@ -682,6 +726,9 @@ export default function App() {
   useEffect(() => { profileTagsRef.current = profileTags; }, [profileTags]);
   useEffect(() => { userIdRef.current = userId; }, [userId]);
   useEffect(() => { activeZoneRef.current = activeZoneId; }, [activeZoneId]);
+  useEffect(() => () => {
+    if (zonePulseTimerRef.current) clearTimeout(zonePulseTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (activeTab !== "player" || currentQueueIndex < 0) return undefined;
@@ -914,6 +961,7 @@ export default function App() {
           block.currentPos.x += block.velocity.x;
           block.currentPos.y += block.velocity.y;
           block.currentSize += (block.targetSize - block.currentSize) * 0.25;
+          block.flash = Math.max(0, Number(block.flash || 0) * 0.72 - 0.06);
 
           if (block.needBackToAnchor && Math.hypot(dx, dy) < 2 && Math.hypot(block.velocity.x, block.velocity.y) < 0.4) {
             block.currentPos = { ...block.anchorPos };
@@ -1031,11 +1079,7 @@ export default function App() {
       target.currentPos = settledPoint;
       target.velocity = { x: 0, y: 0 };
 
-      if (zoneId === 2) {
-        target.targetSize = clamp(target.targetSize - PORTRAIT_STEP_SIZE, target.minSize, target.maxSize);
-        target.needBackToAnchor = true;
-      } else if (zoneId === 3) {
-        target.targetSize = clamp(target.targetSize + PORTRAIT_STEP_SIZE, target.minSize, target.maxSize);
+      if (zoneId === 2 || zoneId === 3) {
         target.needBackToAnchor = true;
       } else {
         target.anchorPos = settledPoint;
@@ -1057,8 +1101,12 @@ export default function App() {
     setIsPortraitDragging(false);
 
     if (!actionWasCommitted && Number.isFinite(affectedTagId) && activeZone !== -1) {
+      triggerZonePulse(activeZone);
+      pulsePortraitBlock(affectedTagId);
       applyProfileTagActionById(affectedTagId, activeZone, affectedWeight).catch(() => {});
     } else if (actionWasCommitted && pendingProfileRefreshRef.current) {
+      if (activeZone !== -1) triggerZonePulse(activeZone);
+      if (Number.isFinite(affectedTagId)) pulsePortraitBlock(affectedTagId);
       pendingProfileRefreshRef.current = false;
       loadProfileTags(userIdRef.current).catch(() => {});
     }
@@ -1225,6 +1273,7 @@ export default function App() {
           throw new Error(item.error || data.error || "generation failed");
         }
         if ((status === "done" || status === "reused") && (item.song?.id || data.song_id)) {
+          if (item.song) setLastGeneratedSong(item.song);
           await refreshMySongs(userId);
           return refreshSongs(userId, { preferLatest });
         }
@@ -1416,6 +1465,8 @@ export default function App() {
     setPlaylistSongsMap({});
     setPlaylistSongs([]);
     setSelectedPlaylistId(null);
+    setLastGeneratedSong(null);
+    setZonePulseId(-1);
     setCurrent(null);
     setCurrentSoundId(null);
     setActiveTab("player");
@@ -1682,6 +1733,7 @@ export default function App() {
               onPress={async () => {
                 if (!playerCurrent) return;
                 await playbackEngine.likeCurrent();
+                await refreshProfileSoon();
                 const list = await loadPlaylists(userId);
                 if (list.length === 0) {
                   Alert.alert("No playlist", "Create one in Favorites first.");
@@ -1789,6 +1841,7 @@ export default function App() {
       </ScrollView>
     );
   };
+
   const renderFavorites = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
       <ScreenTitle eyebrow="Library" title="Playlists and my songs" subtitle="Manage playlists, and play your generated songs directly from here." />
@@ -1885,6 +1938,7 @@ export default function App() {
       </View>
     </ScrollView>
   );
+
   const renderGalaxy = () => {
     const zones = getFuncZones(effectiveStageSize);
 
@@ -1892,25 +1946,28 @@ export default function App() {
       <View style={styles.galaxyScreen} onLayout={(event) => setPortraitStageSize(event.nativeEvent.layout)}>
         <PortraitBackdrop blocks={portraitBlocks} stageSize={effectiveStageSize} />
         <View style={styles.galaxyHeader}>
-          <ScreenTitle eyebrow="Portrait" title="Full-screen blurred blobs" subtitle="Drag tags to repel each other. Top zones: softer / stronger." light />
+          <ScreenTitle eyebrow="Portrait" title="Energy portrait" subtitle="Top 15 tags float by weight. Drag a tag into Softer or Stronger to tune it." light />
         </View>
 
         <View style={styles.zoneRow} pointerEvents="box-none">
-          {zones.map((zone) => (
-            <View
-              key={zone.id}
-              style={[
-                styles.zoneCard,
-                activeZoneId === zone.id && styles.zoneCardActive,
-                zone.id === 1 && activeZoneId === zone.id && styles.zoneDeleteActive,
-                zone.id === 2 && activeZoneId === zone.id && styles.zoneSmallerActive,
-                zone.id === 3 && activeZoneId === zone.id && styles.zoneBiggerActive
-              ]}
-            >
-              <Text style={styles.zoneLabel}>{zone.label}</Text>
-              <Text style={styles.zoneHint}>{zone.hint}</Text>
-            </View>
-          ))}
+          {zones.map((zone) => {
+            const zoneLit = activeZoneId === zone.id || zonePulseId === zone.id;
+            return (
+              <View
+                key={zone.id}
+                style={[
+                  styles.zoneCard,
+                  zoneLit && styles.zoneCardActive,
+                  zone.id === 1 && zoneLit && styles.zoneDeleteActive,
+                  zone.id === 2 && zoneLit && styles.zoneSmallerActive,
+                  zone.id === 3 && zoneLit && styles.zoneBiggerActive
+                ]}
+              >
+                <Text style={styles.zoneLabel}>{zone.label}</Text>
+                <Text style={styles.zoneHint}>{zone.hint}</Text>
+              </View>
+            );
+          })}
         </View>
 
         <View style={styles.galaxyStage} {...portraitResponder.panHandlers}>
@@ -1949,17 +2006,6 @@ export default function App() {
                 <Text style={styles.primaryText}>Add to my portrait</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.secondarySoft}
-                onPress={async () => {
-                  await generate({ prefetch: false, silent: false, preferLatest: true });
-                  await playbackEngine.refresh({ buffer: 8 });
-                  setActiveTab("player");
-                }}
-              >
-                <Text style={styles.secondaryText}>{generationLoading ? "Generating..." : "Generate songs from portrait"}</Text>
-              </TouchableOpacity>
-
               {showCategoryPicker ? (
                 <View style={styles.categoryPickerCard}>
                   <Text style={styles.categoryPickerTitle}>{"Choose a category for \"" + pendingTagName + "\""}</Text>
@@ -1987,13 +2033,47 @@ export default function App() {
                 </View>
               ) : null}
               {tagMessage ? <Text style={styles.hintText}>{tagMessage}</Text> : null}
+
+              <View style={styles.generateSection}>
+                <Text style={styles.groupTitle}>Generate songs</Text>
+                <TouchableOpacity
+                  style={styles.secondarySoft}
+                  onPress={async () => {
+                    await generate({ prefetch: false, silent: false, preferLatest: true });
+                    await playbackEngine.refresh({ buffer: 8 });
+                  }}
+                >
+                  <Text style={styles.secondaryText}>{generationLoading ? "Generating..." : "Generate songs from portrait"}</Text>
+                </TouchableOpacity>
+                {generationLoading ? (
+                  <View style={[styles.listItem, styles.queueSkeletonItem, styles.generateSkeleton]}>
+                    <View style={styles.songListMain}>
+                      <View style={styles.queueSkeletonArtwork} />
+                      <View style={styles.songListText}>
+                        <View style={[styles.queueSkeletonLine, styles.queueSkeletonLinePrimary]} />
+                        <View style={[styles.queueSkeletonLine, styles.queueSkeletonLineSecondary]} />
+                      </View>
+                    </View>
+                  </View>
+                ) : lastGeneratedSong ? (
+                  <View style={styles.generatedInfoCard}>
+                    <View style={styles.songListMain}>
+                      <SongArtwork uri={lastGeneratedSong.cover_url} size={56} radius={18} label={lastGeneratedSong.title || "TPY"} />
+                      <View style={styles.songListText}>
+                        <Text style={styles.listTitle}>{lastGeneratedSong.title || "Untitled"}</Text>
+                        <Text style={styles.listSub} numberOfLines={2}>{songTagText(lastGeneratedSong)}</Text>
+                        <Text style={styles.listSub}>{lastGeneratedSong.source || "generated"}</Text>
+                      </View>
+                    </View>
+                  </View>
+                ) : null}
+              </View>
             </>
           ) : null}
         </View>
       </View>
     );
   };
-
   const renderSettings = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
       <ScreenTitle eyebrow="Account" title="Settings and status" subtitle="Manage account, test network and refresh app data." />
@@ -2183,6 +2263,9 @@ const styles = StyleSheet.create({
   galaxySheetDragging: { opacity: 0.3 },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   sheetToggleText: { color: "rgba(255,255,255,0.86)", fontSize: 13, fontWeight: "700" },
+  generateSection: { marginTop: 16, gap: 10 },
+  generateSkeleton: { marginTop: 8 },
+  generatedInfoCard: { marginTop: 8, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   categoryPickerCard: { marginTop: 14, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 22, padding: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.06)" },
   categoryPickerTitle: { color: "#FFFFFF", fontSize: 15, fontWeight: "700", marginBottom: 12 },
   categoryPickerRow: { paddingRight: 8 },
@@ -2215,5 +2298,12 @@ const styles = StyleSheet.create({
   rowGap: { flexDirection: "row", gap: 10 },
   flex: { flex: 1 }
 });
+
+
+
+
+
+
+
 
 
