@@ -1822,7 +1822,6 @@ export default function App() {
                 ) : null}
               />
               <View pointerEvents="none" style={styles.queueTopFade}>
-                <View style={styles.queueTopFadeGlass} />
                 <View style={styles.queueTopFadeLayerStrong} />
                 <View style={styles.queueTopFadeLayerMid} />
                 <View style={styles.queueTopFadeLayerSoft} />
@@ -1991,10 +1990,9 @@ export default function App() {
           ]}
         >
           <TouchableOpacity
-            style={[styles.utilitySheetToggle, isUtilitySheetCollapsed && styles.utilitySheetToggleCollapsed]}
+            style={styles.utilitySheetToggle}
             onPress={() => setIsUtilitySheetCollapsed((prev) => !prev)}
           >
-            <Text style={styles.utilitySheetTitle}>{t("tools")}</Text>
             <Text style={styles.utilitySheetArrow}>{isUtilitySheetCollapsed ? "\u25be" : "\u25b4"}</Text>
           </TouchableOpacity>
 
@@ -2250,11 +2248,10 @@ const styles = StyleSheet.create({
   queueEmptyBox: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", padding: 14 },
   queueContent: { paddingTop: 20, paddingBottom: 4 },
   queueViewport: { maxHeight: 392, position: "relative" },
-  queueTopFade: { position: "absolute", top: 0, left: 0, right: 0, height: 66, overflow: "hidden", borderTopLeftRadius: 28, borderTopRightRadius: 28 },
-  queueTopFadeGlass: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(233,239,248,0.08)", borderTopLeftRadius: 28, borderTopRightRadius: 28, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.08)" },
-  queueTopFadeLayerStrong: { position: "absolute", top: -2, left: -8, right: -8, height: 30, backgroundColor: "rgba(255,214,223,0.2)" },
-  queueTopFadeLayerMid: { position: "absolute", top: 14, left: -10, right: -10, height: 26, backgroundColor: "rgba(134,172,235,0.18)" },
-  queueTopFadeLayerSoft: { position: "absolute", top: 30, left: 0, right: 0, height: 36, backgroundColor: "rgba(255,255,255,0.04)" },
+  queueTopFade: { position: "absolute", top: 0, left: 0, right: 0, height: 34, overflow: "hidden", borderTopLeftRadius: 28, borderTopRightRadius: 28 },
+  queueTopFadeLayerStrong: { position: "absolute", top: 0, left: 0, right: 0, height: 12, backgroundColor: "rgba(218,198,210,0.24)" },
+  queueTopFadeLayerMid: { position: "absolute", top: 6, left: 0, right: 0, height: 14, backgroundColor: "rgba(155,178,230,0.16)" },
+  queueTopFadeLayerSoft: { position: "absolute", top: 14, left: 0, right: 0, height: 20, backgroundColor: "rgba(11,17,27,0.08)" },
   queueSkeletonItem: { opacity: 0.78 },
   queueSkeletonStandalone: { flexDirection: "row", alignItems: "center" },
   queueSkeletonArtwork: { width: 56, height: 56, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.12)" },
@@ -2294,10 +2291,9 @@ const styles = StyleSheet.create({
   galaxySheet: { position: "absolute", left: 14, right: 14, bottom: 96, backgroundColor: "rgba(11,17,27,0.52)", borderRadius: 30, padding: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   galaxySheetCollapsed: { paddingHorizontal: 12, paddingVertical: 12, backgroundColor: "rgba(11,17,27,0.18)", borderRadius: 24 },
   galaxySheetDragging: { opacity: 0.3 },
-  utilitySheetToggle: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", marginBottom: 10 },
+  utilitySheetToggle: { alignItems: "center", justifyContent: "center", paddingVertical: 8, marginBottom: 10 },
   utilitySheetToggleCollapsed: { marginBottom: 0 },
-  utilitySheetTitle: { color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 },
-  utilitySheetArrow: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
+  utilitySheetArrow: { color: "rgba(255,255,255,0.92)", fontSize: 16, fontWeight: "700" },
   sheetCard: { backgroundColor: "rgba(11,17,26,0.74)", borderRadius: 26, padding: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   sheetHeaderCollapsed: { marginBottom: 0 },
