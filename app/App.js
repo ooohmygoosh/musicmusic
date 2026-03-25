@@ -12,7 +12,8 @@ import {
   PanResponder,
   ActivityIndicator,
   Image,
-  FlatList
+  FlatList,
+  Vibration
 } from "react-native";
 import { Audio } from "expo-av";
 import { BlurMask, Canvas, Circle, Group } from "@shopify/react-native-skia";
@@ -665,6 +666,18 @@ export default function App() {
     }, 120);
   }, []);
 
+  const triggerPortraitHaptic = useCallback((zoneId) => {
+    try {
+      if (zoneId === 2) {
+        Vibration.vibrate(14);
+        return;
+      }
+      if (zoneId === 3) {
+        Vibration.vibrate([0, 20, 28, 30]);
+      }
+    } catch {}
+  }, []);
+
   const pulsePortraitBlock = useCallback((tagId) => {
     if (!Number.isFinite(Number(tagId))) return;
     if (blockPulseTimerRef.current) clearTimeout(blockPulseTimerRef.current);
@@ -1148,6 +1161,7 @@ export default function App() {
     if (Number.isFinite(affectedTagId) && activeZone !== -1) {
       triggerZonePulse(activeZone);
       pulsePortraitBlock(affectedTagId);
+      triggerPortraitHaptic(activeZone);
       applyProfileTagActionById(affectedTagId, activeZone, affectedWeight).catch(() => {});
     }
   };
@@ -1570,10 +1584,10 @@ export default function App() {
         <View style={styles.authCard}>
           <View style={styles.authModeRow}>
             <TouchableOpacity style={[styles.authMode, authMode === "login" && styles.authModeActive]} onPress={() => setAuthMode("login")}>
-              <Text style={[styles.authModeText, authMode === "login" && styles.authModeTextActive]}>{language === "en" ? "Login" : "登录"}</Text>
+              <Text style={[styles.authModeText, authMode === "login" && styles.authModeTextActive]}>{language === "en" ? "Login" : "鐧诲綍"}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.authMode, authMode === "register" && styles.authModeActive]} onPress={() => setAuthMode("register")}>
-              <Text style={[styles.authModeText, authMode === "register" && styles.authModeTextActive]}>{language === "en" ? "Register" : "注册"}</Text>
+              <Text style={[styles.authModeText, authMode === "register" && styles.authModeTextActive]}>{language === "en" ? "Register" : "娉ㄥ唽"}</Text>
             </TouchableOpacity>
           </View>
           {authMode === "register" ? (
@@ -1660,7 +1674,7 @@ export default function App() {
     const playerNeedsGeneration = Boolean(playbackEngine.recommendation?.needsGeneration);
     const playerStatus = String(playbackEngine.status || "idle");
     const playerError = String(playbackEngine.lastError || "");
-    const displayedPosition = playerPlayback.position || 0;
+    const displayedPosition = isSeeking && Number.isFinite(seekPreviewPosition) ? seekPreviewPosition : (playerPlayback.position || 0);
     const progressPercent = Math.min(1, Math.max(0, (displayedPosition || 0) / Math.max(playerPlayback.duration || 1, 1)));
     const shouldShowQueueSkeleton = Boolean(
       playerStatus === "loading"
@@ -1715,9 +1729,16 @@ export default function App() {
           ) : null}
 
           <View style={styles.progressWrap}>
-            <View style={styles.progressTrackShell}>
-              <View style={styles.progressTrack}>
+            <View style={styles.progressTrackShell} {...progressResponder.panHandlers}>
+              <View
+                ref={progressTrackRef}
+                onLayout={() => measureProgressTrack()}
+                style={styles.progressTrack}
+              >
                 <View style={[styles.progressFill, { width: String(progressPercent * 100) + "%" }]} />
+                {playerCurrent ? (
+                  <View style={[styles.progressThumb, { left: String(progressPercent * 100) + "%", marginLeft: -10 }]} />
+                ) : null}
               </View>
             </View>
             <View style={styles.progressTimeRow}>
@@ -1820,12 +1841,7 @@ export default function App() {
                     </View>
                   </View>
                 ) : null}
-              />
-              <View pointerEvents="none" style={styles.queueTopFade}>
-                <View style={styles.queueTopFadeLayerStrong} />
-                <View style={styles.queueTopFadeLayerMid} />
-                <View style={styles.queueTopFadeLayerSoft} />
-              </View>
+              />
             </View>
           ) : (
             <View style={styles.queueEmptyBox}>
@@ -2246,12 +2262,8 @@ const styles = StyleSheet.create({
   listItem: { backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   currentQueueItem: { borderColor: "rgba(255,255,255,0.28)" },
   queueEmptyBox: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", padding: 14 },
-  queueContent: { paddingTop: 20, paddingBottom: 4 },
-  queueViewport: { maxHeight: 392, position: "relative" },
-  queueTopFade: { position: "absolute", top: 0, left: 0, right: 0, height: 34, overflow: "hidden", borderTopLeftRadius: 28, borderTopRightRadius: 28 },
-  queueTopFadeLayerStrong: { position: "absolute", top: 0, left: 0, right: 0, height: 12, backgroundColor: "rgba(218,198,210,0.24)" },
-  queueTopFadeLayerMid: { position: "absolute", top: 6, left: 0, right: 0, height: 14, backgroundColor: "rgba(155,178,230,0.16)" },
-  queueTopFadeLayerSoft: { position: "absolute", top: 14, left: 0, right: 0, height: 20, backgroundColor: "rgba(11,17,27,0.08)" },
+  queueContent: { paddingBottom: 4 },
+  queueViewport: { maxHeight: 392, position: "relative" },
   queueSkeletonItem: { opacity: 0.78 },
   queueSkeletonStandalone: { flexDirection: "row", alignItems: "center" },
   queueSkeletonArtwork: { width: 56, height: 56, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.12)" },
@@ -2291,9 +2303,9 @@ const styles = StyleSheet.create({
   galaxySheet: { position: "absolute", left: 14, right: 14, bottom: 96, backgroundColor: "rgba(11,17,27,0.52)", borderRadius: 30, padding: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   galaxySheetCollapsed: { paddingHorizontal: 12, paddingVertical: 12, backgroundColor: "rgba(11,17,27,0.18)", borderRadius: 24 },
   galaxySheetDragging: { opacity: 0.3 },
-  utilitySheetToggle: { alignItems: "center", justifyContent: "center", paddingVertical: 8, marginBottom: 10 },
+  utilitySheetToggle: { alignSelf: "center", width: 120, height: 28, borderRadius: 999, alignItems: "center", justifyContent: "center", marginBottom: 10, backgroundColor: "rgba(255,255,255,0.05)" },
   utilitySheetToggleCollapsed: { marginBottom: 0 },
-  utilitySheetArrow: { color: "rgba(255,255,255,0.92)", fontSize: 16, fontWeight: "700" },
+  utilitySheetArrow: { color: "rgba(255,255,255,0.92)", fontSize: 18, fontWeight: "800", letterSpacing: 1.5 },
   sheetCard: { backgroundColor: "rgba(11,17,26,0.74)", borderRadius: 26, padding: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   sheetHeaderCollapsed: { marginBottom: 0 },
