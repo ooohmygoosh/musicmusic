@@ -10,6 +10,8 @@ app/.idea/
 app/node_modules/
 app/package-lock.json
 app/assets/
+app/artifacts/
+app/dist-check/
 backend/node_modules/
 backend/package-lock.json
 

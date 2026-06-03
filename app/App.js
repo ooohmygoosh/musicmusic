@@ -12,7 +12,6 @@ import {
   PanResponder,
   ActivityIndicator,
   Image,
-  FlatList,
   Vibration
 } from "react-native";
 import { Audio } from "expo-av";
@@ -639,7 +638,6 @@ export default function App() {
   const progressLayoutRef = useRef(progressLayout);
   const seekingRef = useRef(false);
   const songsRef = useRef(songs);
-  const queueListRef = useRef(null);
   const profileTagsRef = useRef(profileTags);
   const prefetchLockRef = useRef(false);
   const autoGenerateRef = useRef(async () => false);
@@ -647,14 +645,15 @@ export default function App() {
   const userIdRef = useRef(userId);
   const displayName = session?.name || session?.accountId || session?.deviceId || translate(language, "guest");
   const t = useCallback((key, vars = {}) => translate(language, key, vars), [language]);
+  const handlePlaybackNeedsGeneration = useCallback(() => {
+    autoGenerateRef.current().catch(() => {});
+  }, []);
   const playbackEngine = usePlaybackEngine({
     apiBase: API_BASE,
     userId,
-    onNeedsGeneration: () => {
-      autoGenerateRef.current().catch(() => {});
-    }
+    onNeedsGeneration: handlePlaybackNeedsGeneration
   });
-    const effectiveStageSize = portraitStageSize.width > 20 && portraitStageSize.height > 20 ? portraitStageSize : { width, height: Math.max(620, height - 28) };
+  const effectiveStageSize = portraitStageSize.width > 20 && portraitStageSize.height > 20 ? portraitStageSize : { width, height: Math.max(620, height - 28) };
 
   const triggerZonePulse = useCallback((zoneId) => {
     if (zonePulseTimerRef.current) clearTimeout(zonePulseTimerRef.current);
@@ -774,11 +773,6 @@ export default function App() {
     return ordered;
   }, [songs, playbackEngine.queue]);
 
-  const currentQueueIndex = useMemo(() => {
-    const playerCurrent = playbackEngine.current;
-    if (!playerCurrent || displayQueue.length === 0) return -1;
-    return displayQueue.findIndex((item) => queueKeyOf(item) === queueKeyOf(playerCurrent));
-  }, [displayQueue, playbackEngine.current]);
   const existingTagMatch = useMemo(() => {
     const clean = newTagName.trim().toLowerCase();
     if (!clean) return null;
@@ -817,18 +811,6 @@ export default function App() {
     if (zonePulseTimerRef.current) clearTimeout(zonePulseTimerRef.current);
     if (blockPulseTimerRef.current) clearTimeout(blockPulseTimerRef.current);
   }, []);
-
-  useEffect(() => {
-    if (activeTab !== "player" || currentQueueIndex < 0) return undefined;
-    const timer = setTimeout(() => {
-      queueListRef.current?.scrollToIndex?.({
-        index: currentQueueIndex,
-        animated: true,
-        viewPosition: 0
-      });
-    }, 80);
-    return () => clearTimeout(timer);
-  }, [activeTab, currentQueueIndex]);
 
   const loadTags = async () => {
     const res = await fetch(`${API_BASE}/tags`);
@@ -1802,46 +1784,34 @@ export default function App() {
 
         <View style={styles.section}>
           {displayQueue.length > 0 ? (
-            <View style={styles.queueViewport}>
-              <FlatList
-                ref={queueListRef}
-                data={displayQueue}
-                keyExtractor={(item) => String(queueKeyOf(item))}
-                nestedScrollEnabled
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.queueContent}
-                onScrollToIndexFailed={({ index }) => {
-                  setTimeout(() => {
-                    queueListRef.current?.scrollToIndex?.({ index, animated: true, viewPosition: 0 });
-                  }, 120);
-                }}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={[styles.listItem, queueKeyOf(playerCurrent) === queueKeyOf(item) && styles.currentQueueItem]}
-                    onPress={() => play(item)}
-                  >
-                    <View style={styles.songListMain}>
-                      <SongArtwork uri={item.cover_url} size={56} radius={18} label={item.title || "TPY"} />
-                      <View style={styles.songListText}>
-                        <Text style={styles.listTitle}>{item.title || "Untitled"}</Text>
-                        <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.chevron}>{">"}</Text>
-                  </TouchableOpacity>
-                )}
-                ListFooterComponent={shouldShowQueueSkeleton ? (
-                  <View style={[styles.listItem, styles.queueSkeletonItem]}>
-                    <View style={styles.songListMain}>
-                      <View style={styles.queueSkeletonArtwork} />
-                      <View style={styles.songListText}>
-                        <View style={[styles.queueSkeletonLine, styles.queueSkeletonLinePrimary]} />
-                        <View style={[styles.queueSkeletonLine, styles.queueSkeletonLineSecondary]} />
-                      </View>
+            <View style={[styles.queueViewport, styles.queueContent]}>
+              {displayQueue.map((item) => (
+                <TouchableOpacity
+                  key={String(queueKeyOf(item))}
+                  style={[styles.listItem, queueKeyOf(playerCurrent) === queueKeyOf(item) && styles.currentQueueItem]}
+                  onPress={() => play(item)}
+                >
+                  <View style={styles.songListMain}>
+                    <SongArtwork uri={item.cover_url} size={56} radius={18} label={item.title || "TPY"} />
+                    <View style={styles.songListText}>
+                      <Text style={styles.listTitle}>{item.title || "Untitled"}</Text>
+                      <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
                     </View>
                   </View>
-                ) : null}
-              />
+                  <Text style={styles.chevron}>{">"}</Text>
+                </TouchableOpacity>
+              ))}
+              {shouldShowQueueSkeleton ? (
+                <View style={[styles.listItem, styles.queueSkeletonItem]}>
+                  <View style={styles.songListMain}>
+                    <View style={styles.queueSkeletonArtwork} />
+                    <View style={styles.songListText}>
+                      <View style={[styles.queueSkeletonLine, styles.queueSkeletonLinePrimary]} />
+                      <View style={[styles.queueSkeletonLine, styles.queueSkeletonLineSecondary]} />
+                    </View>
+                  </View>
+                </View>
+              ) : null}
             </View>
           ) : (
             <View style={styles.queueEmptyBox}>
