@@ -17,12 +17,35 @@ import {
 import { Audio } from "expo-av";
 import { BlurMask, Canvas, Circle, Group } from "@shopify/react-native-skia";
 import { API_BASE } from "./config";
+import { CreatorDashboard } from "./components/CreatorDashboard";
+import { useCreatorDashboard } from "./hooks/useCreatorDashboard";
 import { usePlaybackEngine } from "./playback/usePlaybackEngine";
+import {
+  addPlaylistSong,
+  addUserTag,
+  createGenerationJob,
+  createPlaylist as createPlaylistApi,
+  getGenerationJob,
+  initUserTags,
+  listFavorites,
+  listMySongs,
+  listPlaylistSongs,
+  listPlaylists,
+  listRecommendations,
+  listSongHistory,
+  listTags,
+  listUserTags,
+  loginAccount,
+  registerAccount,
+  setUserSceneAnchor,
+  updateUserTagWeight
+} from "./services/apiClient";
 
 const TABS = [
   { key: "player", label: "\u6b4c\u66f2" },
   { key: "favorites", label: "\u6536\u85cf" },
   { key: "galaxy", label: "\u753b\u50cf" },
+  { key: "creator", label: "\u521b\u4f5c" },
   { key: "settings", label: "\u8bbe\u7f6e" }
 ];
 
@@ -653,6 +676,7 @@ export default function App() {
     userId,
     onNeedsGeneration: handlePlaybackNeedsGeneration
   });
+  const creatorDashboard = useCreatorDashboard(userId);
   const effectiveStageSize = portraitStageSize.width > 20 && portraitStageSize.height > 20 ? portraitStageSize : { width, height: Math.max(620, height - 28) };
 
   const triggerZonePulse = useCallback((zoneId) => {
@@ -813,45 +837,31 @@ export default function App() {
   }, []);
 
   const loadTags = async () => {
-    const res = await fetch(`${API_BASE}/tags`);
-    const data = await res.json();
+    const data = await listTags();
     setTags(data.items || []);
   };
 
   const registerUser = async () => {
-    const res = await fetch(`${API_BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        account_id: accountId.trim(),
-        display_name: accountName.trim(),
-        password: accountPassword,
-        avatar: selectedAvatar
-      })
+    const data = await registerAccount({
+      accountId: accountId.trim(),
+      displayName: accountName.trim(),
+      password: accountPassword,
+      avatar: selectedAvatar
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "register failed");
     return data.user;
   };
 
   const loginUser = async () => {
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        account_id: accountId.trim(),
-        password: accountPassword
-      })
+    const data = await loginAccount({
+      accountId: accountId.trim(),
+      password: accountPassword
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "login failed");
     return data.user;
   };
 
   const loadProfileTags = async (uid) => {
     if (!uid) return [];
-    const res = await fetch(`${API_BASE}/user-tags?user_id=${uid}`);
-    const data = await res.json();
+    const data = await listUserTags(uid);
     const items = data.items || [];
     setProfileTags(items);
     return items;
@@ -859,12 +869,7 @@ export default function App() {
 
   const refreshSongs = async (uid, options = {}) => {
     if (!uid) return [];
-    const query = new URLSearchParams({ user_id: String(uid), buffer: String(options.buffer || 8) });
-    if (options.cursorQueueId) query.set("cursor_queue_id", String(options.cursorQueueId));
-
-    const res = await fetch(`${API_BASE}/recommend/next?${query.toString()}`);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "recommendation fetch failed");
+    const data = await listRecommendations(uid, options);
 
     const seen = new Set();
     const items = (data.buffer || []).filter((item) => {
@@ -886,41 +891,35 @@ export default function App() {
 
   const refreshSongHistory = async (uid) => {
     if (!uid) return [];
-    const res = await fetch(`${API_BASE}/songs?user_id=${uid}&include_history=true`);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "song history fetch failed");
+    const data = await listSongHistory(uid);
     const items = Array.isArray(data.items) ? data.items : [];
     setSongs(items);
     return items;
   };
   const refreshFavorites = async (uid) => {
     if (!uid) return [];
-    const res = await fetch(`${API_BASE}/favorites?user_id=${uid}`);
-    const data = await res.json();
+    const data = await listFavorites(uid);
     setFavorites(data.items || []);
     return data.items || [];
   };
 
   const refreshMySongs = async (uid) => {
     if (!uid) return [];
-    const res = await fetch(`${API_BASE}/my-songs?user_id=${uid}`);
-    const data = await res.json();
+    const data = await listMySongs(uid);
     setMySongs(data.items || []);
     return data.items || [];
   };
 
   const loadPlaylists = async (uid) => {
     if (!uid) return [];
-    const res = await fetch(`${API_BASE}/playlists?user_id=${uid}`);
-    const data = await res.json();
+    const data = await listPlaylists(uid);
     setPlaylists(data.items || []);
     return data.items || [];
   };
 
   const loadPlaylistSongs = async (playlistId) => {
     if (!playlistId) return [];
-    const res = await fetch(`${API_BASE}/playlists/${playlistId}/songs`);
-    const data = await res.json();
+    const data = await listPlaylistSongs(playlistId);
     const items = data.items || [];
     setPlaylistSongs(items);
     setPlaylistSongsMap((prev) => ({ ...prev, [playlistId]: items }));
@@ -939,28 +938,13 @@ export default function App() {
   const persistProfileTagWeight = async (tagId, weight) => {
     const uid = Number(userIdRef.current);
     if (!Number.isFinite(uid) || uid <= 0) return;
-    const res = await fetch(API_BASE + "/user-tags/weight", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: uid, tag_id: Number(tagId), weight: Number(weight) })
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || "weight update failed");
-    }
-    return res.json().catch(() => ({}));
+    return updateUserTagWeight(uid, tagId, weight);
   };
 
   const persistSceneAnchor = async (tagId) => {
     const uid = Number(userIdRef.current);
     if (!Number.isFinite(uid) || uid <= 0) return;
-    const res = await fetch(API_BASE + "/user-tags/anchor", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: uid, tag_id: Number(tagId) })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "anchor update failed");
+    const data = await setUserSceneAnchor(uid, tagId);
     await loadProfileTags(uid);
     await playbackEngine.refresh({ buffer: 8 });
     return data;
@@ -1227,11 +1211,7 @@ export default function App() {
   const submitOnboarding = async () => {
     if (!userId || seedSelection.size === 0) return Alert.alert("\u8bf7\u9009\u62e9\u6807\u7b7e", "\u81f3\u5c11\u5148\u9009\u4e00\u4e2a\u6807\u7b7e\u65b9\u5411");
     if (selectedSeedCategoryCount < 2) return Alert.alert("\u5206\u7c7b\u4e0d\u591f", "\u8bf7\u81f3\u5c11\u5728\u4e24\u4e2a\u4e0d\u540c\u5206\u7c7b\u4e2d\u9009\u62e9\u6807\u7b7e");
-    await fetch(`${API_BASE}/init-tags`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, tag_ids: Array.from(seedSelection) })
-    });
+    await initUserTags(userId, Array.from(seedSelection));
     await loadProfileTags(userId);
     await playbackEngine.refresh({ buffer: 8 });
     await refreshSongHistory(userId);
@@ -1245,13 +1225,11 @@ export default function App() {
   const submitNamedTag = async (name, chosenType) => {
     const cleanName = String(name || "").trim();
     if (!userId || !cleanName) return setTagMessage("\u8bf7\u8f93\u5165\u6807\u7b7e\u540d\u79f0");
-    const res = await fetch(`${API_BASE}/user-tags`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, name: cleanName, type: chosenType || undefined })
-    });
-    const data = await res.json();
-    if (!res.ok) return setTagMessage(data.error || "\u6dfb\u52a0\u5931\u8d25");
+    try {
+      await addUserTag(userId, cleanName, chosenType);
+    } catch (err) {
+      return setTagMessage(String(err?.message || err || "\u6dfb\u52a0\u5931\u8d25"));
+    }
     setNewTagName("");
     setPendingTagName("");
     setShowCategoryPicker(false);
@@ -1281,15 +1259,7 @@ export default function App() {
     if (!userId || generationLoading) return songs;
     if (!prefetch) setGenerationLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, instrumental: true, prefetch })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || data.detail || "generate failed");
-      }
+      const data = await createGenerationJob(userId, { instrumental: true, prefetch });
 
       const jobId = Number(data.job_id || 0);
       if (!jobId) {
@@ -1298,11 +1268,7 @@ export default function App() {
 
       const start = Date.now();
       while (Date.now() - start < 180000) {
-        const jobRes = await fetch(`${API_BASE}/generation-jobs/${jobId}`);
-        const jobData = await jobRes.json().catch(() => ({}));
-        if (!jobRes.ok) {
-          throw new Error(jobData.error || "generation job lookup failed");
-        }
+        const jobData = await getGenerationJob(jobId);
         const item = jobData.item || {};
         const status = String(item.status || data.status || "").toLowerCase();
         if (status === "failed") {
@@ -1424,22 +1390,14 @@ export default function App() {
 
   const createPlaylist = async () => {
     if (!userId || !newPlaylistName.trim()) return;
-    await fetch(`${API_BASE}/playlists`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, name: newPlaylistName.trim() })
-    });
+    await createPlaylistApi(userId, newPlaylistName.trim());
     setNewPlaylistName("");
     await loadPlaylists(userId);
   };
 
   const addSongToPlaylist = async (playlistId, song = playbackEngine.current) => {
     if (!song || !playlistId) return;
-    await fetch(`${API_BASE}/playlists/${playlistId}/add`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ song_id: song.id })
-    });
+    await addPlaylistSong(playlistId, song.id);
   };
 
   const enqueueSongToTail = (song, source = "manual") => {
@@ -1461,9 +1419,8 @@ export default function App() {
   const testConnection = async () => {
     setHealth({ loading: true, ok: null, message: "" });
     try {
-      const res = await fetch(`${API_BASE}/tags`);
-      const data = await res.json();
-      setHealth({ loading: false, ok: res.ok, message: `API: ${API_BASE} | items: ${data.items ? data.items.length : 0}` });
+      const data = await listTags();
+      setHealth({ loading: false, ok: true, message: `API: ${API_BASE} | items: ${data.items ? data.items.length : 0}` });
     } catch (err) {
       setHealth({ loading: false, ok: false, message: `API: ${API_BASE} | ${String(err)}` });
     }
@@ -1471,7 +1428,7 @@ export default function App() {
 
   const refreshAllData = async () => {
     if (!userId) return;
-    await Promise.all([loadTags(), loadProfileTags(userId), playbackEngine.refresh({ buffer: 8 }), refreshSongHistory(userId), refreshFavorites(userId), refreshMySongs(userId), loadPlaylists(userId)]);
+    await Promise.all([loadTags(), loadProfileTags(userId), playbackEngine.refresh({ buffer: 8 }), refreshSongHistory(userId), refreshFavorites(userId), refreshMySongs(userId), loadPlaylists(userId), creatorDashboard.refresh()]);
     setHealth({ loading: false, ok: true, message: "\u6570\u636e\u5df2\u5237\u65b0" });
   };
 
@@ -2084,6 +2041,21 @@ export default function App() {
       </View>
     );
   };
+
+  const renderCreator = () => (
+    <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
+      <CreatorDashboard
+        dashboard={creatorDashboard.dashboard}
+        loading={creatorDashboard.loading}
+        error={creatorDashboard.error}
+        onRefresh={async () => {
+          await Promise.all([creatorDashboard.refresh(), refreshMySongs(userId)]);
+        }}
+        onQueueSong={(song) => enqueueSongToTail(song, "creator-dashboard")}
+      />
+    </ScrollView>
+  );
+
   const renderSettings = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
       <View style={styles.groupCard}>
@@ -2129,6 +2101,7 @@ export default function App() {
         {activeTab === "favorites" && renderFavorites()}
 
         {activeTab === "galaxy" && renderGalaxy()}
+        {activeTab === "creator" && renderCreator()}
         {activeTab === "settings" && renderSettings()}
       </View>
       <View style={styles.tabBarShell}>

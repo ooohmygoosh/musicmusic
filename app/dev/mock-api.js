@@ -149,7 +149,45 @@ function generatedSongFromJob(jobId) {
     revenue_enabled: true
   };
   lastGeneratedSong = generated;
+  if (!songs.some((song) => Number(song.id) === Number(generated.id))) {
+    songs.unshift(generated);
+  }
   return generated;
+}
+
+function creatorDashboard() {
+  const ownedSongs = songs.filter((song) => song.creator_type === "user").map((song, index) => {
+    const plays = 140 + index * 73;
+    const effectivePlays = Math.max(1, Math.floor(plays * 0.62));
+    const estimatedRevenue = Number((effectivePlays * 0.018).toFixed(2));
+    return {
+      ...song,
+      plays,
+      effective_plays: effectivePlays,
+      estimated_revenue: estimatedRevenue,
+      creator_share: Number((estimatedRevenue * 0.7).toFixed(2)),
+      platform_share: Number((estimatedRevenue * 0.3).toFixed(2))
+    };
+  });
+  const totals = ownedSongs.reduce((acc, song) => ({
+    plays: acc.plays + Number(song.plays || 0),
+    effective_plays: acc.effective_plays + Number(song.effective_plays || 0),
+    estimated_revenue: Number((acc.estimated_revenue + Number(song.estimated_revenue || 0)).toFixed(2)),
+    creator_share: Number((acc.creator_share + Number(song.creator_share || 0)).toFixed(2)),
+    platform_share: Number((acc.platform_share + Number(song.platform_share || 0)).toFixed(2))
+  }), {
+    plays: 0,
+    effective_plays: 0,
+    estimated_revenue: 0,
+    creator_share: 0,
+    platform_share: 0
+  });
+
+  return {
+    period: "2026-06-demo",
+    totals,
+    songs: ownedSongs
+  };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -188,9 +226,14 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && path === "/recommend/next") {
     const items = rotatedQueue(query.get("cursor_queue_id"));
     return send(res, 200, {
+      buffer: items,
       items,
+      current_playing: items[0] || null,
+      next_prepared: items[1] || null,
       current: items[0] || null,
       next: items[1] || null,
+      mode: "stable",
+      skip_streak: 0,
       playable_count: items.length,
       needs_generation: false,
       has_pending_generation: false
@@ -200,6 +243,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && path === "/songs") return send(res, 200, { items: queueItems() });
   if (req.method === "GET" && path === "/favorites") return send(res, 200, { items: [songs[0]] });
   if (req.method === "GET" && path === "/my-songs") return send(res, 200, { items: songs.filter((song) => song.creator_type === "user") });
+  if (req.method === "GET" && path === "/creator/dashboard") return send(res, 200, creatorDashboard());
   if (req.method === "POST" && path === "/feedback") {
     if (body.action === "skip") queueSeed += 1;
     return send(res, 200, { ok: true });
@@ -240,7 +284,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && /^\/generation-jobs\/\d+$/.test(path)) {
     const id = Number(path.split("/").pop());
     const job = generationJobs.get(id) || { id, status: "done", song_id: lastGeneratedSong.id, song: lastGeneratedSong };
-    return send(res, 200, job);
+    return send(res, 200, { item: job });
   }
 
   return send(res, 404, { error: "mock route not found", method: req.method, path, query: Object.fromEntries(query) });
