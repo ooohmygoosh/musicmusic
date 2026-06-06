@@ -11,13 +11,14 @@ import {
   Alert,
   PanResponder,
   ActivityIndicator,
-  Image,
   Vibration
 } from "react-native";
 import { Audio } from "expo-av";
 import { BlurMask, Canvas, Circle, Group } from "@shopify/react-native-skia";
 import { API_BASE } from "./config";
 import { CreatorDashboard } from "./components/CreatorDashboard";
+import { PlaybackQueue } from "./components/PlaybackQueue";
+import { SongArtwork } from "./components/SongArtwork";
 import { useCreatorDashboard } from "./hooks/useCreatorDashboard";
 import { usePlaybackEngine } from "./playback/usePlaybackEngine";
 import {
@@ -565,26 +566,6 @@ function PortraitTag({ block, isDragging }) {
         {block.tag.name}
       </Text>
     </React.Fragment>
-  );
-}
-
-function SongArtwork({ uri, size = 56, radius, label = "TPY" }) {
-  const borderRadius = radius ?? Math.round(size * 0.18);
-  const textLabel = String(label || "TPY").slice(0, 3);
-
-  return (
-    <View style={[styles.artworkFrame, { width: size, height: size, borderRadius }]}> 
-      {uri ? (
-        <Image source={{ uri }} style={[styles.artworkImage, { borderRadius }]} resizeMode="cover" />
-      ) : (
-        <View style={[styles.artworkPlaceholder, { borderRadius }]}> 
-          <View style={styles.artworkGlowA} />
-          <View style={styles.artworkGlowB} />
-          <View style={styles.artworkGlowC} />
-          <Text style={[styles.artworkLabel, { fontSize: Math.max(16, Math.round(size * 0.16)) }]}>{textLabel}</Text>
-        </View>
-      )}
-    </View>
   );
 }
 
@@ -1740,51 +1721,15 @@ export default function App() {
         ) : null}
 
         <View style={styles.section}>
-          {displayQueue.length > 0 ? (
-            <View style={[styles.queueViewport, styles.queueContent]}>
-              {displayQueue.map((item) => (
-                <TouchableOpacity
-                  key={String(queueKeyOf(item))}
-                  style={[styles.listItem, queueKeyOf(playerCurrent) === queueKeyOf(item) && styles.currentQueueItem]}
-                  onPress={() => play(item)}
-                >
-                  <View style={styles.songListMain}>
-                    <SongArtwork uri={item.cover_url} size={56} radius={18} label={item.title || "TPY"} />
-                    <View style={styles.songListText}>
-                      <Text style={styles.listTitle}>{item.title || "Untitled"}</Text>
-                      <Text style={styles.listSub} numberOfLines={1}>{songTagText(item)}</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.chevron}>{">"}</Text>
-                </TouchableOpacity>
-              ))}
-              {shouldShowQueueSkeleton ? (
-                <View style={[styles.listItem, styles.queueSkeletonItem]}>
-                  <View style={styles.songListMain}>
-                    <View style={styles.queueSkeletonArtwork} />
-                    <View style={styles.songListText}>
-                      <View style={[styles.queueSkeletonLine, styles.queueSkeletonLinePrimary]} />
-                      <View style={[styles.queueSkeletonLine, styles.queueSkeletonLineSecondary]} />
-                    </View>
-                  </View>
-                </View>
-              ) : null}
-            </View>
-          ) : (
-            <View style={styles.queueEmptyBox}>
-              {shouldShowQueueSkeleton ? (
-                <View style={styles.queueSkeletonStandalone}>
-                  <View style={styles.queueSkeletonArtwork} />
-                  <View style={styles.songListText}>
-                    <View style={[styles.queueSkeletonLine, styles.queueSkeletonLinePrimary]} />
-                    <View style={[styles.queueSkeletonLine, styles.queueSkeletonLineSecondary]} />
-                  </View>
-                </View>
-              ) : (
-                <Text style={styles.placeholder}>{t("noSongsReady")}</Text>
-              )}
-            </View>
-          )}
+          <PlaybackQueue
+            current={playerCurrent}
+            emptyText={t("noSongsReady")}
+            getQueueKey={queueKeyOf}
+            getSongSubtitle={songTagText}
+            items={displayQueue}
+            onPlay={play}
+            showSkeleton={shouldShowQueueSkeleton}
+          />
         </View>
       </ScrollView>
     );
@@ -2164,13 +2109,6 @@ const styles = StyleSheet.create({
   seedNameSelected: { color: "#111217" },
   playerCard: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 32, padding: 22, marginBottom: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   coverWrap: { alignItems: "center", marginBottom: 18 },
-  artworkFrame: { overflow: "hidden", backgroundColor: "#18181C", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  artworkImage: { width: "100%", height: "100%" },
-  artworkPlaceholder: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#18181C", overflow: "hidden" },
-  artworkGlowA: { position: "absolute", width: "76%", height: "76%", borderRadius: 999, backgroundColor: "#4E67C8", top: -18, right: -10 },
-  artworkGlowB: { position: "absolute", width: "58%", height: "58%", borderRadius: 999, backgroundColor: "#F19472", bottom: -14, left: -10 },
-  artworkGlowC: { position: "absolute", width: "34%", height: "34%", borderRadius: 999, backgroundColor: "rgba(255,255,255,0.12)", top: "30%", left: "24%" },
-  artworkLabel: { color: "#FFFFFF", fontWeight: "800", letterSpacing: 0.8 },
   playerTitle: { color: "#FFFFFF", fontSize: 30, fontWeight: "800", textAlign: "center", letterSpacing: -0.8 },
   playerSub: { color: "rgba(236,240,246,0.7)", fontSize: 15, lineHeight: 22, textAlign: "center", marginTop: 8 },
   playerStatusRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
@@ -2203,10 +2141,7 @@ const styles = StyleSheet.create({
   anchorChipTextActive: { color: "#0B111B" },
   anchorChipSkeleton: { width: 82, height: 38, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.1)" },
   listItem: { backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  currentQueueItem: { borderColor: "rgba(255,255,255,0.28)" },
-  queueEmptyBox: { backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", padding: 14 },
-  queueContent: { paddingBottom: 4 },
-  queueViewport: { maxHeight: 392, position: "relative" },
+
   queueSkeletonItem: { opacity: 0.78 },
   queueSkeletonStandalone: { flexDirection: "row", alignItems: "center" },
   queueSkeletonArtwork: { width: 56, height: 56, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.12)" },
