@@ -17,6 +17,7 @@ import { BlurMask, Canvas, Circle, Group } from "@shopify/react-native-skia";
 import { API_BASE } from "./config";
 import { AuthScreen } from "./components/AuthScreen";
 import { CreatorDashboard } from "./components/CreatorDashboard";
+import { NowPlayingCard } from "./components/NowPlayingCard";
 import { OnboardingScreen } from "./components/OnboardingScreen";
 import { PlaybackQueue } from "./components/PlaybackQueue";
 import { SongArtwork } from "./components/SongArtwork";
@@ -1572,63 +1573,40 @@ export default function App() {
           </View>
         ) : null}
 
-        <View style={styles.playerCard}>
-          <View style={styles.coverWrap}>
-            <SongArtwork uri={playerCurrent?.cover_url} size={228} radius={34} label={playerCurrent?.title || "TPY"} />
-          </View>
-          <Text style={styles.playerTitle}>{playerCurrent?.title || "No song yet"}</Text>
-          <Text style={styles.playerSub} numberOfLines={2}>{songTagText(playerCurrent)}</Text>
-          {!playerCurrent && playerNeedsGeneration ? (
-            <TouchableOpacity style={styles.secondarySoft} onPress={() => setActiveTab("galaxy")}>
-              <Text style={styles.secondaryText}>{t("noPlayableSongs")}</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          <View style={styles.progressWrap}>
-            <View style={styles.progressTrackShell} {...progressResponder.panHandlers}>
-              <View
-                ref={progressTrackRef}
-                onLayout={() => measureProgressTrack()}
-                style={styles.progressTrack}
-              >
-                <View style={[styles.progressFill, { width: String(progressPercent * 100) + "%" }]} />
-                {playerCurrent ? (
-                  <View style={[styles.progressThumb, { left: String(progressPercent * 100) + "%", marginLeft: -10 }]} />
-                ) : null}
-              </View>
-            </View>
-            <View style={styles.progressTimeRow}>
-              <Text style={styles.progressText}>{formatTime(displayedPosition)}</Text>
-              <Text style={styles.progressText}>{formatTime(playerPlayback.duration)}</Text>
-            </View>
-          </View>
-
-          <View style={styles.controlsRow}>
-            <TouchableOpacity
-              style={styles.controlBtn}
-              onPress={async () => {
-                if (!playerCurrent) return;
-                await playbackEngine.likeCurrent();
-                await refreshProfileSoon();
-                const list = await loadPlaylists(userId);
-                if (list.length === 0) {
-                  Alert.alert(t("noPlaylistTitle"), t("noPlaylistBody"));
-                  setActiveTab("favorites");
-                  return;
-                }
-                setShowPlaylistPicker(true);
-              }}
-            >
-              <Text style={styles.controlText}>{t("favorite")}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.playBtn} onPress={togglePlay}>
-              <Text style={styles.playText}>{playerCurrent ? (playerPlayback.isPlaying ? t("pause") : t("play")) : t("refresh")}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.controlBtn} onPress={handleNext}>
-              <Text style={styles.controlText}>{t("next")}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        <NowPlayingCard
+          current={playerCurrent}
+          displayedPosition={displayedPosition}
+          duration={playerPlayback.duration}
+          emptyActionText={t("noPlayableSongs")}
+          favoriteLabel={t("favorite")}
+          formatTime={formatTime}
+          isPlaying={playerPlayback.isPlaying}
+          nextLabel={t("next")}
+          onFavorite={async () => {
+            if (!playerCurrent) return;
+            await playbackEngine.likeCurrent();
+            await refreshProfileSoon();
+            const list = await loadPlaylists(userId);
+            if (list.length === 0) {
+              Alert.alert(t("noPlaylistTitle"), t("noPlaylistBody"));
+              setActiveTab("favorites");
+              return;
+            }
+            setShowPlaylistPicker(true);
+          }}
+          onNext={handleNext}
+          onOpenPortrait={() => setActiveTab("galaxy")}
+          onProgressLayout={() => measureProgressTrack()}
+          onTogglePlay={togglePlay}
+          pauseLabel={t("pause")}
+          playLabel={t("play")}
+          progressHandlers={progressResponder.panHandlers}
+          progressPercent={progressPercent}
+          progressTrackRef={progressTrackRef}
+          refreshLabel={t("refresh")}
+          showEmptyAction={!playerCurrent && playerNeedsGeneration}
+          subtitle={songTagText(playerCurrent)}
+        />
 
         {showPlaylistPicker ? (
           <View style={styles.groupCard}>
@@ -2016,30 +1994,8 @@ const styles = StyleSheet.create({
   groupCard: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 28, padding: 18, marginBottom: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   groupTitle: { color: "#FFFFFF", fontSize: 21, fontWeight: "800", marginBottom: 12, letterSpacing: -0.4 },
   groupTitleCollapsed: { marginBottom: 0, fontSize: 17 },
-  playerCard: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 32, padding: 22, marginBottom: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  coverWrap: { alignItems: "center", marginBottom: 18 },
-  playerTitle: { color: "#FFFFFF", fontSize: 30, fontWeight: "800", textAlign: "center", letterSpacing: -0.8 },
-  playerSub: { color: "rgba(236,240,246,0.7)", fontSize: 15, lineHeight: 22, textAlign: "center", marginTop: 8 },
-  playerStatusRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
-  playerStatusPill: { flex: 1, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 999, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  playerStatusPillError: { backgroundColor: "rgba(255,103,103,0.18)", borderColor: "rgba(255,130,130,0.28)" },
-  playerStatusText: { color: "#FFFFFF", fontSize: 12, fontWeight: "700" },
-  playerStatusAction: { marginLeft: 8, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  playerStatusActionText: { color: "rgba(255,255,255,0.9)", fontSize: 12, fontWeight: "700" },
   playerErrorBox: { backgroundColor: "rgba(255,103,103,0.14)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(255,130,130,0.25)", paddingVertical: 9, paddingHorizontal: 12, marginBottom: 12 },
   playerErrorText: { color: "rgba(255,232,232,0.95)", fontSize: 12, lineHeight: 16 },
-  progressWrap: { marginTop: 22 },
-  progressTrackShell: { marginHorizontal: -4, paddingVertical: 10 },
-  progressTrack: { height: 8, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.12)", overflow: "visible", position: "relative" },
-  progressFill: { position: "absolute", left: 0, top: 0, bottom: 0, borderRadius: 999, backgroundColor: "#FFFFFF" },
-  progressThumb: { position: "absolute", top: -6, width: 20, height: 20, borderRadius: 999, backgroundColor: "#FFFFFF", shadowColor: "#000000", shadowOpacity: 0.24, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 5 },
-  progressTimeRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 8 },
-  progressText: { color: "rgba(255,255,255,0.62)", fontSize: 12, fontVariant: ["tabular-nums"] },
-  controlsRow: { flexDirection: "row", gap: 10, marginTop: 22 },
-  controlBtn: { flex: 1, backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 18, paddingVertical: 15, alignItems: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  controlText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
-  playBtn: { flex: 1, backgroundColor: "#FFFFFF", borderRadius: 18, paddingVertical: 15, alignItems: "center" },
-  playText: { color: "#111217", fontSize: 15, fontWeight: "800" },
   section: { marginBottom: 18 },
   anchorStrip: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 24, padding: 18, marginBottom: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   anchorStripLabel: { color: "#FFFFFF", fontSize: 16, fontWeight: "800", marginBottom: 12 },
