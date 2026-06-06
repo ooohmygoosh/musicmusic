@@ -19,6 +19,7 @@ import { AuthScreen } from "./components/AuthScreen";
 import { BottomTabBar } from "./components/BottomTabBar";
 import { CreatorDashboard } from "./components/CreatorDashboard";
 import { GeneratedSongCard } from "./components/GeneratedSongCard";
+import { NewPlaylistCard } from "./components/NewPlaylistCard";
 import { NowPlayingCard } from "./components/NowPlayingCard";
 import { OnboardingScreen } from "./components/OnboardingScreen";
 import { PlaybackQueue } from "./components/PlaybackQueue";
@@ -1631,13 +1632,14 @@ export default function App() {
   const renderFavorites = () => (
     <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
 
-      <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>{t("newPlaylist")}</Text>
-        <TextInput value={newPlaylistName} onChangeText={setNewPlaylistName} placeholder={t("newPlaylistPlaceholder")} placeholderTextColor="#B9C2CE" style={styles.input} />
-        <TouchableOpacity style={styles.primary} onPress={createPlaylist}>
-          <Text style={styles.primaryText}>{t("create")}</Text>
-        </TouchableOpacity>
-      </View>
+      <NewPlaylistCard
+        buttonLabel={t("create")}
+        onChangeName={setNewPlaylistName}
+        onCreate={createPlaylist}
+        placeholder={t("newPlaylistPlaceholder")}
+        title={t("newPlaylist")}
+        value={newPlaylistName}
+      />
 
       <View style={styles.groupCard}>
         <Text style={styles.groupTitle}>{t("myPlaylists")}</Text>
