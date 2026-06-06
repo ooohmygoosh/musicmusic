@@ -5,6 +5,7 @@
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
+    "local:android": "powershell -ExecutionPolicy Bypass -File dev/start-local-android.ps1",
     "android": "expo run:android",
     "ios": "expo run:ios"
   },
