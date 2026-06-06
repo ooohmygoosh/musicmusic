@@ -16,6 +16,7 @@ import { Audio } from "expo-av";
 import { BlurMask, Canvas, Circle, Group } from "@shopify/react-native-skia";
 import { API_BASE } from "./config";
 import { AuthScreen } from "./components/AuthScreen";
+import { BottomTabBar } from "./components/BottomTabBar";
 import { CreatorDashboard } from "./components/CreatorDashboard";
 import { NowPlayingCard } from "./components/NowPlayingCard";
 import { OnboardingScreen } from "./components/OnboardingScreen";
@@ -1941,15 +1942,7 @@ export default function App() {
         {activeTab === "creator" && renderCreator()}
         {activeTab === "settings" && renderSettings()}
       </View>
-      <View style={styles.tabBarShell}>
-        <View style={styles.tabBar}>
-          {TABS.map((tab) => (
-            <TouchableOpacity key={tab.key} style={styles.tabItem} onPress={() => setActiveTab(tab.key)}>
-                            <Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>{tab.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
+      <BottomTabBar activeTab={activeTab} tabs={TABS} onTabPress={setActiveTab} />
     </SafeAreaView>
   );
 }
@@ -2047,11 +2040,6 @@ const styles = StyleSheet.create({
   hintText: { color: "rgba(255,255,255,0.68)", fontSize: 13, lineHeight: 20, marginTop: 10 },
   okText: { color: "#72D595", marginTop: 10, fontSize: 13 },
   errorText: { color: "#FF8D7C", marginTop: 10, fontSize: 13 },
-  tabBarShell: { position: "absolute", left: 0, right: 0, bottom: 12, alignItems: "center" },
-  tabBar: { flexDirection: "row", width: "92%", backgroundColor: "rgba(14,18,28,0.86)", borderRadius: 28, paddingHorizontal: 10, paddingVertical: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  tabItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 8 },
-  tabText: { fontSize: 12, color: "rgba(255,255,255,0.42)", fontWeight: "600" },
-  tabTextActive: { color: "#FFFFFF", fontWeight: "800" },
   workMetaRow: { flexDirection: "row", justifyContent: "space-between", gap: 10, marginTop: 10, paddingHorizontal: 4 },
   workMetaText: { color: "rgba(255,255,255,0.64)", fontSize: 12, flex: 1 },
   rowGap: { flexDirection: "row", gap: 10 },
