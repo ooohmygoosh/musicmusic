@@ -20,6 +20,8 @@ import { CreatorDashboard } from "./components/CreatorDashboard";
 import { NowPlayingCard } from "./components/NowPlayingCard";
 import { OnboardingScreen } from "./components/OnboardingScreen";
 import { PlaybackQueue } from "./components/PlaybackQueue";
+import { PlaylistPickerCard } from "./components/PlaylistPickerCard";
+import { SceneAnchorStrip } from "./components/SceneAnchorStrip";
 import { SongArtwork } from "./components/SongArtwork";
 import { useCreatorDashboard } from "./hooks/useCreatorDashboard";
 import { usePlaybackEngine } from "./playback/usePlaybackEngine";
@@ -1541,31 +1543,18 @@ export default function App() {
 
     return (
       <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-        <View style={styles.anchorStrip}>
-          <Text style={styles.anchorStripLabel}>{t("sceneAnchor")}</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.anchorChipRow}>
-            {sceneOptions.length > 0 ? sceneOptions.map((tag) => {
-              const selected = Number(activeSceneAnchor?.tag_id || activeSceneAnchor?.id || 0) === Number(tag.id);
-              return (
-                <TouchableOpacity
-                  key={String(tag.id)}
-                  style={[styles.anchorChip, selected && styles.anchorChipActive]}
-                  onPress={async () => {
-                    try {
-                      await persistSceneAnchor(tag.id);
-                    } catch (err) {
-                      Alert.alert(t("anchorUpdateFailed"), String(err?.message || err));
-                    }
-                  }}
-                >
-                  <Text style={[styles.anchorChipText, selected && styles.anchorChipTextActive]}>{tag.name}</Text>
-                </TouchableOpacity>
-              );
-            }) : [0, 1, 2].map((index) => (
-              <View key={"scene-skeleton-" + index} style={styles.anchorChipSkeleton} />
-            ))}
-          </ScrollView>
-        </View>
+        <SceneAnchorStrip
+          activeAnchor={activeSceneAnchor}
+          label={t("sceneAnchor")}
+          sceneOptions={sceneOptions}
+          onSelect={async (tag) => {
+            try {
+              await persistSceneAnchor(tag.id);
+            } catch (err) {
+              Alert.alert(t("anchorUpdateFailed"), String(err?.message || err));
+            }
+          }}
+        />
 
         {playerStatus === "error" && playerError ? (
           <View style={styles.playerErrorBox}>
@@ -1609,29 +1598,18 @@ export default function App() {
         />
 
         {showPlaylistPicker ? (
-          <View style={styles.groupCard}>
-            <Text style={styles.groupTitle}>{t("saveToPlaylist")}</Text>
-            {playlists.map((playlist) => (
-              <TouchableOpacity
-                key={playlist.id}
-                style={styles.listItem}
-                onPress={async () => {
-                  await addSongToPlaylist(playlist.id, playbackEngine.current);
-                  if (selectedPlaylistId === playlist.id) await loadPlaylistSongs(playlist.id);
-                  setShowPlaylistPicker(false);
-                }}
-              >
-                <View>
-                  <Text style={styles.listTitle}>{playlist.name}</Text>
-                  <Text style={styles.listSub}>{t("songsCount", { count: playlist.song_count || 0 })}</Text>
-                </View>
-                <Text style={styles.chevron}>{">"}</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity style={styles.secondarySoft} onPress={() => setShowPlaylistPicker(false)}>
-              <Text style={styles.secondaryText}>{t("cancel")}</Text>
-            </TouchableOpacity>
-          </View>
+          <PlaylistPickerCard
+            cancelLabel={t("cancel")}
+            getSongsCountLabel={(count) => t("songsCount", { count })}
+            onCancel={() => setShowPlaylistPicker(false)}
+            onSelect={async (playlist) => {
+              await addSongToPlaylist(playlist.id, playbackEngine.current);
+              if (selectedPlaylistId === playlist.id) await loadPlaylistSongs(playlist.id);
+              setShowPlaylistPicker(false);
+            }}
+            playlists={playlists}
+            title={t("saveToPlaylist")}
+          />
         ) : null}
 
         <View style={styles.section}>
@@ -1997,14 +1975,6 @@ const styles = StyleSheet.create({
   playerErrorBox: { backgroundColor: "rgba(255,103,103,0.14)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(255,130,130,0.25)", paddingVertical: 9, paddingHorizontal: 12, marginBottom: 12 },
   playerErrorText: { color: "rgba(255,232,232,0.95)", fontSize: 12, lineHeight: 16 },
   section: { marginBottom: 18 },
-  anchorStrip: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 24, padding: 18, marginBottom: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  anchorStripLabel: { color: "#FFFFFF", fontSize: 16, fontWeight: "800", marginBottom: 12 },
-  anchorChipRow: { gap: 10, paddingRight: 10 },
-  anchorChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  anchorChipActive: { backgroundColor: "#FFFFFF", borderColor: "#FFFFFF" },
-  anchorChipText: { color: "rgba(255,255,255,0.85)", fontSize: 13, fontWeight: "700" },
-  anchorChipTextActive: { color: "#0B111B" },
-  anchorChipSkeleton: { width: 82, height: 38, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.1)" },
   listItem: { backgroundColor: "rgba(255,255,255,0.1)", borderRadius: 22, padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
 
   queueSkeletonItem: { opacity: 0.78 },
