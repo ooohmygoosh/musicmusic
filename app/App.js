@@ -29,16 +29,14 @@ import { SceneAnchorStrip } from "./components/SceneAnchorStrip";
 import { SongArtwork } from "./components/SongArtwork";
 import { useCreatorDashboard } from "./hooks/useCreatorDashboard";
 import { usePlaylistLibrary } from "./hooks/usePlaylistLibrary";
+import { useSongLibrary } from "./hooks/useSongLibrary";
 import { usePlaybackEngine } from "./playback/usePlaybackEngine";
 import {
   addUserTag,
   createGenerationJob,
   getGenerationJob,
   initUserTags,
-  listFavorites,
-  listMySongs,
   listRecommendations,
-  listSongHistory,
   listTags,
   listUserTags,
   loginAccount,
@@ -572,9 +570,6 @@ export default function App() {
   const [tags, setTags] = useState([]);
   const [seedSelection, setSeedSelection] = useState(new Set());
   const [profileTags, setProfileTags] = useState([]);
-  const [songs, setSongs] = useState([]);
-  const [favorites, setFavorites] = useState([]);
-  const [mySongs, setMySongs] = useState([]);
   const [current, setCurrent] = useState(null);
   const [sound, setSound] = useState(null);
   const [currentSoundId, setCurrentSoundId] = useState(null);
@@ -640,6 +635,14 @@ export default function App() {
     onNeedsGeneration: handlePlaybackNeedsGeneration
   });
   const creatorDashboard = useCreatorDashboard(userId);
+  const {
+    mySongs,
+    refreshFavorites,
+    refreshMySongs,
+    refreshSongHistory,
+    reset: resetSongLibrary,
+    songs
+  } = useSongLibrary(userId);
   const {
     addSongToPlaylist,
     createPlaylist,
@@ -863,27 +866,6 @@ export default function App() {
     });
 
     return items;
-  };
-
-  const refreshSongHistory = async (uid) => {
-    if (!uid) return [];
-    const data = await listSongHistory(uid);
-    const items = Array.isArray(data.items) ? data.items : [];
-    setSongs(items);
-    return items;
-  };
-  const refreshFavorites = async (uid) => {
-    if (!uid) return [];
-    const data = await listFavorites(uid);
-    setFavorites(data.items || []);
-    return data.items || [];
-  };
-
-  const refreshMySongs = async (uid) => {
-    if (!uid) return [];
-    const data = await listMySongs(uid);
-    setMySongs(data.items || []);
-    return data.items || [];
   };
 
   const bootstrapUser = async (user, nameOverride) => {
@@ -1388,9 +1370,7 @@ export default function App() {
     setSeedSelection(new Set());
     setOnboardingStep(0);
     setProfileTags([]);
-    setSongs([]);
-    setFavorites([]);
-    setMySongs([]);
+    resetSongLibrary();
     resetPlaylists();
     setLastGeneratedSong(null);
     setZonePulseId(-1);
