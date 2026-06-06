@@ -28,18 +28,15 @@ import { PlaylistPickerCard } from "./components/PlaylistPickerCard";
 import { SceneAnchorStrip } from "./components/SceneAnchorStrip";
 import { SongArtwork } from "./components/SongArtwork";
 import { useCreatorDashboard } from "./hooks/useCreatorDashboard";
+import { usePlaylistLibrary } from "./hooks/usePlaylistLibrary";
 import { usePlaybackEngine } from "./playback/usePlaybackEngine";
 import {
-  addPlaylistSong,
   addUserTag,
   createGenerationJob,
-  createPlaylist as createPlaylistApi,
   getGenerationJob,
   initUserTags,
   listFavorites,
   listMySongs,
-  listPlaylistSongs,
-  listPlaylists,
   listRecommendations,
   listSongHistory,
   listTags,
@@ -578,11 +575,6 @@ export default function App() {
   const [songs, setSongs] = useState([]);
   const [favorites, setFavorites] = useState([]);
   const [mySongs, setMySongs] = useState([]);
-  const [playlists, setPlaylists] = useState([]);
-  const [playlistSongsMap, setPlaylistSongsMap] = useState({});
-  const [playlistSongs, setPlaylistSongs] = useState([]);
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState(null);
-  const [newPlaylistName, setNewPlaylistName] = useState("");
   const [current, setCurrent] = useState(null);
   const [sound, setSound] = useState(null);
   const [currentSoundId, setCurrentSoundId] = useState(null);
@@ -648,6 +640,19 @@ export default function App() {
     onNeedsGeneration: handlePlaybackNeedsGeneration
   });
   const creatorDashboard = useCreatorDashboard(userId);
+  const {
+    addSongToPlaylist,
+    createPlaylist,
+    loadPlaylistSongs,
+    loadPlaylists,
+    newPlaylistName,
+    playlistSongsMap,
+    playlists,
+    reset: resetPlaylists,
+    selectedPlaylistId,
+    setNewPlaylistName,
+    setSelectedPlaylistId
+  } = usePlaylistLibrary(userId);
   const effectiveStageSize = portraitStageSize.width > 20 && portraitStageSize.height > 20 ? portraitStageSize : { width, height: Math.max(620, height - 28) };
 
   const triggerZonePulse = useCallback((zoneId) => {
@@ -879,22 +884,6 @@ export default function App() {
     const data = await listMySongs(uid);
     setMySongs(data.items || []);
     return data.items || [];
-  };
-
-  const loadPlaylists = async (uid) => {
-    if (!uid) return [];
-    const data = await listPlaylists(uid);
-    setPlaylists(data.items || []);
-    return data.items || [];
-  };
-
-  const loadPlaylistSongs = async (playlistId) => {
-    if (!playlistId) return [];
-    const data = await listPlaylistSongs(playlistId);
-    const items = data.items || [];
-    setPlaylistSongs(items);
-    setPlaylistSongsMap((prev) => ({ ...prev, [playlistId]: items }));
-    return items;
   };
 
   const bootstrapUser = async (user, nameOverride) => {
@@ -1359,18 +1348,6 @@ export default function App() {
     await Promise.all([refreshProfileSoon(), refreshSongHistory(userId)]);
   };
 
-  const createPlaylist = async () => {
-    if (!userId || !newPlaylistName.trim()) return;
-    await createPlaylistApi(userId, newPlaylistName.trim());
-    setNewPlaylistName("");
-    await loadPlaylists(userId);
-  };
-
-  const addSongToPlaylist = async (playlistId, song = playbackEngine.current) => {
-    if (!song || !playlistId) return;
-    await addPlaylistSong(playlistId, song.id);
-  };
-
   const enqueueSongToTail = (song, source = "manual") => {
     playbackEngine.appendQueue(song, source);
   };
@@ -1414,10 +1391,7 @@ export default function App() {
     setSongs([]);
     setFavorites([]);
     setMySongs([]);
-    setPlaylists([]);
-    setPlaylistSongsMap({});
-    setPlaylistSongs([]);
-    setSelectedPlaylistId(null);
+    resetPlaylists();
     setLastGeneratedSong(null);
     setZonePulseId(-1);
     setCurrent(null);
@@ -1608,7 +1582,6 @@ export default function App() {
             onCancel={() => setShowPlaylistPicker(false)}
             onSelect={async (playlist) => {
               await addSongToPlaylist(playlist.id, playbackEngine.current);
-              if (selectedPlaylistId === playlist.id) await loadPlaylistSongs(playlist.id);
               setShowPlaylistPicker(false);
             }}
             playlists={playlists}
