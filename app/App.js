@@ -22,6 +22,7 @@ import { GeneratedSongCard } from "./components/GeneratedSongCard";
 import { NewPlaylistCard } from "./components/NewPlaylistCard";
 import { NowPlayingCard } from "./components/NowPlayingCard";
 import { OnboardingScreen } from "./components/OnboardingScreen";
+import { PlaylistCard } from "./components/PlaylistCard";
 import { PlaybackQueue } from "./components/PlaybackQueue";
 import { PlaylistPickerCard } from "./components/PlaylistPickerCard";
 import { SceneAnchorStrip } from "./components/SceneAnchorStrip";
@@ -1649,52 +1650,28 @@ export default function App() {
           const expanded = selectedPlaylistId === playlist.id;
           const songsInPlaylist = playlistSongsMap[playlist.id] || [];
           return (
-            <View key={playlist.id} style={styles.playlistBox}>
-              <View style={styles.playlistRow}>
-                <TouchableOpacity
-                  style={styles.flex}
-                  onPress={async () => {
-                    if (expanded) {
-                      setSelectedPlaylistId(null);
-                    } else {
-                      setSelectedPlaylistId(playlist.id);
-                      await loadPlaylistSongs(playlist.id);
-                    }
-                  }}
-                >
-                  <Text style={styles.listTitle}>{playlist.name}</Text>
-                  <Text style={styles.listSub}>{"Songs " + (playlist.song_count || 0)}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.playlistPlus}
-                  onPress={async () => {
-                    const list = songsInPlaylist.length > 0 ? songsInPlaylist : await loadPlaylistSongs(playlist.id);
-                    await insertSongsAsNext(list, "playlist-" + String(playlist.id));
-                  }}
-                >
-                  <Text style={styles.playlistPlusText}>+</Text>
-                </TouchableOpacity>
-              </View>
-
-              {expanded ? (
-                <View style={{ marginTop: 10 }}>
-                  {songsInPlaylist.length === 0 ? (
-                    <Text style={styles.placeholder}>{t("playlistEmpty")}</Text>
-                  ) : songsInPlaylist.map((song) => (
-                    <TouchableOpacity key={String(playlist.id) + "-" + String(song.id)} style={styles.listItem} onPress={() => insertSongAsNext(song, "playlist-song-" + String(playlist.id))}>
-                      <View style={styles.songListMain}>
-                        <SongArtwork uri={song.cover_url} size={56} radius={18} label={song.title || "TPY"} />
-                        <View style={styles.songListText}>
-                          <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
-                          <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
-                        </View>
-                      </View>
-                      <Text style={styles.chevron}>{">"}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              ) : null}
-            </View>
+            <PlaylistCard
+              key={playlist.id}
+              emptyText={t("playlistEmpty")}
+              expanded={expanded}
+              onInsertPlaylist={async () => {
+                const list = songsInPlaylist.length > 0 ? songsInPlaylist : await loadPlaylistSongs(playlist.id);
+                await insertSongsAsNext(list, "playlist-" + String(playlist.id));
+              }}
+              onInsertSong={(song) => insertSongAsNext(song, "playlist-song-" + String(playlist.id))}
+              onToggle={async () => {
+                if (expanded) {
+                  setSelectedPlaylistId(null);
+                } else {
+                  setSelectedPlaylistId(playlist.id);
+                  await loadPlaylistSongs(playlist.id);
+                }
+              }}
+              playlist={playlist}
+              songCountLabel={"Songs " + (playlist.song_count || 0)}
+              songs={songsInPlaylist}
+              songSubtitle={songTagText}
+            />
           );
         })}
       </View>
@@ -1973,10 +1950,6 @@ const styles = StyleSheet.create({
   queueSkeletonLineSecondary: { height: 12, width: "54%", marginTop: 10 },
   songListMain: { flexDirection: "row", alignItems: "center", flex: 1 },
   songListText: { flex: 1, marginLeft: 12 },
-  playlistBox: { borderRadius: 20, backgroundColor: "rgba(255,255,255,0.08)", padding: 12, marginBottom: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  playlistRow: { flexDirection: "row", alignItems: "center" },
-  playlistPlus: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF", marginLeft: 12 },
-  playlistPlusText: { color: "#111217", fontSize: 22, lineHeight: 22, marginTop: -2 },
   listTitle: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
   listSub: { color: "rgba(255,255,255,0.64)", fontSize: 13, marginTop: 4, lineHeight: 18 },
   chevron: { color: "rgba(255,255,255,0.48)", fontSize: 20, marginLeft: 12 },
