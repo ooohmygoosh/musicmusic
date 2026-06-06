@@ -18,6 +18,7 @@ import { API_BASE } from "./config";
 import { AuthScreen } from "./components/AuthScreen";
 import { BottomTabBar } from "./components/BottomTabBar";
 import { CreatorDashboard } from "./components/CreatorDashboard";
+import { GeneratedSongCard } from "./components/GeneratedSongCard";
 import { NowPlayingCard } from "./components/NowPlayingCard";
 import { OnboardingScreen } from "./components/OnboardingScreen";
 import { PlaybackQueue } from "./components/PlaybackQueue";
@@ -1701,23 +1702,15 @@ export default function App() {
         {mySongs.length === 0 ? (
           <Text style={styles.placeholder}>{t("noGeneratedSongs")}</Text>
         ) : mySongs.map((song) => (
-          <View key={String(song.id) + "-mine"} style={styles.playlistBox}>
-            <TouchableOpacity style={styles.listItem} onPress={() => enqueueSongToTail(song, "my-song-" + String(song.id))}>
-              <View style={styles.songListMain}>
-                <SongArtwork uri={song.cover_url} size={56} radius={18} label={song.title || "TPY"} />
-                <View style={styles.songListText}>
-                  <Text style={styles.listTitle}>{song.title || "Untitled"}</Text>
-                  <Text style={styles.listSub} numberOfLines={1}>{songTagText(song)}</Text>
-                  <Text style={styles.listSub} numberOfLines={1}>{`${song.is_public ? t("public") : t("private")} - ${song.is_available ? t("enabled") : t("disabled")} - ${song.generation_source || "portrait_manual"}`}</Text>
-                </View>
-              </View>
-              <Text style={styles.chevron}>{">"}</Text>
-            </TouchableOpacity>
-            <View style={styles.workMetaRow}>
-              <Text style={styles.workMetaText}>{`ID ${song.id} - ${song.creator_type || "user"} - ${song.revenue_enabled ? t("revenueOn") : t("revenueOff")}`}</Text>
-              <Text style={styles.workMetaText}>{new Date(song.created_at).toLocaleString()}</Text>
-            </View>
-          </View>
+          <GeneratedSongCard
+            key={String(song.id) + "-mine"}
+            availabilityText={`${song.is_public ? t("public") : t("private")} - ${song.is_available ? t("enabled") : t("disabled")} - ${song.generation_source || "portrait_manual"}`}
+            createdAtText={new Date(song.created_at).toLocaleString()}
+            metadataText={`ID ${song.id} - ${song.creator_type || "user"} - ${song.revenue_enabled ? t("revenueOn") : t("revenueOff")}`}
+            onPress={() => enqueueSongToTail(song, "my-song-" + String(song.id))}
+            song={song}
+            subtitle={songTagText(song)}
+          />
         ))}
       </View>
     </ScrollView>
@@ -2040,8 +2033,6 @@ const styles = StyleSheet.create({
   hintText: { color: "rgba(255,255,255,0.68)", fontSize: 13, lineHeight: 20, marginTop: 10 },
   okText: { color: "#72D595", marginTop: 10, fontSize: 13 },
   errorText: { color: "#FF8D7C", marginTop: 10, fontSize: 13 },
-  workMetaRow: { flexDirection: "row", justifyContent: "space-between", gap: 10, marginTop: 10, paddingHorizontal: 4 },
-  workMetaText: { color: "rgba(255,255,255,0.64)", fontSize: 12, flex: 1 },
   rowGap: { flexDirection: "row", gap: 10 },
   flex: { flex: 1 }
 });
