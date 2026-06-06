@@ -10,13 +10,14 @@ import {
   useWindowDimensions,
   Alert,
   PanResponder,
-  ActivityIndicator,
   Vibration
 } from "react-native";
 import { Audio } from "expo-av";
 import { BlurMask, Canvas, Circle, Group } from "@shopify/react-native-skia";
 import { API_BASE } from "./config";
+import { AuthScreen } from "./components/AuthScreen";
 import { CreatorDashboard } from "./components/CreatorDashboard";
+import { OnboardingScreen } from "./components/OnboardingScreen";
 import { PlaybackQueue } from "./components/PlaybackQueue";
 import { SongArtwork } from "./components/SongArtwork";
 import { useCreatorDashboard } from "./hooks/useCreatorDashboard";
@@ -451,24 +452,6 @@ function pickBlockAtPoint(blocks, point) {
     if (!best || score < best.score) best = { block, score };
   }
   return best ? best.block : null;
-}
-
-function ScreenTitle({ title, subtitle, light = false }) {
-  return (
-    <View style={styles.titleBlock}>
-      <Text style={[styles.title, light && styles.titleLight]}>{title}</Text>
-      {subtitle ? <Text style={[styles.subtitle, light && styles.subtitleLight]}>{subtitle}</Text> : null}
-    </View>
-  );
-}
-
-function SeedTag({ item, selected, onPress }) {
-  return (
-    <TouchableOpacity onPress={() => onPress(item)} style={[styles.seedTag, selected && styles.seedTagSelected]}>
-      <Text style={[styles.seedType, selected && styles.seedTypeSelected]}>{item.type}</Text>
-      <Text style={[styles.seedName, selected && styles.seedNameSelected]}>{item.name}</Text>
-    </TouchableOpacity>
-  );
 }
 
 function PortraitBackdrop({ blocks, stageSize }) {
@@ -1498,93 +1481,46 @@ export default function App() {
   })).current;
 
   const renderAuth = () => (
-    <SafeAreaView style={styles.page}>
-      <PortraitBackdrop blocks={portraitBlocks} stageSize={{ width, height }} />
-      <ScrollView contentContainerStyle={styles.authShell} showsVerticalScrollIndicator={false}>
-        <View style={styles.authCard}>
-          <View style={styles.authModeRow}>
-            <TouchableOpacity style={[styles.authMode, authMode === "login" && styles.authModeActive]} onPress={() => setAuthMode("login")}>
-              <Text style={[styles.authModeText, authMode === "login" && styles.authModeTextActive]}>{language === "en" ? "Login" : "鐧诲綍"}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.authMode, authMode === "register" && styles.authModeActive]} onPress={() => setAuthMode("register")}>
-              <Text style={[styles.authModeText, authMode === "register" && styles.authModeTextActive]}>{language === "en" ? "Register" : "娉ㄥ唽"}</Text>
-            </TouchableOpacity>
-          </View>
-          {authMode === "register" ? (
-            <>
-              <TextInput value={accountName} onChangeText={setAccountName} placeholder={t("username")} placeholderTextColor="#B9C2CE" style={styles.input} />
-              <Text style={styles.avatarPickerLabel}>{t("chooseAvatar")}</Text>
-              <View style={styles.avatarPickerRow}>
-                {AUTH_AVATARS.map((avatar) => (
-                  <TouchableOpacity key={avatar} style={[styles.avatarChip, selectedAvatar === avatar && styles.avatarChipActive]} onPress={() => setSelectedAvatar(avatar)}>
-                    <Text style={styles.avatarChipText}>{avatar}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </>
-          ) : null}
-          <TextInput value={accountId} onChangeText={(value) => setAccountId(value.replace(/\s+/g, "").toLowerCase())} placeholder={t("accountId")} placeholderTextColor="#B9C2CE" autoCapitalize="none" style={styles.input} />
-          <TextInput value={accountPassword} onChangeText={setAccountPassword} placeholder={t("password")} placeholderTextColor="#B9C2CE" secureTextEntry style={styles.input} />
-          {authMode === "register" ? (
-            <TextInput value={accountPasswordConfirm} onChangeText={setAccountPasswordConfirm} placeholder={t("confirmPassword")} placeholderTextColor="#B9C2CE" secureTextEntry style={styles.input} />
-          ) : null}
-          <TouchableOpacity style={styles.primary} onPress={submitAuth} disabled={authLoading}>
-            {authLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>{authMode === "login" ? t("loginRestore") : t("registerContinue")}</Text>}
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+    <AuthScreen
+      accountId={accountId}
+      accountName={accountName}
+      accountPassword={accountPassword}
+      accountPasswordConfirm={accountPasswordConfirm}
+      avatars={AUTH_AVATARS}
+      backdrop={<PortraitBackdrop blocks={portraitBlocks} stageSize={{ width, height }} />}
+      language={language}
+      loading={authLoading}
+      mode={authMode}
+      onAccountIdChange={(value) => setAccountId(value.replace(/\s+/g, "").toLowerCase())}
+      onAccountNameChange={setAccountName}
+      onAccountPasswordChange={setAccountPassword}
+      onAccountPasswordConfirmChange={setAccountPasswordConfirm}
+      onAvatarChange={setSelectedAvatar}
+      onModeChange={setAuthMode}
+      onSubmit={submitAuth}
+      selectedAvatar={selectedAvatar}
+      t={t}
+    />
   );
 
   const renderOnboarding = () => (
-    <SafeAreaView style={styles.page}>
-      <PortraitBackdrop blocks={portraitBlocks} stageSize={{ width, height }} />
-      <ScrollView contentContainerStyle={styles.screenPadding} showsVerticalScrollIndicator={false}>
-        <ScreenTitle title={t("pickInitialTags")} subtitle={t("pickInitialTagsSub")} />
-        <View style={styles.groupCard}>
-          <View style={styles.onboardingProgressHeader}>
-            <Text style={styles.groupTitle}>{currentOnboarding ? currentOnboarding[0] : t("done")}</Text>
-            <Text style={styles.hintText}>{t("stepLabel", { current: Math.min(onboardingStep + 1, onboardingGroups.length || 1), total: Math.max(1, onboardingGroups.length) })}</Text>
-          </View>
-          <View style={styles.onboardingProgressTrack}>
-            <View style={[styles.onboardingProgressFill, { width: String(((Math.min(onboardingStep + 1, onboardingGroups.length || 1)) / Math.max(1, onboardingGroups.length)) * 100) + "%" }]} />
-          </View>
-          {currentOnboarding ? (
-            <View style={styles.seedWrap}>
-              {currentOnboarding[1].map((item) => (
-                <SeedTag
-                  key={item.id}
-                  item={item}
-                  selected={seedSelection.has(item.id)}
-                  onPress={(tag) => {
-                    const next = new Set(seedSelection);
-                    if (next.has(tag.id)) next.delete(tag.id);
-                    else next.add(tag.id);
-                    setSeedSelection(next);
-                  }}
-                />
-              ))}
-            </View>
-          ) : (
-            <Text style={styles.placeholder}>{t("allCategoriesCompleted")}</Text>
-          )}
-          <View style={styles.rowGap}>
-            <TouchableOpacity style={[styles.secondarySoft, styles.flex]} onPress={() => setOnboardingStep((prev) => Math.max(0, prev - 1))}>
-              <Text style={styles.secondaryText}>{t("back")}</Text>
-            </TouchableOpacity>
-            {onboardingStep < onboardingGroups.length - 1 ? (
-              <TouchableOpacity style={[styles.primary, styles.flex]} onPress={() => setOnboardingStep((prev) => Math.min(onboardingGroups.length - 1, prev + 1))}>
-                <Text style={styles.primaryText}>{t("next")}</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={[styles.primary, styles.flex]} onPress={submitOnboarding}>
-                <Text style={styles.primaryText}>{t("enterApp")}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+    <OnboardingScreen
+      backdrop={<PortraitBackdrop blocks={portraitBlocks} stageSize={{ width, height }} />}
+      currentGroup={currentOnboarding}
+      groupCount={onboardingGroups.length}
+      onBack={() => setOnboardingStep((prev) => Math.max(0, prev - 1))}
+      onNext={() => setOnboardingStep((prev) => Math.min(onboardingGroups.length - 1, prev + 1))}
+      onSubmit={submitOnboarding}
+      onToggleSeed={(tag) => {
+        const next = new Set(seedSelection);
+        if (next.has(tag.id)) next.delete(tag.id);
+        else next.add(tag.id);
+        setSeedSelection(next);
+      }}
+      seedSelection={seedSelection}
+      step={onboardingStep}
+      t={t}
+    />
   );
 
   const renderPlayer = () => {
@@ -2070,28 +2006,8 @@ const styles = StyleSheet.create({
   backdropCanvas: { ...StyleSheet.absoluteFillObject },
   backdropSoftener: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(9,12,18,0.025)" },
   screenPadding: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 120 },
-  titleBlock: { marginBottom: 18 },
   eyebrow: { fontSize: 11, fontWeight: "800", color: "rgba(236,240,246,0.72)", letterSpacing: 1.1, textTransform: "uppercase", marginBottom: 8 },
   eyebrowLight: { color: "rgba(255,255,255,0.66)" },
-  title: { fontSize: 34, fontWeight: "800", color: "#F3F6FA", letterSpacing: -0.9 },
-  titleLight: { color: "#FFFFFF" },
-  subtitle: { fontSize: 15, color: "rgba(232,238,246,0.74)", lineHeight: 22, marginTop: 8 },
-  subtitleLight: { color: "rgba(255,255,255,0.74)" },
-  authShell: { flexGrow: 1, justifyContent: "center", padding: 20 },
-  authCard: { backgroundColor: "rgba(12,18,28,0.76)", borderRadius: 30, padding: 22, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", shadowColor: "#000000", shadowOpacity: 0.24, shadowOffset: { width: 0, height: 18 }, shadowRadius: 28, elevation: 10 },
-  authEyebrow: { fontSize: 12, fontWeight: "800", color: "rgba(255,255,255,0.6)", letterSpacing: 1.8, marginBottom: 12 },
-  authTitle: { fontSize: 31, fontWeight: "800", color: "#FFFFFF", lineHeight: 38, letterSpacing: -0.9 },
-  authSubtitle: { fontSize: 15, color: "rgba(232,238,246,0.76)", lineHeight: 22, marginTop: 10, marginBottom: 16 },
-  authModeRow: { flexDirection: "row", backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 18, padding: 4, marginBottom: 14 },
-  authMode: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 14 },
-  authModeActive: { backgroundColor: "rgba(255,255,255,0.14)" },
-  authModeText: { color: "rgba(255,255,255,0.56)", fontWeight: "700" },
-  authModeTextActive: { color: "#FFFFFF" },
-  avatarPickerLabel: { color: "rgba(255,255,255,0.76)", fontSize: 13, fontWeight: "700", marginBottom: 10, marginTop: 2 },
-  avatarPickerRow: { flexDirection: "row", flexWrap: "wrap", marginBottom: 12 },
-  avatarChip: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center", marginRight: 10, marginBottom: 10, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
-  avatarChipActive: { backgroundColor: "rgba(255,255,255,0.18)", borderColor: "rgba(255,255,255,0.3)" },
-  avatarChipText: { fontSize: 22 },
   input: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)", paddingHorizontal: 16, paddingVertical: 15, marginBottom: 10, color: "#FFFFFF" },
   primary: { backgroundColor: "rgba(255,255,255,0.94)", borderRadius: 20, paddingVertical: 16, alignItems: "center", marginTop: 6, shadowColor: "#000", shadowOpacity: 0.16, shadowOffset: { width: 0, height: 12 }, shadowRadius: 20, elevation: 8 },
   primaryText: { color: "#111217", fontSize: 15, fontWeight: "800" },
@@ -2100,13 +2016,6 @@ const styles = StyleSheet.create({
   groupCard: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 28, padding: 18, marginBottom: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   groupTitle: { color: "#FFFFFF", fontSize: 21, fontWeight: "800", marginBottom: 12, letterSpacing: -0.4 },
   groupTitleCollapsed: { marginBottom: 0, fontSize: 17 },
-  seedWrap: { flexDirection: "row", flexWrap: "wrap" },
-  seedTag: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 20, paddingHorizontal: 14, paddingVertical: 12, marginRight: 8, marginBottom: 8, minWidth: 110 },
-  seedTagSelected: { backgroundColor: "rgba(255,255,255,0.92)" },
-  seedType: { color: "rgba(255,255,255,0.58)", fontSize: 11, fontWeight: "700", marginBottom: 5 },
-  seedTypeSelected: { color: "rgba(17,18,23,0.6)" },
-  seedName: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
-  seedNameSelected: { color: "#111217" },
   playerCard: { backgroundColor: "rgba(11,17,27,0.58)", borderRadius: 32, padding: 22, marginBottom: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   coverWrap: { alignItems: "center", marginBottom: 18 },
   playerTitle: { color: "#FFFFFF", fontSize: 30, fontWeight: "800", textAlign: "center", letterSpacing: -0.8 },
@@ -2200,9 +2109,6 @@ const styles = StyleSheet.create({
   categoryChipActive: { backgroundColor: "#FFFFFF" },
   categoryChipText: { color: "rgba(255,255,255,0.72)", fontSize: 14, fontWeight: "700" },
   categoryChipTextActive: { color: "#111217" },
-  onboardingProgressHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  onboardingProgressTrack: { height: 10, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.1)", overflow: "hidden", marginBottom: 16 },
-  onboardingProgressFill: { height: 10, borderRadius: 999, backgroundColor: "#FFFFFF" },
   accountCard: { backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 22, padding: 16, borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
   accountAvatar: { width: 72, height: 72, borderRadius: 36, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center", marginBottom: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.1)" },
   accountAvatarText: { fontSize: 34 },
